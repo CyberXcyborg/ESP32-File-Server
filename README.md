@@ -1,4 +1,7 @@
 # ESP32 File Server
+![GitHub stars](https://img.shields.io/github/stars/CyberXcyborg/ESP32-File-Server?style=social)
+![License](https://img.shields.io/github/license/CyberXcyborg/ESP32-File-Server)
+![Last Commit](https://img.shields.io/github/last-commit/CyberXcyborg/ESP32-File-Server)
 
 **Website:** [cyberxcyborg.github.io/ESP32-File-Server](https://cyberxcyborg.github.io/ESP32-File-Server)
 
