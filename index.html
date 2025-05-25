@@ -1,0 +1,653 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ESP32 File Server - Secure Web & FTP File Access</title>
+    <meta name="description" content="A powerful web and FTP file server for ESP32 with user authentication, file management, and secure access.">
+    <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@6.4.0/css/all.min.css">
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Press+Start+2P&family=Roboto:wght@300;400;700&display=swap');
+        
+        .code-font {
+            font-family: 'Courier New', monospace;
+        }
+        
+        .pixel-font {
+            font-family: 'Press Start 2P', cursive;
+        }
+        
+        .gradient-bg {
+            background: linear-gradient(135deg, #1a4f72 0%, #2980b9 50%, #1a4f72 100%);
+        }
+        
+        .pixel-btn {
+            transition: all 0.1s ease;
+            box-shadow: 0 4px 0 #333;
+        }
+        
+        .pixel-btn:hover {
+            transform: translateY(2px);
+            box-shadow: 0 2px 0 #333;
+        }
+        
+        .pixel-btn:active {
+            transform: translateY(4px);
+            box-shadow: 0 0 0 #333;
+        }
+        
+        .server-container {
+            width: 200px;
+            height: 200px;
+            position: relative;
+            background-color: #e0f0ff;
+            border-radius: 15px;
+            overflow: hidden;
+            box-shadow: inset 0 0 20px rgba(0,0,0,0.2);
+            animation: pulse 3s infinite ease-in-out;
+        }
+        
+        @keyframes pulse {
+            0%, 100% { transform: scale(1); }
+            50% { transform: scale(1.05); }
+        }
+        
+        .server {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            width: 120px;
+            height: 160px;
+        }
+        
+        .feature-card {
+            transition: transform 0.3s ease, box-shadow 0.3s ease;
+        }
+        
+        .feature-card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 10px 30px rgba(0,0,0,0.15);
+        }
+        
+        body {
+            font-family: 'Roboto', sans-serif;
+        }
+    </style>
+</head>
+<body class="bg-gray-900 text-white font-sans">
+    <!-- Navigation -->
+    <nav class="bg-gray-800 px-4 py-3 shadow-md">
+        <div class="container mx-auto flex justify-between items-center">
+            <div class="pixel-font text-xl text-blue-400">ESP32 File Server</div>
+            <div class="flex space-x-4">
+                <a href="#features" class="hover:text-blue-400 transition-colors">Features</a>
+                <a href="#download" class="hover:text-blue-400 transition-colors">Download</a>
+                <a href="#installation" class="hover:text-blue-400 transition-colors">Installation</a>
+                <a href="https://github.com/CyberXcyborg/ESP32-File-Server" target="_blank" class="hover:text-blue-400 transition-colors">
+                    <i class="fab fa-github"></i> GitHub
+                </a>
+            </div>
+        </div>
+    </nav>
+
+    <!-- Hero Section -->
+    <section class="gradient-bg py-20 relative overflow-hidden">
+        <div class="container mx-auto px-4 relative z-10 flex flex-col md:flex-row items-center">
+            <div class="md:w-1/2 mb-10 md:mb-0">
+                <h1 class="pixel-font text-2xl md:text-4xl mb-6 leading-tight">Your Files,<br>Anywhere. Anytime.</h1>
+                <p class="text-lg mb-8 text-gray-200 max-w-lg">
+                    Transform your ESP32 into a powerful file server with secure web and FTP access.
+                    Complete with user authentication, file uploads, downloads, and management capabilities.
+                </p>
+                <div class="flex space-x-4">
+                    <a href="#download" class="pixel-btn bg-blue-600 hover:bg-blue-700 px-6 py-3 rounded-lg font-bold inline-block">
+                        Get Started
+                    </a>
+                    <a href="#why" class="pixel-btn bg-gray-700 hover:bg-gray-800 px-6 py-3 rounded-lg font-bold inline-block">
+                        Learn More
+                    </a>
+                </div>
+            </div>
+            <div class="md:w-1/2 flex justify-center">
+                <div class="server-container">
+                    <div class="server">
+                        <svg viewBox="0 0 120 160" xmlns="http://www.w3.org/2000/svg">
+                            <!-- Server Tower -->
+                            <rect x="20" y="10" width="80" height="140" fill="#2c3e50" rx="5" />
+                            <!-- Server Slots -->
+                            <rect x="30" y="20" width="60" height="15" fill="#34495e" rx="2" />
+                            <rect x="30" y="40" width="60" height="15" fill="#34495e" rx="2" />
+                            <rect x="30" y="60" width="60" height="15" fill="#34495e" rx="2" />
+                            <rect x="30" y="80" width="60" height="15" fill="#34495e" rx="2" />
+                            <!-- LED Lights -->
+                            <circle cx="42" cy="27.5" r="3" fill="#2ecc71" />
+                            <circle cx="42" cy="47.5" r="3" fill="#e74c3c" />
+                            <circle cx="42" cy="67.5" r="3" fill="#2ecc71" />
+                            <circle cx="42" cy="87.5" r="3" fill="#3498db">
+                                <animate attributeName="opacity" values="1;0.3;1" dur="1.5s" repeatCount="indefinite" />
+                            </circle>
+                            <!-- WiFi Symbol -->
+                            <path d="M60 110 Q80 90, 100 110" stroke="#3498db" fill="none" stroke-width="3" stroke-linecap="round" />
+                            <path d="M60 120 Q80 100, 100 120" stroke="#3498db" fill="none" stroke-width="3" stroke-linecap="round" />
+                            <path d="M60 130 Q80 110, 100 130" stroke="#3498db" fill="none" stroke-width="3" stroke-linecap="round" />
+                            <circle cx="80" cy="135" r="5" fill="#3498db" />
+                        </svg>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="absolute inset-0 bg-gradient-to-b from-transparent to-gray-900 pointer-events-none"></div>
+    </section>
+
+    <!-- Server Introduction Section -->
+    <section id="why" class="py-16 bg-gray-800">
+        <div class="container mx-auto px-4 text-center">
+            <h2 class="pixel-font text-2xl md:text-3xl mb-8">Your Personal ESP32 Server</h2>
+            <p class="text-xl mb-6 text-blue-300">Fast, secure, and versatile file management for IoT projects.</p>
+            <div class="max-w-3xl mx-auto">
+                <p class="text-lg mb-8 text-gray-300">
+                    Stop struggling with moving files to your ESP32 projects.<br>
+                    This server brings modern web and FTP access to your microcontroller,<br>
+                    making file management as simple as using a cloud service.
+                </p>
+                <p class="text-lg mb-4 text-gray-300">
+                    With built-in user authentication, responsive design, and intuitive interface,<br>
+                    managing your device's file system has never been easier.
+                </p>
+            </div>
+        </div>
+    </section>
+
+    <!-- Features Section -->
+    <section id="features" class="py-16 bg-gray-900">
+        <div class="container mx-auto px-4">
+            <h2 class="pixel-font text-2xl md:text-3xl mb-12 text-center">Powerful Features</h2>
+            
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-8">
+                <div class="feature-card bg-gray-800 rounded-xl p-6 border-2 border-blue-700">
+                    <div class="text-blue-400 text-4xl mb-4">
+                        <i class="fas fa-shield-alt"></i>
+                    </div>
+                    <h3 class="text-xl font-bold mb-3">Secure Authentication</h3>
+                    <p class="text-gray-300">Multi-user support with admin and regular user roles. Session management with automatic timeouts.</p>
+                </div>
+                
+                <div class="feature-card bg-gray-800 rounded-xl p-6 border-2 border-blue-700">
+                    <div class="text-blue-400 text-4xl mb-4">
+                        <i class="fas fa-server"></i>
+                    </div>
+                    <h3 class="text-xl font-bold mb-3">Dual Access Methods</h3>
+                    <p class="text-gray-300">Modern web interface plus traditional FTP access. Choose what works best for your workflow.</p>
+                </div>
+                
+                <div class="feature-card bg-gray-800 rounded-xl p-6 border-2 border-blue-700">
+                    <div class="text-blue-400 text-4xl mb-4">
+                        <i class="fas fa-wifi"></i>
+                    </div>
+                    <h3 class="text-xl font-bold mb-3">Flexible Connectivity</h3>
+                    <p class="text-gray-300">Connect to your WiFi network or use Access Point mode when no network is available.</p>
+                </div>
+            </div>
+            
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-8 mt-8">
+                <div class="feature-card bg-gray-800 rounded-xl p-6 border-2 border-blue-700">
+                    <div class="text-blue-400 text-4xl mb-4">
+                        <i class="fas fa-file-upload"></i>
+                    </div>
+                    <h3 class="text-xl font-bold mb-3">File Management</h3>
+                    <p class="text-gray-300">Upload, download, create directories and delete files with an intuitive interface and progress tracking.</p>
+                </div>
+                
+                <div class="feature-card bg-gray-800 rounded-xl p-6 border-2 border-blue-700">
+                    <div class="text-blue-400 text-4xl mb-4">
+                        <i class="fas fa-users-cog"></i>
+                    </div>
+                    <h3 class="text-xl font-bold mb-3">User Management</h3>
+                    <p class="text-gray-300">Admin panel for creating, editing, and deleting users. Control access to your files with fine-grained permissions.</p>
+                </div>
+                
+                <div class="feature-card bg-gray-800 rounded-xl p-6 border-2 border-blue-700">
+                    <div class="text-blue-400 text-4xl mb-4">
+                        <i class="fas fa-mobile-alt"></i>
+                    </div>
+                    <h3 class="text-xl font-bold mb-3">Responsive Design</h3>
+                    <p class="text-gray-300">Access your files from any device - desktop, tablet, or smartphone with a beautiful, adaptive interface.</p>
+                </div>
+            </div>
+            
+            <div class="text-center mt-12">
+                <p class="text-xl text-blue-300">
+                    ESP32 + Web Server + FTP + SD Card =<br>
+                    Your Complete File Management Solution
+                </p>
+            </div>
+        </div>
+    </section>
+
+    <!-- Download/Installation Section -->
+    <section id="download" class="py-16 bg-gray-800">
+        <div class="container mx-auto px-4 text-center">
+            <h2 class="pixel-font text-2xl md:text-3xl mb-8">Get Started — In Minutes</h2>
+            <p class="text-lg mb-10 text-gray-300 max-w-2xl mx-auto">
+                Download the code, flash your ESP32, and start managing your files with ease.
+            </p>
+            
+            <div class="max-w-4xl mx-auto bg-gray-900 rounded-lg p-8 border-2 border-blue-600">
+                <h3 class="text-xl font-bold mb-6">Installation Instructions</h3>
+                
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-8">
+                    <div class="text-left">
+                        <h4 class="font-bold text-blue-400 mb-3">What You'll Need:</h4>
+                        <ul class="list-disc pl-5 space-y-2 text-gray-300">
+                            <li>ESP32 development board</li>
+                            <li>Micro SD card</li>
+                            <li>Micro USB cable</li>
+                            <li>Arduino IDE installed</li>
+                            <li>ESP32 board definition in Arduino IDE</li>
+                            <li>Required libraries:
+                                <ul class="list-disc pl-5 mt-1">
+                                    <li>WiFi</li>
+                                    <li>WebServer</li>
+                                    <li>SimpleFTPServer</li>
+                                    <li>ESPmDNS</li>
+                                    <li>SPI</li>
+                                    <li>SD</li>
+                                    <li>FS</li>
+                                    <li>ArduinoJson</li>
+                                </ul>
+                            </li>
+                        </ul>
+                    </div>
+                    
+                    <div class="text-left">
+                        <h4 class="font-bold text-blue-400 mb-3">Quick Setup:</h4>
+                        <ol class="list-decimal pl-5 space-y-2 text-gray-300">
+                            <li>Clone the GitHub repository</li>
+                            <li>Open the project in Arduino IDE</li>
+                            <li>Connect SD card to ESP32 (default pins: CS=5, MOSI=23, MISO=19, SCK=18)</li>
+                            <li>Update WiFi credentials in the code</li>
+                            <li>Upload the code to your ESP32</li>
+                            <li>Open Serial Monitor at 115200 baud to see the IP address</li>
+                            <li>Access the web interface at http://[IP_ADDRESS]</li>
+                            <li>Default login: admin / admin123</li>
+                        </ol>
+                    </div>
+                </div>
+                
+                <div class="flex flex-col sm:flex-row justify-center mt-8 space-y-4 sm:space-y-0 sm:space-x-4">
+                    <a href="https://github.com/CyberXcyborg/ESP32-File-Server" class="pixel-btn bg-blue-600 hover:bg-blue-700 px-6 py-3 rounded-lg font-bold inline-flex items-center justify-center">
+                        <i class="fab fa-github mr-2"></i> View on GitHub
+                    </a>
+                    <a href="https://github.com/CyberXcyborg/ESP32-File-Server/archive/refs/heads/main.zip" class="pixel-btn bg-green-600 hover:bg-green-700 px-6 py-3 rounded-lg font-bold inline-flex items-center justify-center">
+                        <i class="fas fa-download mr-2"></i> Download ZIP
+                    </a>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- SD Card Wiring Section -->
+    <section id="installation" class="py-16 bg-gray-900">
+        <div class="container mx-auto px-4">
+            <h2 class="pixel-font text-2xl md:text-3xl mb-8 text-center">Hardware Setup</h2>
+            
+            <div class="max-w-4xl mx-auto bg-gray-800 rounded-lg p-8 mb-8">
+                <h3 class="text-xl font-bold mb-6 text-center">SD Card Connection</h3>
+                
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-8 items-center">
+                    <div class="text-left">
+                        <p class="mb-4 text-gray-300">Connect your SD card module to ESP32 using these default pins:</p>
+                        
+                        <table class="w-full border-collapse mb-6">
+                            <thead>
+                                <tr>
+                                    <th class="p-2 text-left text-blue-400 border-b border-gray-700">SD Card Pin</th>
+                                    <th class="p-2 text-left text-blue-400 border-b border-gray-700">ESP32 Pin</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <tr>
+                                    <td class="p-2 border-b border-gray-700">CS (Chip Select)</td>
+                                    <td class="p-2 border-b border-gray-700">GPIO 5</td>
+                                </tr>
+                                <tr>
+                                    <td class="p-2 border-b border-gray-700">MOSI (Master Out Slave In)</td>
+                                    <td class="p-2 border-b border-gray-700">GPIO 23</td>
+                                </tr>
+                                <tr>
+                                    <td class="p-2 border-b border-gray-700">MISO (Master In Slave Out)</td>
+                                    <td class="p-2 border-b border-gray-700">GPIO 19</td>
+                                </tr>
+                                <tr>
+                                    <td class="p-2 border-b border-gray-700">SCK (Serial Clock)</td>
+                                    <td class="p-2 border-b border-gray-700">GPIO 18</td>
+                                </tr>
+                                <tr>
+                                    <td class="p-2 border-b border-gray-700">VCC</td>
+                                    <td class="p-2 border-b border-gray-700">3.3V</td>
+                                </tr>
+                                <tr>
+                                    <td class="p-2 border-b border-gray-700">GND</td>
+                                    <td class="p-2 border-b border-gray-700">GND</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                        
+                        <p class="text-gray-300 text-sm italic">Note: You can modify these pin assignments in the code if needed for your specific hardware setup.</p>
+                    </div>
+                    
+                    <div class="flex justify-center">
+                        <div class="bg-gray-900 p-4 rounded-lg">
+                            <pre class="code-font text-sm text-blue-300">
+// SD card configuration
+#define SD_CS 5    // SD card chip select pin
+#define SPI_MOSI 23
+#define SPI_MISO 19
+#define SPI_SCK 18
+
+// Initialize SD card
+SPI.begin(SPI_SCK, SPI_MISO, SPI_MOSI, SD_CS);
+SD.begin(SD_CS);</pre>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="max-w-4xl mx-auto bg-gray-800 rounded-lg p-8">
+                <h3 class="text-xl font-bold mb-6 text-center">Network Configuration</h3>
+                
+                <div class="mb-6">
+                    <h4 class="font-bold text-blue-400 mb-3">WiFi Client Mode</h4>
+                    <p class="text-gray-300 mb-4">
+                        When starting up, the ESP32 will try to connect to your WiFi network using the credentials in the code.
+                        If the connection is successful, you can access the server via the IP address shown in the Serial Monitor.
+                    </p>
+                    <pre class="code-font bg-gray-900 p-4 rounded-lg text-sm text-blue-300">
+// WiFi credentials
+const char* ssid = "YOUR_WIFI_SSID";
+const char* password = "YOUR_WIFI_PASSWORD";</pre>
+                </div>
+                
+                <div class="mb-6">
+                    <h4 class="font-bold text-blue-400 mb-3">Access Point (AP) Mode</h4>
+                    <p class="text-gray-300 mb-4">
+                        If WiFi connection fails, the ESP32 will automatically switch to Access Point mode,
+                        creating its own WiFi network that you can connect to directly.
+                    </p>
+                    <pre class="code-font bg-gray-900 p-4 rounded-lg text-sm text-blue-300">
+// Access Point settings (used if WiFi connection fails)
+const char* ap_ssid = "ESP32-FileServer";
+const char* ap_password = "fileserver123";</pre>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Interface Preview Section -->
+    <section class="py-16 bg-gray-800">
+        <div class="container mx-auto px-4">
+            <h2 class="pixel-font text-2xl md:text-3xl mb-8 text-center">Web Interface Preview</h2>
+            
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-8 max-w-5xl mx-auto">
+                <div>
+                    <h3 class="text-xl font-bold mb-4 text-center">Login Screen</h3>
+                    <div class="bg-gray-900 rounded-lg p-4 mb-2">
+                        <div class="rounded-lg border-2 border-gray-700 overflow-hidden">
+                            <!-- Login UI preview -->
+                            <div class="bg-gray-800 p-2 border-b border-gray-700">
+                                <div class="w-full flex items-center">
+                                    <div class="ml-2 text-xs text-gray-400">ESP32 File Server - Login</div>
+                                </div>
+                            </div>
+                            <div class="bg-gray-200 p-4 text-black">
+                                <div class="text-center mb-4">
+                                    <div class="text-lg font-bold text-gray-800">ESP32 File Server</div>
+                                    <div class="text-xs text-gray-600">Please log in to continue</div>
+                                </div>
+                                <div class="bg-white rounded p-4 shadow-lg">
+                                    <div class="mb-3">
+                                        <label class="block text-gray-700 text-xs font-bold mb-1">Username</label>
+                                        <div class="h-6 bg-gray-100 border rounded w-full"></div>
+                                    </div>
+                                    <div class="mb-4">
+                                        <label class="block text-gray-700 text-xs font-bold mb-1">Password</label>
+                                        <div class="h-6 bg-gray-100 border rounded w-full"></div>
+                                    </div>
+                                    <button class="w-full bg-blue-500 text-white text-xs py-1 px-3 rounded">Log In</button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <p class="text-sm text-gray-400 text-center">Secure login with session management</p>
+                </div>
+                
+                <div>
+                    <h3 class="text-xl font-bold mb-4 text-center">File Manager</h3>
+                    <div class="bg-gray-900 rounded-lg p-4 mb-2">
+                        <div class="rounded-lg border-2 border-gray-700 overflow-hidden">
+                            <!-- File Manager UI preview -->
+                            <div class="bg-gray-800 p-2 border-b border-gray-700">
+                                <div class="w-full flex items-center">
+                                    <div class="ml-2 text-xs text-gray-400">ESP32 File Server - File Manager</div>
+                                </div>
+                            </div>
+                            <div class="bg-gray-200 p-3 text-black text-xs">
+                                <div class="flex justify-between items-center mb-2">
+                                    <div class="font-bold text-gray-800">ESP32 File Server</div>
+                                    <div class="text-blue-600">Logout</div>
+                                </div>
+                                <div class="flex space-x-2 mb-2">
+                                    <div class="bg-blue-500 text-white px-2 py-1 rounded text-xs">Upload File</div>
+                                    <div class="bg-blue-500 text-white px-2 py-1 rounded text-xs">New Folder</div>
+                                </div>
+                                <div class="bg-gray-100 py-1 px-2 rounded mb-2">
+                                    Root / Documents /
+                                </div>
+                                <div class="bg-white border rounded overflow-hidden">
+                                    <div class="grid grid-cols-12 bg-gray-700 text-white p-1">
+                                        <div class="col-span-1"></div>
+                                        <div class="col-span-7">Name</div>
+                                        <div class="col-span-2">Size</div>
+                                        <div class="col-span-2">Actions</div>
+                                    </div>
+                                    <div class="grid grid-cols-12 p-1 border-b border-gray-200 hover:bg-gray-100">
+                                        <div class="col-span-1">📁</div>
+                                        <div class="col-span-7">Projects</div>
+                                        <div class="col-span-2">-</div>
+                                        <div class="col-span-2">🗑️</div>
+                                    </div>
+                                    <div class="grid grid-cols-12 p-1 border-b border-gray-200 hover:bg-gray-100">
+                                        <div class="col-span-1">📄</div>
+                                        <div class="col-span-7">data.txt</div>
+                                        <div class="col-span-2">2.4 KB</div>
+                                        <div class="col-span-2">⬇️ 🗑️</div>
+                                    </div>
+                                    <div class="grid grid-cols-12 p-1 hover:bg-gray-100">
+                                        <div class="col-span-1">🖼️</div>
+                                        <div class="col-span-7">image.jpg</div>
+                                        <div class="col-span-2">145 KB</div>
+                                        <div class="col-span-2">⬇️ 🗑️</div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <p class="text-sm text-gray-400 text-center">Intuitive file management interface</p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Code Preview Section -->
+    <section class="py-16 bg-gray-900">
+        <div class="container mx-auto px-4">
+            <h2 class="pixel-font text-2xl md:text-3xl mb-8 text-center">A Glimpse of the Code</h2>
+            <div class="bg-gray-800 rounded-lg p-4 overflow-auto max-h-96 text-sm max-w-4xl mx-auto">
+                <pre class="code-font text-green-400"><code>// Function to connect to WiFi with multiple attempts
+bool connectToWiFi() {
+  WiFi.mode(WIFI_STA);
+  WiFi.begin(ssid, password);
+  
+  Serial.print("Connecting to WiFi...");
+  
+  // Wait for connection with extended timeout and multiple attempts
+  int attempts = 0;
+  const int maxAttempts = 3;
+  
+  while (attempts < maxAttempts) {
+    unsigned long startTime = millis();
+    
+    // Try for 30 seconds per attempt
+    while (WiFi.status() != WL_CONNECTED && millis() - startTime < 30000) {
+      delay(500);
+      Serial.print(".");
+    }
+    
+    if (WiFi.status() == WL_CONNECTED) {
+      Serial.println("\nConnected to WiFi!");
+      Serial.print("IP Address: ");
+      Serial.println(WiFi.localIP());
+      server_ip = WiFi.localIP().toString();
+      wifiConnected = true;
+      accessPointMode = false;
+      
+      // Start mDNS responder
+      if (MDNS.begin("esp32files")) {
+        Serial.println("mDNS responder started - You can access the server at http://esp32files.local");
+        MDNS.addService("http", "tcp", webServerPort);
+      } else {
+        Serial.println("Error starting mDNS responder!");
+      }
+      
+      return true;
+    } else {
+      attempts++;
+      Serial.println("\nWiFi connection attempt " + String(attempts) + " failed.");
+      
+      if (attempts < maxAttempts) {
+        Serial.println("Retrying...");
+        WiFi.disconnect();
+        delay(1000);
+        WiFi.begin(ssid, password);
+        Serial.print("Connecting to WiFi...");
+      }
+    }
+  }
+  
+  Serial.println("\nWiFi connection failed after " + String(maxAttempts) + " attempts. Starting Access Point...");
+  setupAccessPoint();
+  return false;
+}
+
+// Function to set up an Access Point if WiFi connection fails
+void setupAccessPoint() {
+  WiFi.disconnect();
+  delay(1000);
+  WiFi.mode(WIFI_AP);
+  WiFi.softAP(ap_ssid, ap_password);
+  server_ip = WiFi.softAPIP().toString();
+  Serial.print("Access Point Started. IP Address: ");
+  Serial.println(server_ip);
+  wifiConnected = false; // Not connected to external WiFi
+  accessPointMode = true; // In AP mode
+}</code></pre>
+            </div>
+            
+            <div class="max-w-3xl mx-auto mt-12">
+                <h3 class="text-xl font-bold mb-6 text-center text-blue-400">Key Implementation Features</h3>
+                <div class="grid grid-cols-1 sm:grid-cols-2 gap-6 text-gray-300">
+                    <div>
+                        <h4 class="font-bold mb-2">Session Management</h4>
+                        <p>Secure token-based authentication with configurable session timeouts. Automatically expires inactive sessions for better security.</p>
+                    </div>
+                    <div>
+                        <h4 class="font-bold mb-2">Fallback Access Point</h4>
+                        <p>Intelligent network handling that switches to AP mode when WiFi connection fails, ensuring you always have access to your files.</p>
+                    </div>
+                    <div>
+                        <h4 class="font-bold mb-2">User Permission Levels</h4>
+                        <p>Built-in user roles with regular users and administrators.</p>
+                    </div>
+                    <div>
+                        <h4 class="font-bold mb-2">File System Operations</h4>
+                        <p>Complete set of file management functions including recursive directory creation and deletion, safe file transfers, and more.</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Why It Matters Section -->
+    <section class="py-16 bg-gray-800">
+        <div class="container mx-auto px-4 max-w-3xl">
+            <h2 class="pixel-font text-2xl md:text-3xl mb-8 text-center">Why Use ESP32 File Server?</h2>
+            <div class="prose prose-lg text-gray-300 mx-auto">
+                <p class="text-center mb-8">
+                    The ESP32 File Server is a simple tool that allows you to store and retrieve files from an SD card via a web interface.<br>
+                    No flashing, no auto-updates just basic file management..
+                </p>
+                
+                <div class="bg-gray-900 p-6 rounded-lg mb-8">
+                    <h3 class="text-xl font-bold mb-4 text-center text-blue-400">Perfect Use Cases</h3>
+                    <ul class="list-disc pl-6 space-y-2">
+    <li><strong>Sensor Data Storage</strong> - Store and retrieve logs from connected sensors</li>
+    <li><strong>Configuration Files</strong> - Upload and manage files like <code>.json</code> or <code>.txt</code> for your IoT projects</li>
+    <li><strong>Local Network Access</strong> - Easily access files stored on the ESP32 over LAN</li>
+    <li><strong>Static Asset Hosting</strong> - Manage images, documents, or other static files on the SD card</li>
+</ul>
+                </div>
+                
+                <p class="text-center mt-12 text-blue-300 text-lg">
+                    Simple. Reliable. Just a file server.
+                    Perfect for lightweight file management on your ESP32 projects.
+                </p>
+            </div>
+        </div>
+    </section>
+
+    <!-- Support Section -->
+    <section class="py-16 bg-gray-900">
+        <div class="container mx-auto px-4 max-w-3xl text-center">
+            <h2 class="pixel-font text-2xl md:text-3xl mb-8">Support This Project</h2>
+            <p class="text-lg mb-8 text-gray-300">
+                This project is open-source and free to use. If you find it useful for your projects, please consider supporting its continued development.
+            </p>
+            
+            <div class="text-center mt-10">
+                    <a href="https://buymeacoffee.com/cyberxcyborg" target="_blank" class="pixel-btn bg-yellow-600 hover:bg-yellow-700 px-6 py-3 rounded-lg font-bold inline-flex items-center">
+                        <i class="fas fa-mug-hot mr-2"></i> Buy Me a Coffee
+                    </a>
+                    <p class="mt-3 text-sm text-gray-400">
+                        (A tiny thanks powers the next evolution.)
+                    </p>
+                </div>
+        </div>
+    </section>
+
+    <!-- Footer -->
+    <footer class="bg-gray-900 pt-12 pb-8 border-t border-gray-800">
+        <div class="container mx-auto px-4">
+            <div class="flex flex-col md:flex-row justify-between items-center">
+                <div class="mb-8 md:mb-0">
+                    <div class="pixel-font text-xl text-blue-400 mb-2">ESP32 File Server</div>
+                    <p class="text-gray-400">Your ESP32 file management solution</p>
+                </div>
+                
+                <div class="flex space-x-6">
+                    <a href="https://github.com/yourusername/ESP32-FileServer" target="_blank" class="text-gray-400 hover:text-blue-400 transition-colors text-2xl">
+                        <i class="fab fa-github"></i>
+                    </a>
+                </div>
+            </div>
+            
+            <div class="border-t border-gray-800 mt-8 pt-8 flex flex-col md:flex-row justify-between items-center">
+                <p class="text-sm text-gray-500 mb-4 md:mb-0">
+                    &copy; 2025 ESP32 File Server. Open-source under MIT License.
+                </p>
+            </div>
+        </div>
+    </footer>
+</body>
+</html>
