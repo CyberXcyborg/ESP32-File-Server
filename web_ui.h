@@ -1,3 +1,4 @@
+/usr/bin/bash: warning: setlocale: LC_ALL: cannot change locale (en_US.UTF-8): No such file or directory
 #ifndef WEB_UI_H
 #define WEB_UI_H
 
@@ -149,6 +150,7 @@ header h1{font-size:18px;color:var(--primary)}
       <button class="btn" onclick="showUploadModal()">⬆️ Upload</button>
       <button class="btn" onclick="showNewFolderModal()">📁 New Folder</button>
       <button class="btn" onclick="refreshFiles()">🔄 Refresh</button>
+      <button class="btn" onclick="downloadZip()">📦 Download ZIP</button>
       <button class="btn btn-danger" id="delSelBtn" style="display:none" onclick="deleteSelected()">🗑️ Delete Selected</button>
       <select class="btn btn-ghost" id="sortSelect" onchange="sortFiles()" style="padding:8px 12px">
         <option value="name-asc">Name ↑</option>
