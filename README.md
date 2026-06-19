@@ -1,40 +1,36 @@
 # ESP32 File Server
 
 ![License](https://img.shields.io/github/license/CyberXcyborg/ESP32-File-Server)
-![Version](https://img.shields.io/badge/version-3.0.0-blue)
+![Version](https://img.shields.io/badge/version-3.2.0-blue)
 
-Turn your ESP32 into a powerful file server with a modern web interface. Upload, download, preview, and manage files on an SD card — all from your browser.
-
-## What's New in v3.0
-
-- 📦 **File Move/Copy** — Move or copy files between folders with a folder tree picker
-- 📁 **Folder Upload** — Upload entire folders (webkitdirectory support)
-- ⚙️ **Settings Page** — Change WiFi, AP, and FTP settings from the web UI (no reflash needed)
-- ⌨️ **Keyboard Shortcuts** — Delete, Ctrl+A (select all), F2 (rename), Escape (clear)
-- ℹ️ **File Info Panel** — Click any file to see details (size, type, path)
-- 📋 **Activity Log** — Track all file operations with timestamp and user (admin)
-- 🔄 **File Versioning** — Auto-backup before overwrite or rename
-- 🔗 **Share Links** — Generate public URLs for files (no auth needed)
-- 📱 **PWA Support** — Install as app on phone home screen
-- 🖱️ **Context Menu** — Right-click files for quick actions
-- 📊 **System Info** — View version, IP, mode, uptime, free memory
+Turn your ESP32 into a powerful file server with a modern web interface.
 
 ## Features
 
-- **Web File Manager** — Upload, download, create, rename, delete, move, copy files & folders
-- **File Preview** — Images, text, audio, video in-browser
-- **Drag & Drop Upload** — Multi-file and folder upload with progress bar
-- **User Authentication** — Admin and user roles, session management
-- **Trash System** — Soft delete with restore and permanent delete
-- **File Sharing** — Generate public share links
-- **Activity Log** — Track who did what and when (admin)
-- **File Versioning** — Automatic backups before overwrite/rename
-- **Dark Mode** — Toggle with localStorage persistence
-- **FTP Server** — Access files via standard FTP clients
-- **WiFi or AP Mode** — Connect to your network or create a hotspot
-- **Search & Sort** — Filter by name, sort by name/size/date
-- **Responsive UI** — Works on desktop, tablet, and phone
-- **Fully Offline** — No internet/cloud required
+### File Management
+- Upload, download, create, rename, delete, move, copy files & folders
+- Folder upload (webkitdirectory)
+- Drag & drop with progress bar
+- File preview (images, text, audio, video)
+- Search & sort (name, size, date)
+- File info panel
+- File versioning (auto-backup)
+- ZIP download (select multiple files)
+- Share links (public URLs)
+
+### System
+- **OTA firmware update** — update firmware from web UI, no USB needed
+- **WiFi auto-reconnect** — automatically reconnects if connection drops
+- **Settings page** — change WiFi, AP, FTP settings from web UI
+- **Activity log** — track all operations with timestamp and user
+- **Trash system** — soft delete with restore
+- **Multi-user** — admin/user roles
+- **PWA support** — install as app on phone
+- **Dark mode** — toggle with localStorage
+- **FTP server** — standard FTP access
+- **WiFi + AP mode** — connect to network or create hotspot
+- **Responsive UI** — works on desktop, tablet, phone
+- **Fully offline** — no internet/cloud required
 
 ## Default Credentials
 
@@ -43,13 +39,22 @@ Turn your ESP32 into a powerful file server with a modern web interface. Upload,
 | Web | admin | admin123 |
 | FTP | esp32 | esp32 |
 
-## Hardware Requirements
+## Keyboard Shortcuts
+
+| Key | Action |
+|-----|--------|
+| Delete | Delete selected files |
+| Ctrl+A | Select all files |
+| F2 | Rename selected file |
+| Escape | Clear selection / close modals |
+
+## Hardware
 
 - ESP32 development board
-- Micro SD card (up to 32GB recommended)
-- SD card module (or built-in SD slot)
+- Micro SD card (up to 32GB)
+- SD card module
 
-## Wiring (Default Pins)
+## Wiring
 
 | SD Card | ESP32 |
 |---------|-------|
@@ -64,31 +69,18 @@ Turn your ESP32 into a powerful file server with a modern web interface. Upload,
 
 1. Clone this repository
 2. Open `ESP32_File_Server.ino` in Arduino IDE
-3. Install required libraries: `WiFi`, `WebServer`, `SimpleFTPServer`, `ESPmDNS`, `SD`, `SPI`, `FS`, `ArduinoJson`
+3. Install libraries: `WiFi`, `WebServer`, `SimpleFTPServer`, `ESPmDNS`, `SD`, `SPI`, `FS`, `ArduinoJson`
 4. Update WiFi credentials in `config.h`
-5. Upload to your ESP32
-6. Open Serial Monitor at 115200 baud to see the IP address
-7. Access the web interface at `http://[IP_ADDRESS]`
+5. Upload to ESP32
+6. Access at `http://[IP_ADDRESS]`
 
-## Project Structure
+## OTA Updates
 
-```
-ESP32_File_Server.ino  — Main application (setup, loop, web handlers)
-config.h               — WiFi, SD, and system configuration
-auth.h                 — User authentication and session management
-file_ops.h             — File operations (SD card, trash, versions, shares, logging)
-web_ui.h               — Web interface (HTML, CSS, JavaScript)
-```
-
-## Keyboard Shortcut
-
-| Key | Action |
-|-----|--------|
-| Delete | Delete selected files |
-| Ctrl+A | Select all files |
-| F2 | Rename selected file |
-| Escape | Clear selection / close modals |
+1. In Arduino IDE: Sketch → Export Compiled Binary
+2. Open web UI → Settings → OTA Update
+3. Select the `.bin` file and upload
+4. Device reboots automatically
 
 ## License
 
-MIT License — Free to use, modify, and share.
+MIT License
