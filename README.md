@@ -1,7 +1,7 @@
 # ESP32 File Server
 
 ![License](https://img.shields.io/github/license/CyberXcyborg/ESP32-File-Server)
-![Version](https://img.shields.io/badge/version-3.2.0-blue)
+![Version](https://img.shields.io/badge/version-3.3.0-blue)
 
 Turn your ESP32 into a powerful file server with a modern web interface.
 
@@ -19,8 +19,11 @@ Turn your ESP32 into a powerful file server with a modern web interface.
 - Share links (public URLs)
 
 ### System
-- **OTA firmware update** — update firmware from web UI, no USB needed
-- **WiFi auto-reconnect** — automatically reconnects if connection drops
+- **OTA firmware update** — update from web UI, no USB needed
+- **WiFi auto-reconnect** — reconnects automatically if connection drops
+- **Remote reboot** — reboot device from web UI
+- **Health check** — public endpoint for monitoring
+- **SD card monitoring** — auto-detect failure, attempt reconnect
 - **Settings page** — change WiFi, AP, FTP settings from web UI
 - **Activity log** — track all operations with timestamp and user
 - **Trash system** — soft delete with restore
@@ -47,6 +50,28 @@ Turn your ESP32 into a powerful file server with a modern web interface.
 | Ctrl+A | Select all files |
 | F2 | Rename selected file |
 | Escape | Clear selection / close modals |
+
+## API Endpoints
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | /health | Health check (public) |
+| GET | /api/list?path=/ | List files |
+| GET | /api/info?path=/file | File info |
+| GET | /api/download?path=/file | Download file |
+| DELETE | /api/delete?path=/file | Move to trash |
+| POST | /api/create-dir?path=/dir | Create directory |
+| POST | /api/rename?path=/old&name=new | Rename |
+| POST | /api/move?path=/src&dest=/dst | Move file |
+| POST | /api/copy?path=/src&dest=/dst | Copy file |
+| POST | /api/upload | Upload file |
+| POST | /api/share?path=/file | Create share link |
+| POST | /api/zip | Download files as ZIP |
+| GET | /api/changes?since=ts | Check for changes |
+| POST | /api/ota-upload | OTA firmware update |
+| POST | /api/reboot | Remote reboot |
+| GET | /api/settings | Get settings |
+| POST | /api/settings | Save settings |
 
 ## Hardware
 
@@ -77,7 +102,7 @@ Turn your ESP32 into a powerful file server with a modern web interface.
 ## OTA Updates
 
 1. In Arduino IDE: Sketch → Export Compiled Binary
-2. Open web UI → Settings → OTA Update
+2. Open web UI → OTA tab
 3. Select the `.bin` file and upload
 4. Device reboots automatically
 
