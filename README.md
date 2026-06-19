@@ -1,26 +1,29 @@
 # ESP32 File Server
 
 ![License](https://img.shields.io/github/license/CyberXcyborg/ESP32-File-Server)
-![Version](https://img.shields.io/badge/version-2.1.0-blue)
+![Version](https://img.shields.io/badge/version-3.0.0-blue)
 
 Turn your ESP32 into a powerful file server with a modern web interface. Upload, download, preview, and manage files on an SD card — all from your browser.
 
-## What's New in v2.1
+## What's New in v3.0
 
-- 📋 **Activity log** — tracks all file operations (upload, delete, rename, download, share) with timestamp and user
-- 🔄 **File versioning** — auto-creates backup before overwrite or rename
-- 🔗 **Share links** — generate public URLs for files (no auth needed)
-- 📱 **PWA support** — install as app on phone home screen
-- 🖱️ **Context menu** — right-click files for quick actions
-- 📑 **Tabbed UI** — Files / Trash / Users / Activity views
-- 🗑️ **Improved trash** — integrated into main UI with restore & permanent delete
-- 📊 **File/folder count** — shows counts in storage info
+- 📦 **File Move/Copy** — Move or copy files between folders with a folder tree picker
+- 📁 **Folder Upload** — Upload entire folders (webkitdirectory support)
+- ⚙️ **Settings Page** — Change WiFi, AP, and FTP settings from the web UI (no reflash needed)
+- ⌨️ **Keyboard Shortcuts** — Delete, Ctrl+A (select all), F2 (rename), Escape (clear)
+- ℹ️ **File Info Panel** — Click any file to see details (size, type, path)
+- 📋 **Activity Log** — Track all file operations with timestamp and user (admin)
+- 🔄 **File Versioning** — Auto-backup before overwrite or rename
+- 🔗 **Share Links** — Generate public URLs for files (no auth needed)
+- 📱 **PWA Support** — Install as app on phone home screen
+- 🖱️ **Context Menu** — Right-click files for quick actions
+- 📊 **System Info** — View version, IP, mode, uptime, free memory
 
 ## Features
 
-- **Web File Manager** — Upload, download, create, rename, delete files & folders
+- **Web File Manager** — Upload, download, create, rename, delete, move, copy files & folders
 - **File Preview** — Images, text, audio, video in-browser
-- **Drag & Drop Upload** — Multi-file with progress bar
+- **Drag & Drop Upload** — Multi-file and folder upload with progress bar
 - **User Authentication** — Admin and user roles, session management
 - **Trash System** — Soft delete with restore and permanent delete
 - **File Sharing** — Generate public share links
@@ -77,26 +80,14 @@ file_ops.h             — File operations (SD card, trash, versions, shares, lo
 web_ui.h               — Web interface (HTML, CSS, JavaScript)
 ```
 
-## API Endpoints
+## Keyboard Shortcut
 
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| GET | `/api/list?path=/` | List files in directory |
-| GET | `/api/download?path=/file.txt` | Download file |
-| DELETE | `/api/delete?path=/file.txt` | Move file to trash |
-| POST | `/api/create-dir?path=/newdir` | Create directory |
-| POST | `/api/rename?path=/old&name=new` | Rename file/folder |
-| POST | `/api/upload` | Upload file (multipart) |
-| POST | `/api/share?path=/file.txt` | Create share link |
-| GET | `/api/trash` | List trash contents |
-| GET | `/api/restore?path=...` | Restore from trash |
-| GET | `/api/empty-trash` | Empty trash (permanent) |
-| GET | `/api/log` | Activity log (admin) |
-| GET | `/api/users` | List users (admin) |
-| POST | `/api/users` | Add user (admin) |
-| PUT | `/api/users/name` | Update user (admin) |
-| DELETE | `/api/users/name` | Delete user (admin) |
-| GET | `/s/TOKEN` | Access shared file (public) |
+| Key | Action |
+|-----|--------|
+| Delete | Delete selected files |
+| Ctrl+A | Select all files |
+| F2 | Rename selected file |
+| Escape | Clear selection / close modals |
 
 ## License
 
