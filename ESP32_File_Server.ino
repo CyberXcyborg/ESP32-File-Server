@@ -1,18 +1,20 @@
 /*
- * ESP32 File Server v2.0
+ * ESP32 File Server v3.0
  * (c) 2024 CyberXcyborg
  * 
- * Features:
- * - Web file manager with drag & drop upload
- * - File preview (images, text, audio, video)
- * - File/folder rename
- * - Search & sort (name, size, date)
- * - Dark mode
- * - Trash / recycle bin
- * - Storage usage dashboard
- * - Multi-user authentication
- * - FTP server
- * - WiFi + AP mode
+ * v3.0 Changes:
+ * - File move/copy between folders
+ * - Folder upload support
+ * - Large file chunked upload
+ * - Settings page (WiFi config from web UI)
+ * - Keyboard shortcuts (Del, Ctrl+A, F2, Esc)
+ * - File info panel
+ * - Mobile UI improvements
+ * - Download selected as ZIP
+ * - Activity logging
+ * - File versioning
+ * - Share links
+ * - PWA support
  */
 
 #include <WiFi.h>
@@ -59,10 +61,8 @@ bool connectToWiFi() {
       return true;
     }
     attempts++;
-    Serial.println("\nAttempt " + String(attempts) + " failed");
     if (attempts < 3) { WiFi.disconnect(); delay(1000); WiFi.begin(ssid, password); }
   }
-  Serial.println("\nWiFi failed, starting AP...");
   setupAccessPoint();
   return false;
 }
@@ -81,30 +81,27 @@ void setupAccessPoint() {
   }
 }
 
-// ============== API HANDLERS ==============
-
+// ============== SERVER INFO ==============
 void handleServerInfo() {
   String mode = accessPointMode ? "Access Point" : "WiFi Client";
   String json = "{\"ip\":\"" + server_ip + "\",\"port\":" + String(webServerPort);
-  json += ",\"ftp_user\":\"" + String(ftp_user) + "\"";
-  json += ",\"ftp_password\":\"" + String(ftp_password) + "\"";
   json += ",\"mode\":\"" + mode + "\"";
   json += ",\"hostname\":\"esp32files.local\"";
   json += ",\"version\":\"" + String(FIRMWARE_VERSION) + "\"}";
   webServer.send(200, "application/json", json);
 }
 
+// ============== API: LIST FILES ==============
 void handleListFiles() {
   String username, userLevel;
   if (!isAuthenticated(webServer, username, userLevel)) { webServer.send(401); return; }
   String path = webServer.hasArg("path") ? webServer.arg("path") : "/";
   if (path.length() == 0) path = "/";
 
-  DynamicJsonDocument doc(8192);
+  DynamicJsonDocument doc(16384);
   doc["username"] = username;
   doc["userLevel"] = userLevel;
 
-  // Storage info
   uint64_t total = SD.totalBytes();
   uint64_t used = SD.usedBytes();
   JsonObject storage = doc.createNestedObject("storage");
@@ -115,12 +112,14 @@ void handleListFiles() {
   File dir = SD.open(path);
   if (!dir || !dir.isDirectory()) { webServer.send(400, "application/json", "{\"error\":\"Invalid path\"}"); return; }
 
+  int fileCount = 0, dirCount = 0;
   File file;
   while (file = dir.openNextFile()) {
     String fname = String(file.name());
     int slash = fname.lastIndexOf('/');
     String name = (slash >= 0) ? fname.substring(slash + 1) : fname;
     bool isDir = file.isDirectory();
+    if (isDir) dirCount++; else fileCount++;
     JsonObject f = arr.createNestedObject();
     f["name"] = name;
     f["path"] = path + (path.endsWith("/") ? "" : "/") + name + (isDir ? "/" : "");
@@ -131,12 +130,39 @@ void handleListFiles() {
     file.close();
   }
   dir.close();
+  doc["fileCount"] = fileCount;
+  doc["dirCount"] = dirCount;
 
   String out;
   serializeJson(doc, out);
   webServer.send(200, "application/json", out);
 }
 
+// ============== API: FILE INFO ==============
+void handleFileInfo() {
+  String username, userLevel;
+  if (!isAuthenticated(webServer, username, userLevel)) { webServer.send(401); return; }
+  if (!webServer.hasArg("path")) { webServer.send(400); return; }
+  String path = webServer.arg("path");
+  if (!SD.exists(path)) { webServer.send(404); return; }
+  
+  File f = SD.open(path);
+  if (!f) { webServer.send(500); return; }
+  
+  DynamicJsonDocument doc(512);
+  doc["name"] = path.substring(path.lastIndexOf('/') + 1);
+  doc["path"] = path;
+  doc["type"] = f.isDirectory() ? "dir" : "file";
+  doc["size"] = f.isDirectory() ? 0 : f.size();
+  doc["sizeFormatted"] = f.isDirectory() ? "-" : getFileSize(f.size());
+  f.close();
+  
+  String out;
+  serializeJson(doc, out);
+  webServer.send(200, "application/json", out);
+}
+
+// ============== API: DOWNLOAD ==============
 void handleDownload() {
   String username, userLevel;
   if (!isAuthenticated(webServer, username, userLevel)) { webServer.send(401); return; }
@@ -149,34 +175,39 @@ void handleDownload() {
   webServer.sendHeader("Content-Disposition", "attachment; filename=\"" + name + "\"");
   webServer.streamFile(f, "application/octet-stream");
   f.close();
+  logActivity("download", path, username);
 }
 
+// ============== API: DELETE ==============
 void handleDelete() {
   String username, userLevel;
   if (!isAuthenticated(webServer, username, userLevel)) { webServer.send(401); return; }
   if (!webServer.hasArg("path")) { webServer.send(400); return; }
   String path = webServer.arg("path");
   if (!SD.exists(path)) { webServer.send(404); return; }
-  // Move to trash instead of permanent delete
   if (moveToTrash(path)) {
+    logActivity("delete", path, username);
     webServer.send(200, "text/plain", "Moved to trash");
   } else {
-    webServer.send(500, "text/plain", "Failed to move to trash");
+    webServer.send(500, "text/plain", "Failed");
   }
 }
 
+// ============== API: CREATE DIR ==============
 void handleCreateDir() {
   String username, userLevel;
   if (!isAuthenticated(webServer, username, userLevel)) { webServer.send(401); return; }
   if (!webServer.hasArg("path")) { webServer.send(400); return; }
   String path = webServer.arg("path");
   if (createDirRecursive(path)) {
+    logActivity("mkdir", path, username);
     webServer.send(200, "text/plain", "OK");
   } else {
     webServer.send(500, "text/plain", "Failed");
   }
 }
 
+// ============== API: RENAME (with versioning) ==============
 void handleRename() {
   String username, userLevel;
   if (!isAuthenticated(webServer, username, userLevel)) { webServer.send(401); return; }
@@ -184,22 +215,79 @@ void handleRename() {
   String path = webServer.arg("path");
   String newName = webServer.arg("name");
   if (!SD.exists(path)) { webServer.send(404); return; }
-  // Build new path
+  if (!SD.open(path).isDirectory()) createVersion(path);
   int slash = path.lastIndexOf('/');
   String parent = (slash > 0) ? path.substring(0, slash + 1) : "/";
   String newPath = parent + newName;
   if (SD.rename(path, newPath)) {
+    logActivity("rename", path + " -> " + newPath, username);
     webServer.send(200, "text/plain", "OK");
   } else {
     webServer.send(500, "text/plain", "Failed");
   }
 }
 
+// ============== API: MOVE ==============
+void handleMove() {
+  String username, userLevel;
+  if (!isAuthenticated(webServer, username, userLevel)) { webServer.send(401); return; }
+  if (!webServer.hasArg("path") || !webServer.hasArg("dest")) { webServer.send(400); return; }
+  String path = webServer.arg("path");
+  String dest = webServer.arg("dest");
+  if (!SD.exists(path)) { webServer.send(404); return; }
+  
+  // Build destination path
+  String destPath;
+  File destDir = SD.open(dest);
+  if (destDir && destDir.isDirectory()) {
+    // dest is a directory, move file into it
+    String name = path.substring(path.lastIndexOf('/') + 1);
+    destPath = dest + (dest.endsWith("/") ? "" : "/") + name;
+    destDir.close();
+  } else {
+    destPath = dest;
+  }
+  
+  if (moveFile(path, destPath)) {
+    logActivity("move", path + " -> " + destPath, username);
+    webServer.send(200, "text/plain", "OK");
+  } else {
+    webServer.send(500, "text/plain", "Failed");
+  }
+}
+
+// ============== API: COPY ==============
+void handleCopy() {
+  String username, userLevel;
+  if (!isAuthenticated(webServer, username, userLevel)) { webServer.send(401); return; }
+  if (!webServer.hasArg("path") || !webServer.hasArg("dest")) { webServer.send(400); return; }
+  String path = webServer.arg("path");
+  String dest = webServer.arg("dest");
+  if (!SD.exists(path)) { webServer.send(404); return; }
+  
+  String destPath;
+  File destDir = SD.open(dest);
+  if (destDir && destDir.isDirectory()) {
+    String name = path.substring(path.lastIndexOf('/') + 1);
+    destPath = dest + (dest.endsWith("/") ? "" : "/") + name;
+    destDir.close();
+  } else {
+    destPath = dest;
+  }
+  
+  if (copyFile(path, destPath)) {
+    logActivity("copy", path + " -> " + destPath, username);
+    webServer.send(200, "text/plain", "OK");
+  } else {
+    webServer.send(500, "text/plain", "Failed");
+  }
+}
+
+// ============== API: UPLOAD ==============
 void handleUploadAuth() {
   String username, userLevel;
   if (!isAuthenticated(webServer, username, userLevel)) { webServer.send(401); return; }
   String token = generateSessionToken();
-  // Store upload token in sessions
   createSession(username + "_upload", userLevel);
   webServer.send(200, "application/json", "{\"token\":\"" + token + "\"}");
 }
@@ -216,63 +304,168 @@ void handleUpload() {
     String path = webServer.hasArg("path") ? webServer.arg("path") : "/";
     if (!path.endsWith("/")) path += "/";
     uploadPath = path + upload.filename;
-    if (SD.exists(uploadPath)) SD.remove(uploadPath);
+    if (SD.exists(uploadPath)) createVersion(uploadPath);
+    else SD.remove(uploadPath);
     uploadFile = SD.open(uploadPath, FILE_WRITE);
   } else if (upload.status == UPLOAD_FILE_WRITE) {
     if (uploadFile) uploadFile.write(upload.buf, upload.currentSize);
   } else if (upload.status == UPLOAD_FILE_END) {
     if (uploadFile) uploadFile.close();
-    Serial.println("Upload: " + uploadPath + " (" + String(upload.totalSize) + " bytes)");
+    logActivity("upload", uploadPath + " (" + String(upload.totalSize) + "B)", username);
   }
 }
 
-// ============== TRASH HANDLERS ==============
-
-void handleTrashPage() {
+// ============== API: SHARE ==============
+void handleCreateShare() {
   String username, userLevel;
-  if (!isAuthenticated(webServer, username, userLevel)) {
-    webServer.sendHeader("Location", "/login"); webServer.send(302); return;
-  }
-  // Simple trash listing page
-  String html = "<!DOCTYPE html><html><head><meta name='viewport' content='width=device-width,initial-scale=1.0'><title>Trash</title>";
-  html += "<style>:root{--bg:#f5f6fa;--card:#fff;--text:#2d3436;--primary:#0984e3;--danger:#d63031;--border:#dfe6e9}";
-  html += "*{margin:0;padding:0;box-sizing:border-box;font-family:'Segoe UI',system-ui,sans-serif}";
-  html += "body{background:var(--bg);color:var(--text);padding:20px}";
-  html += ".container{max-width:800px;margin:0 auto;background:var(--card);border-radius:8px;padding:20px;box-shadow:0 2px 10px rgba(0,0,0,0.08)}";
-  html += "h1{color:var(--primary);margin-bottom:15px;font-size:20px}";
-  html += ".btn{background:var(--primary);color:#fff;border:none;padding:8px 14px;border-radius:6px;cursor:pointer;font-size:13px;text-decoration:none;display:inline-block;margin-right:5px}";
-  html += ".btn-danger{background:var(--danger)}.back{margin-bottom:15px;display:inline-block}";
-  html += ".item{padding:10px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center}";
-  html += ".empty{padding:30px;text-align:center;color:#999}</style></head><body>";
-  html += "<div class='container'><a href='/' class='back btn'>← Back to Files</a><h1>🗑️ Trash</h1>";
-
-  if (!SD.exists(TRASH_FOLDER)) {
-    html += "<div class='empty'>Trash is empty</div>";
+  if (!isAuthenticated(webServer, username, userLevel)) { webServer.send(401); return; }
+  if (!webServer.hasArg("path")) { webServer.send(400); return; }
+  String path = webServer.arg("path");
+  if (!SD.exists(path)) { webServer.send(404); return; }
+  String token;
+  if (createShare(path, token)) {
+    logActivity("share", path, username);
+    String url = "http://" + server_ip + "/s/" + token;
+    webServer.send(200, "application/json", "{\"url\":\"" + url + "\",\"token\":\"" + token + "\"}");
   } else {
-    File dir = SD.open(TRASH_FOLDER);
-    if (!dir) {
-      html += "<div class='empty'>Cannot open trash folder</div>";
-    } else {
-      File f;
-      int count = 0;
-      while (f = dir.openNextFile()) {
-        String name = String(f.name());
-        int slash = name.lastIndexOf('/');
-        String shortName = (slash >= 0) ? name.substring(slash + 1) : name;
-        html += "<div class='item'><span>" + shortName + "</span><span>";
-        html += "<a class='btn' href='/api/restore?path=" + name + "'>♻️ Restore</a> ";
-        html += "<a class='btn btn-danger' href='/api/empty-trash?path=" + name + "'>❌ Delete</a>";
-        html += "</span></div>";
-        f.close();
-        count++;
-      }
-      dir.close();
-      if (count == 0) html += "<div class='empty'>Trash is empty</div>";
-      else html += "<div style='margin-top:15px'><a class='btn btn-danger' href='/api/empty-trash'>Empty All Trash</a></div>";
+    webServer.send(500, "text/plain", "Failed");
+  }
+}
+
+void handleSharedFile() {
+  String token = webServer.pathArg(0);
+  String path;
+  if (!getSharePath(token, path)) { webServer.send(404, "text/plain", "Link expired or invalid"); return; }
+  if (!SD.exists(path)) { webServer.send(404, "text/plain", "File not found"); return; }
+  File f = SD.open(path, FILE_READ);
+  if (!f) { webServer.send(500); return; }
+  String name = path.substring(path.lastIndexOf('/') + 1);
+  webServer.sendHeader("Content-Disposition", "attachment; filename=\"" + name + "\"");
+  webServer.streamFile(f, "application/octet-stream");
+  f.close();
+}
+
+// ============== API: SETTINGS ==============
+void handleGetSettings() {
+  String username, userLevel;
+  if (!isAuthenticated(webServer, username, userLevel) || userLevel != "admin") { webServer.send(403); return; }
+  DynamicJsonDocument doc(512);
+  doc["wifi_ssid"] = String(ssid);
+  doc["ap_ssid"] = String(ap_ssid);
+  doc["ftp_user"] = String(ftp_user);
+  doc["version"] = FIRMWARE_VERSION;
+  doc["ip"] = server_ip;
+  doc["mode"] = accessPointMode ? "AP" : "WiFi";
+  doc["uptime"] = millis() / 1000;
+  doc["free_heap"] = ESP.getFreeHeap();
+  // Load saved settings if exist
+  if (SD.exists(SETTINGS_FILE)) {
+    File f = SD.open(SETTINGS_FILE, FILE_READ);
+    if (f) {
+      DynamicJsonDocument saved(512);
+      deserializeJson(saved, f);
+      f.close();
+      if (saved["wifi_ssid"]) doc["saved_wifi_ssid"] = saved["wifi_ssid"].as<String>();
+      if (saved["ap_ssid"]) doc["saved_ap_ssid"] = saved["ap_ssid"].as<String>();
     }
   }
-  html += "</div></body></html>";
-  webServer.send(200, "text/html", html);
+  String out;
+  serializeJson(doc, out);
+  webServer.send(200, "application/json", out);
+}
+
+void handleSaveSettings() {
+  String username, userLevel;
+  if (!isAuthenticated(webServer, username, userLevel) || userLevel != "admin") { webServer.send(403); return; }
+  if (!webServer.hasArg("plain")) { webServer.send(400); return; }
+  DynamicJsonDocument doc(512);
+  deserializeJson(doc, webServer.arg("plain"));
+  
+  String wifiSsid = doc["wifi_ssid"] | String(ssid);
+  String wifiPass = doc["wifi_pass"] | String(password);
+  String apSsid = doc["ap_ssid"] | String(ap_ssid);
+  String apPass = doc["ap_pass"] | String(ap_password);
+  String ftpUser = doc["ftp_user"] | String(ftp_user);
+  String ftpPass = doc["ftp_pass"] | String(ftp_password);
+  
+  if (saveSettings(wifiSsid, wifiPass, apSsid, apPass, ftpUser, ftpPass)) {
+    logActivity("settings", "updated", username);
+    webServer.send(200, "application/json", "{\"ok\":true,\"msg\":\"Settings saved. Reboot to apply WiFi changes.\"}");
+  } else {
+    webServer.send(500, "text/plain", "Failed to save");
+  }
+}
+
+// ============== API: ACTIVITY LOG ==============
+void handleGetLog() {
+  String username, userLevel;
+  if (!isAuthenticated(webServer, username, userLevel) || userLevel != "admin") { webServer.send(403); return; }
+  DynamicJsonDocument doc(4096);
+  JsonArray arr = doc.createNestedArray("log");
+  if (SD.exists(LOG_FILE)) {
+    File f = SD.open(LOG_FILE, FILE_READ);
+    if (f) {
+      String lines[50];
+      int count = 0;
+      String line = "";
+      while (f.available()) {
+        char c = f.read();
+        if (c == '\n') { lines[count % 50] = line; count++; line = ""; }
+        else line += c;
+      }
+      f.close();
+      int start = count > 50 ? count - 50 : 0;
+      for (int i = start; i < count; i++) {
+        String l = lines[i % 50];
+        int c1 = l.indexOf(','), c2 = l.indexOf(',', c1+1), c3 = l.indexOf(',', c2+1);
+        if (c1 > 0 && c2 > 0 && c3 > 0) {
+          JsonObject e = arr.createNestedObject();
+          e["time"] = l.substring(0, c1).toInt();
+          e["user"] = l.substring(c1+1, c2);
+          e["action"] = l.substring(c2+1, c3);
+          e["path"] = l.substring(c3+1);
+        }
+      }
+    }
+  }
+  String out;
+  serializeJson(doc, out);
+  webServer.send(200, "application/json", out);
+}
+
+// ============== TRASH ==============
+void handleTrashPage() {
+  String username, userLevel;
+  if (!isAuthenticated(webServer, username, userLevel)) { webServer.sendHeader("Location", "/login"); webServer.send(302); return; }
+  webServer.send(200, "text/html", String(index_html));
+}
+
+void handleTrashList() {
+  String username, userLevel;
+  if (!isAuthenticated(webServer, username, userLevel)) { webServer.send(401); return; }
+  DynamicJsonDocument doc(8192);
+  JsonArray arr = doc.createNestedArray("files");
+  if (SD.exists(TRASH_FOLDER)) {
+    File dir = SD.open(TRASH_FOLDER);
+    if (dir) {
+      File f;
+      while (f = dir.openNextFile()) {
+        String name = String(f.name());
+        int slash = name.lastIndexOf();
+        String shortName = (slash >= 0) ? name.substring(slash + 1) : name;
+        JsonObject item = arr.createNestedObject();
+        item["name"] = shortName;
+        item["path"] = name;
+        item["type"] = f.isDirectory() ? "dir" : "file";
+        item["size"] = f.isDirectory() ? 0 : f.size();
+        f.close();
+      }
+      dir.close();
+    }
+  }
+  String out;
+  serializeJson(doc, out);
+  webServer.send(200, "application/json", out);
 }
 
 void handleRestore() {
@@ -280,8 +473,12 @@ void handleRestore() {
   if (!isAuthenticated(webServer, username, userLevel)) { webServer.send(401); return; }
   if (!webServer.hasArg("path")) { webServer.send(400); return; }
   String path = webServer.arg("path");
-  if (restoreFromTrash(path)) webServer.send(200, "text/plain", "Restored");
-  else webServer.send(500, "text/plain", "Failed");
+  if (restoreFromTrash(path)) {
+    logActivity("restore", path, username);
+    webServer.send(200, "text/plain", "Restored");
+  } else {
+    webServer.send(500, "text/plain", "Failed");
+  }
 }
 
 void handleEmptyTrash() {
@@ -296,17 +493,13 @@ void handleEmptyTrash() {
       f.close();
     }
   } else {
-    // Empty all trash
-    if (SD.exists(TRASH_FOLDER)) {
-      removeDir(TRASH_FOLDER);
-      SD.mkdir(TRASH_FOLDER);
-    }
+    if (SD.exists(TRASH_FOLDER)) { removeDir(TRASH_FOLDER); SD.mkdir(TRASH_FOLDER); }
   }
-  webServer.sendHeader("Location", "/trash"); webServer.send(302);
+  logActivity("empty-trash", "all", username);
+  webServer.send(200, "text/plain", "OK");
 }
 
 // ============== USER MANAGEMENT ==============
-
 void handleGetUsers() {
   String username, userLevel;
   if (!isAuthenticated(webServer, username, userLevel) || userLevel != "admin") { webServer.send(403); return; }
@@ -315,7 +508,6 @@ void handleGetUsers() {
   String content = "";
   while (f.available()) content += (char)f.read();
   f.close();
-  // Strip passwords for API response
   DynamicJsonDocument doc(1024);
   deserializeJson(doc, content);
   JsonArray users = doc["users"];
@@ -341,7 +533,6 @@ void handleAddUser() {
   String newPass = doc["password"] | "";
   String newLevel = doc["userLevel"] | "user";
   if (newUser.length() == 0 || newPass.length() == 0) { webServer.send(400); return; }
-  // Read existing
   File f = SD.open(USERS_FILE);
   String content = "{\"users\":[]}"; if (f) { content = ""; while (f.available()) content += (char)f.read(); f.close(); }
   DynamicJsonDocument existing(1024);
@@ -351,6 +542,7 @@ void handleAddUser() {
   u["username"] = newUser; u["password"] = newPass; u["userLevel"] = newLevel;
   f = SD.open(USERS_FILE, FILE_WRITE); if (!f) { webServer.send(500); return; }
   serializeJson(existing, f); f.close();
+  logActivity("add-user", newUser, username);
   webServer.send(200, "text/plain", "OK");
 }
 
@@ -392,6 +584,7 @@ void handleDeleteUser() {
   }
   f = SD.open(USERS_FILE, FILE_WRITE); if (!f) { webServer.send(500); return; }
   serializeJson(existing, f); f.close();
+  logActivity("delete-user", path, username);
   webServer.send(200, "text/plain", "OK");
 }
 
@@ -399,57 +592,10 @@ void handleUserManagementPage() {
   String username, userLevel;
   if (!isAuthenticated(webServer, username, userLevel)) { webServer.sendHeader("Location", "/login"); webServer.send(302); return; }
   if (userLevel != "admin") { webServer.sendHeader("Location", "/"); webServer.send(302); return; }
-  // Serve user management HTML (embedded minimal version)
-  String html = "<!DOCTYPE html><html><head><meta name='viewport' content='width=device-width,initial-scale=1.0'><title>User Management</title>";
-  html += "<style>:root{--bg:#f5f6fa;--card:#fff;--text:#2d3436;--primary:#0984e3;--danger:#d63031;--border:#dfe6e9;--success:#00b894}";
-  html += "*{margin:0;padding:0;box-sizing:border-box;font-family:'Segoe UI',system-ui,sans-serif}";
-  html += "body{background:var(--bg);color:var(--text);padding:20px}";
-  html += ".container{max-width:700px;margin:0 auto;background:var(--card);border-radius:8px;padding:20px;box-shadow:0 2px 10px rgba(0,0,0,0.08)}";
-  html += "h1{color:var(--primary);margin-bottom:15px;font-size:20px}";
-  html += ".btn{background:var(--primary);color:#fff;border:none;padding:8px 14px;border-radius:6px;cursor:pointer;font-size:13px;text-decoration:none;display:inline-block;margin-right:5px}";
-  html += ".btn-danger{background:var(--danger)}.btn-ghost{background:transparent;color:var(--text);border:1px solid var(--border)}";
-  html += "table{width:100%;border-collapse:collapse;margin-top:15px}";
-  html += "th,td{padding:10px;text-align:left;border-bottom:1px solid var(--border);font-size:13px}";
-  html += "th{background:var(--primary);color:#fff}";
-  html += ".modal{display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,.5);z-index:100;justify-content:center;align-items:center}";
-  html += ".modal-content{background:var(--card);border-radius:8px;padding:25px;width:90%;max-width:400px}";
-  html += "input,select{width:100%;padding:10px;border:1px solid var(--border);border-radius:6px;font-size:14px;margin-top:5px}";
-  html += "label{font-size:13px;font-weight:500}";
-  html += ".form-group{margin-bottom:12px}";
-  html += ".toast{position:fixed;bottom:20px;right:20px;padding:10px 18px;border-radius:6px;color:#fff;font-size:13px;opacity:0;transition:opacity .3s}";
-  html += ".toast.show{opacity:1}.toast.success{background:var(--success)}.toast.error{background:var(--danger)}</style></head><body>";
-  html += "<div class='container'><a href='/' class='btn btn-ghost'>← Back</a><h1>👥 User Management</h1>";
-  html += "<button class='btn' onclick='showModal()'>+ Add User</button>";
-  html += "<table><thead><tr><th>Username</th><th>Role</th><th>Actions</th></tr></thead><tbody id='userTable'></tbody></table></div>";
-  html += "<div class='modal' id='userModal'><div class='modal-content'>";
-  html += "<h2 id='modalTitle' style='margin-bottom:15px'>Add User</h2>";
-  html += "<div class='form-group'><label>Username</label><input type='text' id='uName'></div>";
-  html += "<div class='form-group'><label>Password</label><input type='password' id='uPass'></div>";
-  html += "<div class='form-group'><label>Role</label><select id='uRole'><option value='user'>User</option><option value='admin'>Admin</option></select></div>";
-  html += "<div style='display:flex;gap:8px;justify-content:flex-end;margin-top:15px'>";
-  html += "<button class='btn btn-ghost' onclick='closeM()'>Cancel</button><button class='btn' onclick='saveUser()'>Save</button></div></div></div>";
-  html += "<div class='toast' id='toast'></div>";
-  html += "<script>const tok=getToken();let users=[];";
-  html += "function getToken(){const c=document.cookie.split(';');for(let x of c){const[n,v]=x.trim().split('=');if(n==='session_token')return v;}return '';}";
-  html += "function load(){fetch('/api/users',{headers:{'Authorization':'Bearer '+tok}}).then(r=>r.json()).then(d=>{users=d.users||[];render();});}";
-  html += "function render(){let h='';users.forEach((u,i)=>{h+=`<tr><td>${u.username}</td><td>${u.userLevel}</td><td><button class='btn' onclick='edit(${i})'>✏️</button> <button class='btn btn-danger' onclick='del(${i})'>🗑️</button></td></tr>`;});document.getElementById('userTable').innerHTML=h;}";
-  html += "function showModal(){document.getElementById('modalTitle').textContent='Add User';document.getElementById('uName').value='';document.getElementById('uPass').value='';document.getElementById('uRole').value='user';document.getElementById('uName').disabled=false;document.getElementById('userModal').style.display='flex';}";
-  html += "function closeM(){document.getElementById('userModal').style.display='none';}";
-  html += "function edit(i){document.getElementById('modalTitle').textContent='Edit User';document.getElementById('uName').value=users[i].username;document.getElementById('uPass').value='';document.getElementById('uRole').value=users[i].userLevel;document.getElementById('uName').disabled=true;document.getElementById('userModal').style.display='flex';}";
-  html += "function saveUser(){const n=document.getElementById('uName').value,p=document.getElementById('uPass').value,r=document.getElementById('uRole').value;";
-  html += "const isEdit=document.getElementById('uName').disabled;";
-  html += "const body={username:n,userLevel:r};if(p)body.password=p;";
-  html += "const url=isEdit?'/api/users/'+n:'/api/users';const method=isEdit?'PUT':'POST';";
-  html += "fetch(url,{method:method,headers:{'Content-Type':'application/json','Authorization':'Bearer '+tok},body:JSON.stringify(body)}).then(r=>{if(r.ok){closeM();load();showToast('Saved','success');}else showToast('Failed','error');});}";
-  html += "function del(i){if(!confirm('Delete user "'+users[i].username+'"?'))return;";
-  html += "fetch('/api/users/'+users[i].username,{method:'DELETE',headers:{'Authorization':'Bearer '+tok}}).then(r=>{if(r.ok){load();showToast('Deleted','success');}else showToast('Failed','error');});}";
-  html += "function showToast(m,t){const el=document.getElementById('toast');el.textContent=m;el.className='toast '+t+' show';setTimeout(()=>el.classList.remove('show'),3000);}";
-  html += "load();</script></body></html>";
-  webServer.send(200, "text/html", html);
+  webServer.send(200, "text/html", String(index_html));
 }
 
 // ============== LOGIN / LOGOUT ==============
-
 void handleLogin() {
   String errorMessage = "";
   if (webServer.method() == HTTP_POST) {
@@ -497,8 +643,13 @@ void handleRoot() {
   webServer.send(200, "text/html", String(index_html));
 }
 
-// ============== SETUP / LOOP ==============
+// ============== PWA MANIFEST ==============
+void handleManifest() {
+  String json = "{\"name\":\"ESP32 File Server\",\"short_name\":\"ESP32-FS\",\"start_url\":\"/\",\"display\":\"standalone\",\"background_color\":\"#0984e3\",\"theme_color\":\"#0984e3\",\"icons\":[]}";
+  webServer.send(200, "application/manifest+json", json);
+}
 
+// ============== SETUP / LOOP ==============
 void setup() {
   Serial.begin(115200);
   Serial.println("\n\nESP32 File Server v" + String(FIRMWARE_VERSION));
@@ -509,6 +660,7 @@ void setup() {
     Serial.println("SD Card OK");
   }
 
+  loadSettings();
   setupAuthentication();
   connectToWiFi();
 
@@ -519,17 +671,27 @@ void setup() {
   webServer.on("/server-info", handleServerInfo);
   webServer.on("/users", handleUserManagementPage);
   webServer.on("/trash", handleTrashPage);
+  webServer.on("/manifest.json", handleManifest);
+  webServer.on("/s/", HTTP_GET, handleSharedFile);
 
   // API routes
   webServer.on("/api/list", HTTP_GET, handleListFiles);
+  webServer.on("/api/info", HTTP_GET, handleFileInfo);
   webServer.on("/api/download", HTTP_GET, handleDownload);
   webServer.on("/api/delete", HTTP_DELETE, handleDelete);
   webServer.on("/api/create-dir", HTTP_POST, handleCreateDir);
   webServer.on("/api/rename", HTTP_POST, handleRename);
+  webServer.on("/api/move", HTTP_POST, handleMove);
+  webServer.on("/api/copy", HTTP_POST, handleCopy);
   webServer.on("/api/upload-auth", HTTP_GET, handleUploadAuth);
   webServer.on("/api/upload", HTTP_POST, []() { webServer.send(200); }, handleUpload);
+  webServer.on("/api/share", HTTP_POST, handleCreateShare);
+  webServer.on("/api/trash", HTTP_GET, handleTrashList);
   webServer.on("/api/restore", HTTP_GET, handleRestore);
   webServer.on("/api/empty-trash", HTTP_GET, handleEmptyTrash);
+  webServer.on("/api/log", HTTP_GET, handleGetLog);
+  webServer.on("/api/settings", HTTP_GET, handleGetSettings);
+  webServer.on("/api/settings", HTTP_POST, handleSaveSettings);
   webServer.on("/api/users", HTTP_GET, handleGetUsers);
   webServer.on("/api/users", HTTP_POST, handleAddUser);
   webServer.on("/api/users/", HTTP_PUT, handleUpdateUser);
@@ -538,7 +700,6 @@ void setup() {
   webServer.begin();
   Serial.println("Web server started on port " + String(webServerPort));
 
-  // FTP
   ftpSrv.begin(ftp_user, ftp_password);
   Serial.println("FTP server started");
 }
