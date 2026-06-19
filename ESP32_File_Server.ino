@@ -1,5 +1,5 @@
 /*
- * ESP32 File Server v3.2
+ * ESP32 File Server v3.3
  * (c) 2024 CyberXcyborg
  */
 
@@ -25,7 +25,9 @@ bool wifiConnected = false;
 bool accessPointMode = false;
 String server_ip = "";
 unsigned long lastWiFiCheck = 0;
+bool sdOK = true;
 
+// ============== WIFI ==============
 bool connectToWiFi() {
   WiFi.mode(WIFI_STA);
   WiFi.begin(ssid, password);
@@ -59,15 +61,14 @@ void setupAccessPoint() {
 }
 
 void checkWiFi() {
-  if (millis() - lastWiFiCheck < 30000) return; // check every 30s
+  if (millis() - lastWiFiCheck < 30000) return;
   lastWiFiCheck = millis();
   if (!accessPointMode && WiFi.status() != WL_CONNECTED) {
     Serial.println("WiFi lost, reconnecting...");
-    WiFi.disconnect();
-    delay(1000);
+    WiFi.disconnect(); delay(1000);
     WiFi.begin(ssid, password);
-    int attempts = 0;
-    while (WiFi.status() != WL_CONNECTED && attempts < 10) { delay(500); attempts++; }
+    int a = 0;
+    while (WiFi.status() != WL_CONNECTED && a < 10) { delay(500); a++; }
     if (WiFi.status() == WL_CONNECTED) {
       server_ip = WiFi.localIP().toString();
       wifiConnected = true;
@@ -76,24 +77,65 @@ void checkWiFi() {
   }
 }
 
+bool checkSD() {
+  if (!sdOK) {
+    // Try to reinit
+    if (SD.begin(SD_CS)) { sdOK = true; Serial.println("SD reconnected"); }
+  }
+  return sdOK;
+}
+
+// ============== SERVER INFO ==============
 void handleServerInfo() {
   String m = accessPointMode ? "AP" : "WiFi";
   String json = "{\"ip\":\""+server_ip+"\",\"mode\":\""+m+"\",\"version\":\""+String(FIRMWARE_VERSION)+"\"";
   json += ",\"uptime\":"+String(millis()/1000);
   json += ",\"heap\":"+String(ESP.getFreeHeap());
   json += ",\"rssi\":"+String(WiFi.RSSI());
+  json += ",\"sd_ok\":"+String(sdOK ? "true" : "false");
+  json += ",\"sd_total\":"+String(SD.totalBytes());
+  json += ",\"sd_used\":"+String(SD.usedBytes());
   json += "}";
   webServer.send(200,"application/json",json);
 }
 
+// ============== HEALTH CHECK ==============
+void handleHealth() {
+  // Public endpoint, no auth needed
+  DynamicJsonDocument doc(256);
+  doc["status"] = "ok";
+  doc["version"] = FIRMWARE_VERSION;
+  doc["uptime"] = millis() / 1000;
+  doc["heap"] = ESP.getFreeHeap();
+  doc["wifi"] = wifiConnected;
+  doc["rssi"] = WiFi.RSSI();
+  doc["sd"] = checkSD();
+  doc["ip"] = server_ip;
+  String out; serializeJson(doc, out);
+  webServer.send(200, "application/json", out);
+}
+
+// ============== REBOOT ==============
+void handleReboot() {
+  String u, lvl;
+  if (!isAuthenticated(webServer, u, lvl) || lvl != "admin") { webServer.send(403); return; }
+  logActivity("reboot", "remote", u);
+  webServer.send(200, "text/plain", "Rebooting...");
+  delay(500);
+  ESP.restart();
+}
+
+// ============== LIST FILES ==============
 void handleListFiles() {
   String u, lvl;
   if (!isAuthenticated(webServer, u, lvl)) { webServer.send(401); return; }
+  if (!checkSD()) { webServer.send(503, "application/json", "{\"error\":\"SD card not available\"}"); return; }
   String path = webServer.hasArg("path") ? webServer.arg("path") : "/";
   DynamicJsonDocument doc(16384);
   doc["username"] = u; doc["userLevel"] = lvl;
   JsonObject st = doc.createNestedObject("storage");
   st["total"] = SD.totalBytes(); st["used"] = SD.usedBytes();
+  st["free"] = SD.totalBytes() - SD.usedBytes();
   JsonArray arr = doc.createNestedArray("files");
   File dir = SD.open(path);
   if (!dir || !dir.isDirectory()) { webServer.send(400); return; }
@@ -120,9 +162,11 @@ void handleListFiles() {
   webServer.send(200, "application/json", out);
 }
 
+// ============== FILE INFO ==============
 void handleFileInfo() {
   String u, lvl;
   if (!isAuthenticated(webServer, u, lvl)) { webServer.send(401); return; }
+  if (!checkSD()) { webServer.send(503); return; }
   if (!webServer.hasArg("path")) { webServer.send(400); return; }
   String path = webServer.arg("path");
   if (!SD.exists(path)) { webServer.send(404); return; }
@@ -139,9 +183,11 @@ void handleFileInfo() {
   webServer.send(200, "application/json", out);
 }
 
+// ============== DOWNLOAD ==============
 void handleDownload() {
   String u, lvl;
   if (!isAuthenticated(webServer, u, lvl)) { webServer.send(401); return; }
+  if (!checkSD()) { webServer.send(503); return; }
   if (!webServer.hasArg("path")) { webServer.send(400); return; }
   String path = webServer.arg("path");
   if (!SD.exists(path)) { webServer.send(404); return; }
@@ -154,9 +200,11 @@ void handleDownload() {
   logActivity("download", path, u);
 }
 
+// ============== DELETE ==============
 void handleDelete() {
   String u, lvl;
   if (!isAuthenticated(webServer, u, lvl)) { webServer.send(401); return; }
+  if (!checkSD()) { webServer.send(503); return; }
   if (!webServer.hasArg("path")) { webServer.send(400); return; }
   String path = webServer.arg("path");
   if (!SD.exists(path)) { webServer.send(404); return; }
@@ -164,18 +212,26 @@ void handleDelete() {
   else webServer.send(500, "text/plain", "Failed");
 }
 
+// ============== CREATE DIR ==============
 void handleCreateDir() {
   String u, lvl;
   if (!isAuthenticated(webServer, u, lvl)) { webServer.send(401); return; }
+  if (!checkSD()) { webServer.send(503); return; }
   if (!webServer.hasArg("path")) { webServer.send(400); return; }
   String path = webServer.arg("path");
+  // Check SD free space
+  if (SD.totalBytes() - SD.usedBytes() < 1024) {
+    webServer.send(507, "text/plain", "SD card full"); return;
+  }
   if (createDirRecursive(path)) { logActivity("mkdir", path, u); webServer.send(200, "text/plain", "OK"); }
   else webServer.send(500, "text/plain", "Failed");
 }
 
+// ============== RENAME ==============
 void handleRename() {
   String u, lvl;
   if (!isAuthenticated(webServer, u, lvl)) { webServer.send(401); return; }
+  if (!checkSD()) { webServer.send(503); return; }
   if (!webServer.hasArg("path") || !webServer.hasArg("name")) { webServer.send(400); return; }
   String path = webServer.arg("path"), newName = webServer.arg("name");
   if (!SD.exists(path)) { webServer.send(404); return; }
@@ -187,9 +243,11 @@ void handleRename() {
   else webServer.send(500, "text/plain", "Failed");
 }
 
+// ============== MOVE ==============
 void handleMove() {
   String u, lvl;
   if (!isAuthenticated(webServer, u, lvl)) { webServer.send(401); return; }
+  if (!checkSD()) { webServer.send(503); return; }
   if (!webServer.hasArg("path") || !webServer.hasArg("dest")) { webServer.send(400); return; }
   String path = webServer.arg("path"), dest = webServer.arg("dest");
   if (!SD.exists(path)) { webServer.send(404); return; }
@@ -201,9 +259,11 @@ void handleMove() {
   else webServer.send(500, "text/plain", "Failed");
 }
 
+// ============== COPY ==============
 void handleCopy() {
   String u, lvl;
   if (!isAuthenticated(webServer, u, lvl)) { webServer.send(401); return; }
+  if (!checkSD()) { webServer.send(503); return; }
   if (!webServer.hasArg("path") || !webServer.hasArg("dest")) { webServer.send(400); return; }
   String path = webServer.arg("path"), dest = webServer.arg("dest");
   if (!SD.exists(path)) { webServer.send(404); return; }
@@ -215,6 +275,7 @@ void handleCopy() {
   else webServer.send(500, "text/plain", "Failed");
 }
 
+// ============== UPLOAD ==============
 void handleUploadAuth() {
   String u, lvl;
   if (!isAuthenticated(webServer, u, lvl)) { webServer.send(401); return; }
@@ -226,10 +287,17 @@ void handleUploadAuth() {
 void handleUpload() {
   String u, lvl;
   if (!isAuthenticated(webServer, u, lvl)) { webServer.send(401); return; }
+  if (!checkSD()) { webServer.send(503); return; }
   HTTPUpload& up = webServer.upload();
   static File uf;
   static String upp;
   if (up.status == UPLOAD_FILE_START) {
+    // Check free space (need at least upload size + 10KB buffer)
+    uint64_t free = SD.totalBytes() - SD.usedBytes();
+    if (free < up.totalSize + 10240) {
+      Serial.println("Upload rejected: not enough space");
+      return; // Will timeout on client
+    }
     String p = webServer.hasArg("path") ? webServer.arg("path") : "/";
     if (!p.endsWith("/")) p += "/";
     upp = p + up.filename;
@@ -237,16 +305,25 @@ void handleUpload() {
     else SD.remove(upp);
     uf = SD.open(upp, FILE_WRITE);
   } else if (up.status == UPLOAD_FILE_WRITE) {
-    if (uf) uf.write(up.buf, up.currentSize);
+    if (uf) {
+      size_t written = uf.write(up.buf, up.currentSize);
+      if (written != up.currentSize) {
+        // SD full?
+        Serial.println("Write failed - SD may be full");
+        sdOK = false;
+      }
+    }
   } else if (up.status == UPLOAD_FILE_END) {
     if (uf) uf.close();
     logActivity("upload", upp+" ("+String(up.totalSize)+"B)", u);
   }
 }
 
+// ============== SHARE ==============
 void handleCreateShare() {
   String u, lvl;
   if (!isAuthenticated(webServer, u, lvl)) { webServer.send(401); return; }
+  if (!checkSD()) { webServer.send(503); return; }
   if (!webServer.hasArg("path")) { webServer.send(400); return; }
   String path = webServer.arg("path");
   if (!SD.exists(path)) { webServer.send(404); return; }
@@ -271,6 +348,7 @@ void handleSharedFile() {
   f.close();
 }
 
+// ============== ZIP ==============
 uint32_t crc32c(uint32_t crc, uint8_t val) {
   crc ^= val;
   for(int i=0;i<8;i++) crc = (crc>>1)^(0x82F63B78&(-(crc&1)));
@@ -280,6 +358,7 @@ uint32_t crc32c(uint32_t crc, uint8_t val) {
 void handleZipDownload() {
   String u, lvl;
   if (!isAuthenticated(webServer, u, lvl)) { webServer.send(401); return; }
+  if (!checkSD()) { webServer.send(503); return; }
   if (!webServer.hasArg("plain")) { webServer.send(400); return; }
   DynamicJsonDocument doc(4096);
   deserializeJson(doc, webServer.arg("plain"));
@@ -315,6 +394,7 @@ void handleZipDownload() {
   logActivity("zip",String(fc)+" files",u);
 }
 
+// ============== CHANGES ==============
 void handleChanges() {
   String u, lvl;
   if (!isAuthenticated(webServer, u, lvl)) { webServer.send(401); return; }
@@ -340,7 +420,7 @@ void handleChanges() {
   webServer.send(200, "application/json", out);
 }
 
-// ============== OTA UPDATE ==============
+// ============== OTA ==============
 void handleOtaPage() {
   String u, lvl;
   if (!isAuthenticated(webServer, u, lvl) || lvl != "admin") { webServer.send(403); return; }
@@ -351,37 +431,26 @@ void handleOtaUpload() {
   String u, lvl;
   if (!isAuthenticated(webServer, u, lvl)) { webServer.send(401); return; }
   HTTPUpload& up = webServer.upload();
-  static bool updateStarted = false;
-  static size_t updateSize = 0;
-  
+  static bool started = false;
+  static size_t sz = 0;
   if (up.status == UPLOAD_FILE_START) {
-    updateStarted = false;
-    updateSize = 0;
-    Serial.println("OTA: " + String(up.filename) + " size: " + String(up.totalSize));
+    started = false; sz = 0;
     if (!Update.begin(up.totalSize, U_FLASH)) {
-      Serial.println("OTA begin failed: " + String(Update.getError()));
-    } else {
-      updateStarted = true;
-    }
+      Serial.println("OTA fail: " + String(Update.getError()));
+    } else started = true;
   } else if (up.status == UPLOAD_FILE_WRITE) {
-    if (updateStarted) {
-      size_t written = Update.write(up.buf, up.currentSize);
-      if (written != up.currentSize) {
-        Serial.println("OTA write failed");
-        updateStarted = false;
-      }
-      updateSize += written;
+    if (started) {
+      size_t w = Update.write(up.buf, up.currentSize);
+      if (w != up.currentSize) started = false;
+      sz += w;
     }
   } else if (up.status == UPLOAD_FILE_END) {
-    if (updateStarted && Update.end(true)) {
-      Serial.println("OTA success: " + String(updateSize) + " bytes");
-      logActivity("ota", "firmware updated "+String(updateSize)+"B", u);
-      webServer.send(200, "text/plain", "OK: Firmware updated. Rebooting...");
-      delay(1000);
-      ESP.restart();
+    if (started && Update.end(true)) {
+      logActivity("ota", String(sz)+"B", u);
+      webServer.send(200, "text/plain", "OK - Rebooting...");
+      delay(1000); ESP.restart();
     } else {
-      Serial.println("OTA end failed: " + String(Update.getError()));
-      webServer.send(500, "text/plain", "OTA failed: " + String(Update.getError()));
+      webServer.send(500, "text/plain", "OTA failed");
     }
   }
 }
@@ -413,13 +482,14 @@ void handleGetSettings() {
   doc["uptime"] = millis() / 1000;
   doc["free_heap"] = ESP.getFreeHeap();
   doc["rssi"] = WiFi.RSSI();
+  doc["sd_ok"] = sdOK;
+  doc["sd_total"] = SD.totalBytes();
+  doc["sd_used"] = SD.usedBytes();
   if (SD.exists(SETTINGS_FILE)) {
     File f = SD.open(SETTINGS_FILE, FILE_READ);
-    if (f) {
-      DynamicJsonDocument s(512);
-      deserializeJson(s, f); f.close();
-      if (s["wifi_ssid"]) doc["saved_wifi_ssid"] = s["wifi_ssid"].as<String>();
-      if (s["ap_ssid"]) doc["saved_ap_ssid"] = s["ap_ssid"].as<String>();
+    if (f) { DynamicJsonDocument s(512); deserializeJson(s,f); f.close();
+      if(s["wifi_ssid"]) doc["saved_wifi_ssid"]=s["wifi_ssid"].as<String>();
+      if(s["ap_ssid"]) doc["saved_ap_ssid"]=s["ap_ssid"].as<String>();
     }
   }
   String out; serializeJson(doc, out);
@@ -432,16 +502,13 @@ void handleSaveSettings() {
   if (!webServer.hasArg("plain")) { webServer.send(400); return; }
   DynamicJsonDocument doc(512);
   deserializeJson(doc, webServer.arg("plain"));
-  String ws = doc["wifi_ssid"] | String(ssid);
-  String wp = doc["wifi_pass"] | String(password);
-  String as_ = doc["ap_ssid"] | String(ap_ssid);
-  String ap = doc["ap_pass"] | String(ap_password);
-  String fu = doc["ftp_user"] | String(ftp_user);
-  String fp = doc["ftp_pass"] | String(ftp_password);
-  if (saveSettings(ws, wp, as_, ap, fu, fp)) {
-    logActivity("settings", "updated", u);
-    webServer.send(200, "application/json", "{\"ok\":true,\"msg\":\"Saved. Reboot to apply WiFi.\"}");
-  } else webServer.send(500, "text/plain", "Failed");
+  String ws=doc["wifi_ssid"]|String(ssid), wp=doc["wifi_pass"]|String(password);
+  String as_=doc["ap_ssid"]|String(ap_ssid), ap=doc["ap_pass"]|String(ap_password);
+  String fu=doc["ftp_user"]|String(ftp_user), fp=doc["ftp_pass"]|String(ftp_password);
+  if (saveSettings(ws,wp,as_,ap,fu,fp)) {
+    logActivity("settings","updated",u);
+    webServer.send(200,"application/json","{\"ok\":true,\"msg\":\"Saved. Reboot for WiFi.\"}");
+  } else webServer.send(500,"text/plain","Failed");
 }
 
 // ============== ACTIVITY LOG ==============
@@ -454,23 +521,12 @@ void handleGetLog() {
     File f = SD.open(LOG_FILE, FILE_READ);
     if (f) {
       String lines[50]; int count = 0; String line = "";
-      while (f.available()) {
-        char c = f.read();
-        if (c == '\n') { lines[count % 50] = line; count++; line = ""; }
-        else line += c;
-      }
+      while (f.available()) { char c=f.read(); if(c=='\n'){lines[count%50]=count++;line="";} else line+=c; }
       f.close();
-      int start = count > 50 ? count - 50 : 0;
-      for (int i = start; i < count; i++) {
-        String l = lines[i % 50];
-        int c1=l.indexOf(','), c2=l.indexOf(',',c1+1), c3=l.indexOf(',',c2+1);
-        if (c1>0 && c2>0 && c3>0) {
-          JsonObject e = arr.createNestedObject();
-          e["time"] = l.substring(0,c1).toInt();
-          e["user"] = l.substring(c1+1,c2);
-          e["action"] = l.substring(c2+1,c3);
-          e["path"] = l.substring(c3+1);
-        }
+      int s = count>50?count-50:0;
+      for (int i=s;i<count;i++) {
+        String l=lines[i%50]; int c1=l.indexOf(','),c2=l.indexOf(',',c1+1),c3=l.indexOf(',',c2+1);
+        if(c1>0&&c2>0&&c3>0){JsonObject e=arr.createNestedObject();e["time"]=l.substring(0,c1).toInt();e["user"]=l.substring(c1+1,c2);e["action"]=l.substring(c2+1,c3);e["path"]=l.substring(c3+1);}
       }
     }
   }
@@ -480,220 +536,174 @@ void handleGetLog() {
 
 // ============== TRASH ==============
 void handleTrashPage() {
-  String u, lvl;
-  if (!isAuthenticated(webServer, u, lvl)) { webServer.sendHeader("Location","/login"); webServer.send(302); return; }
-  webServer.send(200, "text/html", String(index_html));
+  String u,lvl;
+  if(!isAuthenticated(webServer,u,lvl)){webServer.sendHeader("Location","/login");webServer.send(302);return;}
+  webServer.send(200,"text/html",String(index_html));
 }
-
 void handleTrashList() {
-  String u, lvl;
-  if (!isAuthenticated(webServer, u, lvl)) { webServer.send(401); return; }
-  DynamicJsonDocument doc(8192);
-  JsonArray arr = doc.createNestedArray("files");
-  if (SD.exists(TRASH_FOLDER)) {
-    File dir = SD.open(TRASH_FOLDER);
-    if (dir) {
-      File f;
-      while (f = dir.openNextFile()) {
-        String name = String(f.name());
-        int sl = name.lastIndexOf('/');
-        String sn = (sl >= 0) ? name.substring(sl+1) : name;
-        JsonObject it = arr.createNestedObject();
-        it["name"] = sn; it["path"] = name;
-        it["type"] = f.isDirectory() ? "dir" : "file";
-        it["size"] = f.isDirectory() ? 0 : f.size();
-        f.close();
-      }
-      dir.close();
-    }
-  }
-  String out; serializeJson(doc, out);
-  webServer.send(200, "application/json", out);
+  String u,lvl;
+  if(!isAuthenticated(webServer,u,lvl)){webServer.send(401);return;}
+  DynamicJsonDocument doc(8192); JsonArray arr=doc.createNestedArray("files");
+  if(SD.exists(TRASH_FOLDER)){File dir=SD.open(TRASH_FOLDER);if(dir){File f;while(f=dir.openNextFile()){String name=String(f.name());int sl=name.lastIndexOf('/');String sn=(sl>=0)?name.substring(sl+1):name;JsonObject it=arr.createNestedObject();it["name"]=sn;it["path"]=name;it["type"]=f.isDirectory()?"dir":"file";it["size"]=f.isDirectory()?0:f.size();f.close();}dir.close();}}
+  String out;serializeJson(doc,out);webServer.send(200,"application/json",out);
 }
-
 void handleRestore() {
-  String u, lvl;
-  if (!isAuthenticated(webServer, u, lvl)) { webServer.send(401); return; }
-  if (!webServer.hasArg("path")) { webServer.send(400); return; }
-  String path = webServer.arg("path");
-  if (restoreFromTrash(path)) { logActivity("restore", path, u); webServer.send(200, "text/plain", "Restored"); }
-  else webServer.send(500, "text/plain", "Failed");
+  String u,lvl;
+  if(!isAuthenticated(webServer,u,lvl)){webServer.send(401);return;}
+  if(!webServer.hasArg("path")){webServer.send(400);return;}
+  String path=webServer.arg("path");
+  if(restoreFromTrash(path)){logActivity("restore",path,u);webServer.send(200,"text/plain","Restored");}
+  else webServer.send(500,"text/plain","Failed");
 }
-
 void handleEmptyTrash() {
-  String u, lvl;
-  if (!isAuthenticated(webServer, u, lvl)) { webServer.send(401); return; }
-  if (webServer.hasArg("path")) {
-    String path = webServer.arg("path");
-    if (SD.exists(path)) { File f=SD.open(path); if(f.isDirectory()) removeDir(path); else SD.remove(path); f.close(); }
-  } else { if (SD.exists(TRASH_FOLDER)) { removeDir(TRASH_FOLDER); SD.mkdir(TRASH_FOLDER); } }
-  logActivity("empty-trash", "all", u);
-  webServer.send(200, "text/plain", "OK");
+  String u,lvl;
+  if(!isAuthenticated(webServer,u,lvl)){webServer.send(401);return;}
+  if(webServer.hasArg("path")){String path=webServer.arg("path");if(SD.exists(path)){File f=SD.open(path);if(f.isDirectory())removeDir(path);else SD.remove(path);f.close();}}
+  else{if(SD.exists(TRASH_FOLDER)){removeDir(TRASH_FOLDER);SD.mkdir(TRASH_FOLDER);}}
+  logActivity("empty-trash","all",u);webServer.send(200,"text/plain","OK");
 }
 
-// ============== USER MANAGEMENT ==============
+// ============== USERS ==============
 void handleGetUsers() {
-  String u, lvl;
-  if (!isAuthenticated(webServer, u, lvl) || lvl != "admin") { webServer.send(403); return; }
-  File f = SD.open(USERS_FILE);
-  if (!f) { webServer.send(500); return; }
-  String content = ""; while (f.available()) content += (char)f.read(); f.close();
-  DynamicJsonDocument doc(1024); deserializeJson(doc, content);
-  DynamicJsonDocument out(1024);
-  JsonArray arr = out.createNestedArray("users");
-  for (JsonObject u : doc["users"]) { JsonObject o = arr.createNestedObject(); o["username"]=u["username"]; o["userLevel"]=u["userLevel"]; }
-  String r; serializeJson(out, r); webServer.send(200, "application/json", r);
+  String u,lvl;
+  if(!isAuthenticated(webServer,u,lvl)||lvl!="admin"){webServer.send(403);return;}
+  File f=SD.open(USERS_FILE);if(!f){webServer.send(500);return;}
+  String c="";while(f.available())c+=(char)f.read();f.close();
+  DynamicJsonDocument doc(1024);deserializeJson(doc,c);
+  DynamicJsonDocument out(1024);JsonArray arr=out.createNestedArray("users");
+  for(JsonObject u:doc["users"]){JsonObject o=arr.createNestedObject();o["username"]=u["username"];o["userLevel"]=u["userLevel"];}
+  String r;serializeJson(out,r);webServer.send(200,"application/json",r);
 }
-
 void handleAddUser() {
-  String u, lvl;
-  if (!isAuthenticated(webServer, u, lvl) || lvl != "admin") { webServer.send(403); return; }
-  if (!webServer.hasArg("plain")) { webServer.send(400); return; }
-  DynamicJsonDocument doc(256); deserializeJson(doc, webServer.arg("plain"));
-  String nu = doc["username"] | "", np = doc["password"] | "", nl = doc["userLevel"] | "user";
-  if (nu.length()==0 || np.length()==0) { webServer.send(400); return; }
-  File f = SD.open(USERS_FILE);
-  String c = "{\"users\":[]}"; if (f) { c=""; while(f.available()) c+=(char)f.read(); f.close(); }
-  DynamicJsonDocument ex(1024); deserializeJson(ex, c);
-  JsonObject u2 = ex["users"].createNestedObject();
-  u2["username"]=nu; u2["password"]=np; u2["userLevel"]=nl;
-  f = SD.open(USERS_FILE, FILE_WRITE); if (!f) { webServer.send(500); return; }
-  serializeJson(ex, f); f.close();
-  logActivity("add-user", nu, u); webServer.send(200, "text/plain", "OK");
+  String u,lvl;
+  if(!isAuthenticated(webServer,u,lvl)||lvl!="admin"){webServer.send(403);return;}
+  if(!webServer.hasArg("plain")){webServer.send(400);return;}
+  DynamicJsonDocument doc(256);deserializeJson(doc,webServer.arg("plain"));
+  String nu=doc["username"]|"",np=doc["password"]|"",nl=doc["userLevel"]|"user";
+  if(nu.length()==0||np.length()==0){webServer.send(400);return;}
+  File f=SD.open(USERS_FILE);String c="{\"users\":[]}";if(f){c="";while(f.available())c+=(char)f.read();f.close();}
+  DynamicJsonDocument ex(1024);deserializeJson(ex,c);
+  JsonObject u2=ex["users"].createNestedObject();u2["username"]=nu;u2["password"]=np;u2["userLevel"]=nl;
+  f=SD.open(USERS_FILE,FILE_WRITE);if(!f){webServer.send(500);return;}
+  serializeJson(ex,f);f.close();logActivity("add-user",nu,u);webServer.send(200,"text/plain","OK");
 }
-
 void handleUpdateUser() {
-  String u, lvl;
-  if (!isAuthenticated(webServer, u, lvl) || lvl != "admin") { webServer.send(403); return; }
-  String path = webServer.pathArg(0);
-  if (!webServer.hasArg("plain")) { webServer.send(400); return; }
-  DynamicJsonDocument doc(256); deserializeJson(doc, webServer.arg("plain"));
-  File f = SD.open(USERS_FILE);
-  String c = "{\"users\":[]}"; if (f) { c=""; while(f.available()) c+=(char)f.read(); f.close(); }
-  DynamicJsonDocument ex(1024); deserializeJson(ex, c);
-  for (JsonObject u : ex["users"]) {
-    if (String(u["username"]|"").equals(path)) {
-      if (doc["password"] && strlen(doc["password"])>0) u["password"]=doc["password"];
-      u["userLevel"]=doc["userLevel"]|u["userLevel"]; break;
-    }
-  }
-  f = SD.open(USERS_FILE, FILE_WRITE); if (!f) { webServer.send(500); return; }
-  serializeJson(ex, f); f.close(); webServer.send(200, "text/plain", "OK");
+  String u,lvl;
+  if(!isAuthenticated(webServer,u,lvl)||lvl!="admin"){webServer.send(403);return;}
+  String path=webServer.pathArg(0);
+  if(!webServer.hasArg("plain")){webServer.send(400);return;}
+  DynamicJsonDocument doc(256);deserializeJson(doc,webServer.arg("plain"));
+  File f=SD.open(USERS_FILE);String c="{\"users\":[]}";if(f){c="";while(f.available())c+=(char)f.read();f.close();}
+  DynamicJsonDocument ex(1024);deserializeJson(ex,c);
+  for(JsonObject u:ex["users"]){if(String(u["username"]|"").equals(path)){if(doc["password"]&&strlen(doc["password"])>0)u["password"]=doc["password"];u["userLevel"]=doc["userLevel"]|u["userLevel"];break;}}
+  f=SD.open(USERS_FILE,FILE_WRITE);if(!f){webServer.send(500);return;}
+  serializeJson(ex,f);f.close();webServer.send(200,"text/plain","OK");
 }
-
 void handleDeleteUser() {
-  String u, lvl;
-  if (!isAuthenticated(webServer, u, lvl) || lvl != "admin") { webServer.send(403); return; }
-  String path = webServer.pathArg(0);
-  File f = SD.open(USERS_FILE);
-  String c = "{\"users\":[]}"; if (f) { c=""; while(f.available()) c+=(char)f.read(); f.close(); }
-  DynamicJsonDocument ex(1024); deserializeJson(ex, c);
-  for (int i=0; i<ex["users"].size(); i++) {
-    if (String(ex["users"][i]["username"]|"").equals(path)) { ex["users"].remove(i); break; }
-  }
-  f = SD.open(USERS_FILE, FILE_WRITE); if (!f) { webServer.send(500); return; }
-  serializeJson(ex, f); f.close();
-  logActivity("delete-user", path, u); webServer.send(200, "text/plain", "OK");
+  String u,lvl;
+  if(!isAuthenticated(webServer,u,lvl)||lvl!="admin"){webServer.send(403);return;}
+  String path=webServer.pathArg(0);
+  File f=SD.open(USERS_FILE);String c="{\"users\":[]}";if(f){c="";while(f.available())c+=(char)f.read();f.close();}
+  DynamicJsonDocument ex(1024);deserializeJson(ex,c);
+  for(int i=0;i<ex["users"].size();i++){if(String(ex["users"][i]["username"]|"").equals(path)){ex["users"].remove(i);break;}}
+  f=SD.open(USERS_FILE,FILE_WRITE);if(!f){webServer.send(500);return;}
+  serializeJson(ex,f);f.close();logActivity("delete-user",path,u);webServer.send(200,"text/plain","OK");
 }
-
 void handleUserManagementPage() {
-  String u, lvl;
-  if (!isAuthenticated(webServer, u, lvl)) { webServer.sendHeader("Location","/login"); webServer.send(302); return; }
-  if (lvl != "admin") { webServer.sendHeader("Location","/"); webServer.send(302); return; }
-  webServer.send(200, "text/html", String(index_html));
+  String u,lvl;
+  if(!isAuthenticated(webServer,u,lvl)){webServer.sendHeader("Location","/login");webServer.send(302);return;}
+  if(lvl!="admin"){webServer.sendHeader("Location","/");webServer.send(302);return;}
+  webServer.send(200,"text/html",String(index_html));
 }
 
-// ============== LOGIN / LOGOUT ==============
+// ============== LOGIN/LOGOUT ==============
 void handleLogin() {
-  String err = "";
-  if (webServer.method() == HTTP_POST) {
-    String u = webServer.arg("username"), p = webServer.arg("password");
-    String lvl;
-    if (authenticateUser(u, p, lvl)) {
-      String tok = createSession(u, lvl);
+  String err="";
+  if(webServer.method()==HTTP_POST){
+    String u=webServer.arg("username"),p=webServer.arg("password");String lvl;
+    if(authenticateUser(u,p,lvl)){
+      String tok=createSession(u,lvl);
       webServer.sendHeader("Set-Cookie","session_token="+tok+"; Path=/; Max-Age=1800; SameSite=Strict");
-      String r = webServer.hasArg("redirect") ? webServer.arg("redirect") : "/";
-      webServer.sendHeader("Location", r+"?token="+tok, true);
-      webServer.send(302, "text/plain", ""); return;
-    } else err = "Invalid username or password";
+      String r=webServer.hasArg("redirect")?webServer.arg("redirect"):"/";
+      webServer.sendHeader("Location",r+"?token="+tok,true);webServer.send(302,"text/plain","");return;
+    } else err="Invalid username or password";
   }
-  String info = accessPointMode ? "AP: "+String(ap_ssid) : "IP: "+server_ip;
-  String h = String(login_html);
-  h.replace("%ERROR%", err); h.replace("%INFO%", info);
-  webServer.send(200, "text/html", h);
+  String info=accessPointMode?"AP: "+String(ap_ssid):"IP: "+server_ip;
+  String h=String(login_html);h.replace("%ERROR%",err);h.replace("%INFO%",info);
+  webServer.send(200,"text/html",h);
 }
-
 void handleLogout() {
-  String u, lvl;
-  if (isAuthenticated(webServer, u, lvl)) {
+  String u,lvl;
+  if(isAuthenticated(webServer,u,lvl)){
     String tok;
-    if (webServer.hasHeader("Authorization")) tok = webServer.header("Authorization").substring(7);
-    else if (webServer.hasArg("token")) tok = webServer.arg("token");
-    for (int i=0; i<MAX_SESSIONS; i++) { if(sessions[i].isActive && sessions[i].token==tok){sessions[i].isActive=false;break;} }
+    if(webServer.hasHeader("Authorization"))tok=webServer.header("Authorization").substring(7);
+    else if(webServer.hasArg("token"))tok=webServer.arg("token");
+    for(int i=0;i<MAX_SESSIONS;i++){if(sessions[i].isActive&&sessions[i].token==tok){sessions[i].isActive=false;break;}}
   }
   webServer.sendHeader("Set-Cookie","session_token=; Path=/; Expires=Thu, 01 Jan 1970 00:00:00 GMT");
-  webServer.sendHeader("Location","/login"); webServer.send(302);
+  webServer.sendHeader("Location","/login");webServer.send(302);
 }
-
 void handleRoot() {
-  String u, lvl;
-  if (!isAuthenticated(webServer, u, lvl)) { webServer.sendHeader("Location","/login"); webServer.send(302); return; }
-  webServer.send(200, "text/html", String(index_html));
+  String u,lvl;
+  if(!isAuthenticated(webServer,u,lvl)){webServer.sendHeader("Location","/login");webServer.send(302);return;}
+  webServer.send(200,"text/html",String(index_html));
 }
-
 void handleManifest() {
   webServer.send(200,"application/manifest+json","{\"name\":\"ESP32 File Server\",\"short_name\":\"ESP32-FS\",\"start_url\":\"/\",\"display\":\"standalone\",\"background_color\":\"#0984e3\",\"theme_color\":\"#0984e3\",\"icons\":[]}");
 }
 
-// ============== SETUP / LOOP ==============
+// ============== SETUP/LOOP ==============
 void setup() {
   Serial.begin(115200);
-  Serial.println("\nESP32 File Server v" + String(FIRMWARE_VERSION));
-  if (!initSDCard()) Serial.println("SD Card failed!");
+  Serial.println("\nESP32 File Server v"+String(FIRMWARE_VERSION));
+  sdOK = initSDCard();
+  if(!sdOK) Serial.println("SD Card failed!");
   else Serial.println("SD OK");
   loadSettings();
   setupAuthentication();
   connectToWiFi();
 
-  webServer.on("/", handleRoot);
-  webServer.on("/login", handleLogin);
-  webServer.on("/logout", handleLogout);
-  webServer.on("/server-info", handleServerInfo);
-  webServer.on("/users", handleUserManagementPage);
-  webServer.on("/trash", handleTrashPage);
-  webServer.on("/ota", handleOtaPage);
-  webServer.on("/manifest.json", handleManifest);
-  webServer.on("/s/", HTTP_GET, handleSharedFile);
+  webServer.on("/",handleRoot);
+  webServer.on("/login",handleLogin);
+  webServer.on("/logout",handleLogout);
+  webServer.on("/health",handleHealth);
+  webServer.on("/server-info",handleServerInfo);
+  webServer.on("/users",handleUserManagementPage);
+  webServer.on("/trash",handleTrashPage);
+  webServer.on("/ota",handleOtaPage);
+  webServer.on("/manifest.json",handleManifest);
+  webServer.on("/s/",HTTP_GET,handleSharedFile);
 
-  webServer.on("/api/list", HTTP_GET, handleListFiles);
-  webServer.on("/api/info", HTTP_GET, handleFileInfo);
-  webServer.on("/api/download", HTTP_GET, handleDownload);
-  webServer.on("/api/delete", HTTP_DELETE, handleDelete);
-  webServer.on("/api/create-dir", HTTP_POST, handleCreateDir);
-  webServer.on("/api/rename", HTTP_POST, handleRename);
-  webServer.on("/api/move", HTTP_POST, handleMove);
-  webServer.on("/api/copy", HTTP_POST, handleCopy);
-  webServer.on("/api/upload-auth", HTTP_GET, handleUploadAuth);
-  webServer.on("/api/upload", HTTP_POST, [](){webServer.send(200);}, handleUpload);
-  webServer.on("/api/share", HTTP_POST, handleCreateShare);
-  webServer.on("/api/zip", HTTP_POST, handleZipDownload);
-  webServer.on("/api/changes", HTTP_GET, handleChanges);
-  webServer.on("/api/trash", HTTP_GET, handleTrashList);
-  webServer.on("/api/restore", HTTP_GET, handleRestore);
-  webServer.on("/api/empty-trash", HTTP_GET, handleEmptyTrash);
-  webServer.on("/api/log", HTTP_GET, handleGetLog);
-  webServer.on("/api/settings", HTTP_GET, handleGetSettings);
-  webServer.on("/api/settings", HTTP_POST, handleSaveSettings);
-  webServer.on("/api/ota-status", HTTP_GET, handleOtaStatus);
-  webServer.on("/api/ota-upload", HTTP_POST, [](){webServer.send(200);}, handleOtaUpload);
-  webServer.on("/api/users", HTTP_GET, handleGetUsers);
-  webServer.on("/api/users", HTTP_POST, handleAddUser);
-  webServer.on("/api/users/", HTTP_PUT, handleUpdateUser);
-  webServer.on("/api/users/", HTTP_DELETE, handleDeleteUser);
+  webServer.on("/api/list",HTTP_GET,handleListFiles);
+  webServer.on("/api/info",HTTP_GET,handleFileInfo);
+  webServer.on("/api/download",HTTP_GET,handleDownload);
+  webServer.on("/api/delete",HTTP_DELETE,handleDelete);
+  webServer.on("/api/create-dir",HTTP_POST,handleCreateDir);
+  webServer.on("/api/rename",HTTP_POST,handleRename);
+  webServer.on("/api/move",HTTP_POST,handleMove);
+  webServer.on("/api/copy",HTTP_POST,handleCopy);
+  webServer.on("/api/upload-auth",HTTP_GET,handleUploadAuth);
+  webServer.on("/api/upload",HTTP_POST,[](){webServer.send(200);},handleUpload);
+  webServer.on("/api/share",HTTP_POST,handleCreateShare);
+  webServer.on("/api/zip",HTTP_POST,handleZipDownload);
+  webServer.on("/api/changes",HTTP_GET,handleChanges);
+  webServer.on("/api/trash",HTTP_GET,handleTrashList);
+  webServer.on("/api/restore",HTTP_GET,handleRestore);
+  webServer.on("/api/empty-trash",HTTP_GET,handleEmptyTrash);
+  webServer.on("/api/log",HTTP_GET,handleGetLog);
+  webServer.on("/api/settings",HTTP_GET,handleGetSettings);
+  webServer.on("/api/settings",HTTP_POST,handleSaveSettings);
+  webServer.on("/api/ota-status",HTTP_GET,handleOtaStatus);
+  webServer.on("/api/ota-upload",HTTP_POST,[](){webServer.send(200);},handleOtaUpload);
+  webServer.on("/api/reboot",HTTP_POST,handleReboot);
+  webServer.on("/api/users",HTTP_GET,handleGetUsers);
+  webServer.on("/api/users",HTTP_POST,handleAddUser);
+  webServer.on("/api/users/",HTTP_PUT,handleUpdateUser);
+  webServer.on("/api/users/",HTTP_DELETE,handleDeleteUser);
 
   webServer.begin();
-  Serial.println("HTTP started on " + String(webServerPort));
-  ftpSrv.begin(ftp_user, ftp_password);
+  Serial.println("HTTP on "+String(webServerPort));
+  ftpSrv.begin(ftp_user,ftp_password);
   Serial.println("FTP started");
 }
 
