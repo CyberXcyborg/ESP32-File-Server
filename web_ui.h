@@ -7,175 +7,307 @@ const char index_html[] PROGMEM = R"rawliteral(
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>ESP32 File Server v2</title>
+<title>ESP32 File Server v3</title>
+<link rel="manifest" href="/manifest.json">
+<meta name="theme-color" content="#0984e3">
 <style>
 :root{--bg:#f5f6fa;--card:#fff;--text:#2d3436;--text2:#636e72;--primary:#0984e3;--primary-dark:#0652DD;--danger:#d63031;--success:#00b894;--border:#dfe6e9;--shadow:0 2px 10px rgba(0,0,0,0.08);--radius:8px}
 .dark{--bg:#1a1a2e;--card:#16213e;--text:#e0e0e0;--text2:#a0a0a0;--primary:#74b9ff;--primary-dark:#0984e3;--danger:#ff7675;--success:#55efc4;--border:#2d3748;--shadow:0 2px 10px rgba(0,0,0,0.3)}
-*{margin:0;padding:0;box-sizing:border-box;font-family:'Segoe UI',system-ui,sans-serif}
-body{background:var(--bg);color:var(--text);transition:background .3s,color .3s;line-height:1.5}
-.container{max-width:1200px;margin:0 auto;padding:15px}
-header{display:flex;justify-content:space-between;align-items:center;padding:15px 20px;background:var(--card);border-radius:var(--radius);box-shadow:var(--shadow);margin-bottom:15px;flex-wrap:wrap;gap:10px}
-header h1{font-size:20px;color:var(--primary)}
-.header-right{display:flex;align-items:center;gap:12px;font-size:13px;color:var(--text2)}
+*{margin:0;padding:0;box-sizing:border-box;font-family:'Segoe UI',system-ui,sans-serif;-webkit-tap-highlight-color:transparent}
+body{background:var(--bg);color:var(--text);transition:background .3s,color .3s;line-height:1.5;overflow-x:hidden}
+.container{max-width:1200px;margin:0 auto;padding:12px}
+header{display:flex;justify-content:space-between;align-items:center;padding:12px 16px;background:var(--card);border-radius:var(--radius);box-shadow:var(--shadow);margin-bottom:12px;flex-wrap:wrap;gap:8px}
+header h1{font-size:18px;color:var(--primary)}
+.header-right{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--text2);flex-wrap:wrap}
 .header-right span{color:var(--primary);font-weight:600}
-.btn{background:var(--primary);color:#fff;border:none;padding:8px 14px;border-radius:6px;cursor:pointer;font-size:13px;display:inline-flex;align-items:center;gap:5px;transition:all .2s;text-decoration:none}
-.btn:hover{background:var(--primary-dark);transform:translateY(-1px)}
+.btn{background:var(--primary);color:#fff;border:none;padding:10px 14px;border-radius:6px;cursor:pointer;font-size:13px;display:inline-flex;align-items:center;gap:5px;transition:all .2s;text-decoration:none;min-height:40px}
+.btn:hover{background:var(--primary-dark)}
 .btn-danger{background:var(--danger)}.btn-danger:hover{background:#c0392b}
 .btn-ghost{background:transparent;color:var(--text);border:1px solid var(--border)}
 .btn-ghost:hover{background:var(--border)}
-.btn-sm{padding:5px 10px;font-size:12px}
-.search-box{display:flex;align-items:center;background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:0 10px;gap:8px}
-.search-box input{border:none;background:transparent;padding:8px 0;outline:none;color:var(--text);font-size:13px;width:180px}
+.btn-sm{padding:6px 10px;font-size:12px;min-height:36px}
+.search-box{display:flex;align-items:center;background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:0 10px;gap:6px}
+.search-box input{border:none;background:transparent;padding:8px 0;outline:none;color:var(--text);font-size:13px;width:140px}
 .search-box input::placeholder{color:var(--text2)}
-.controls{display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap;align-items:center}
-.path-nav{display:flex;align-items:center;padding:10px 15px;background:var(--card);border-radius:var(--radius);margin-bottom:12px;overflow-x:auto;white-space:nowrap;font-size:13px;box-shadow:var(--shadow)}
-.path-part{cursor:pointer;color:var(--primary);margin-right:4px}
-.path-part:hover{text-decoration:underline}
-.separator{margin:0 4px;color:var(--text2)}
+.controls{display:flex;gap:6px;margin-bottom:10px;flex-wrap:wrap;align-items:center}
+.path-nav{display:flex;align-items:center;padding:8px 12px;background:var(--card);border-radius:var(--radius);margin-bottom:10px;overflow-x:auto;white-space:nowrap;font-size:13px;box-shadow:var(--shadow)}
+.path-part{cursor:pointer;color:var(--primary);margin-right:4px;padding:4px 6px;border-radius:4px}
+.path-part:hover{text-decoration:underline;background:var(--bg)}
+.separator{margin:0 2px;color:var(--text2)}
 .file-list{background:var(--card);border-radius:var(--radius);box-shadow:var(--shadow);overflow:hidden}
-.file-list-header{display:grid;grid-template-columns:30px 1fr 100px 80px 100px;background:var(--primary);color:#fff;padding:10px 15px;font-weight:600;font-size:13px;cursor:pointer;user-select:none}
-.file-list-header div:hover{opacity:.8}
-.file-item{display:grid;grid-template-columns:30px 1fr 100px 80px 100px;padding:10px 15px;border-bottom:1px solid var(--border);align-items:center;font-size:13px;transition:background .15s}
+.file-list-header{display:grid;grid-template-columns:30px 1fr 90px 100px;background:var(--primary);color:#fff;padding:10px 12px;font-weight:600;font-size:13px;cursor:pointer;user-select:none}
+.file-item{display:grid;grid-template-columns:30px 1fr 90px 100px;padding:10px 12px;border-bottom:1px solid var(--border);align-items:center;font-size:13px;transition:background .15s;min-height:44px}
 .file-item:last-child{border-bottom:none}
 .file-item:hover{background:var(--bg)}
 .file-item.selected{background:#e3f2fd}
 .dark .file-item.selected{background:#1e3a5f}
 .file-icon{font-size:16px;text-align:center}
-.file-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;cursor:pointer;color:var(--text)}
+.file-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;cursor:pointer;color:var(--text);padding:4px 0}
 .file-name:hover{color:var(--primary)}
 .file-size{text-align:right;color:var(--text2);font-size:12px}
-.file-date{color:var(--text2);font-size:11px}
-.file-actions{display:flex;justify-content:flex-end;gap:6px}
-.file-action{cursor:pointer;padding:4px 6px;border-radius:4px;transition:background .15s;font-size:14px}
+.file-actions{display:flex;justify-content:flex-end;gap:4px}
+.file-action{cursor:pointer;padding:6px 8px;border-radius:4px;transition:background .15s;font-size:14px;min-width:32px;min-height:32px;display:flex;align-items:center;justify-content:center}
 .file-action:hover{background:var(--border)}
 .empty-msg{text-align:center;padding:40px;color:var(--text2);font-size:14px}
-.modal{display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,.5);z-index:1000;justify-content:center;align-items:center}
-.modal-content{background:var(--card);border-radius:var(--radius);width:90%;max-width:600px;max-height:90vh;overflow-y:auto;box-shadow:var(--shadow);animation:modalIn .2s ease}
-.modal-header{padding:15px 20px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center}
+.modal{display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,.5);z-index:1000;justify-content:center;align-items:center;padding:10px}
+.modal-content{background:var(--card);border-radius:var(--radius);width:100%;max-width:600px;max-height:90vh;overflow-y:auto;box-shadow:var(--shadow);animation:modalIn .2s ease}
+.modal-header{padding:14px 18px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center}
 .modal-header h2{font-size:16px}
-.close-modal{cursor:pointer;font-size:22px;color:var(--text2);transition:color .2s}
-.close-modal:hover{color:var(--danger)}
-.modal-body{padding:20px}
-.form-group{margin-bottom:15px}
-.form-group label{display:block;margin-bottom:5px;font-weight:500;font-size:13px}
-.form-group input,.form-group select{width:100%;padding:10px;border:1px solid var(--border);border-radius:6px;font-size:14px;background:var(--bg);color:var(--text)}
+.close-modal{cursor:pointer;font-size:24px;color:var(--text2);padding:4px 8px;border-radius:4px;min-width:36px;min-height:36px;display:flex;align-items:center;justify-content:center}
+.close-modal:hover{color:var(--danger);background:var(--border)}
+.modal-body{padding:18px}
+.form-group{margin-bottom:14px}
+.form-group label{display:block;margin-bottom:4px;font-weight:500;font-size:13px}
+.form-group input,.form-group select{width:100%;padding:10px;border:1px solid var(--border);border-radius:6px;font-size:14px;background:var(--bg);color:var(--text);min-height:40px}
 .form-group input:focus{outline:none;border-color:var(--primary)}
-.modal-footer{padding:15px 20px;border-top:1px solid var(--border);display:flex;justify-content:flex-end;gap:8px}
+.modal-footer{padding:14px 18px;border-top:1px solid var(--border);display:flex;justify-content:flex-end;gap:8px;flex-wrap:wrap}
 .progress-bar{width:100%;height:6px;background:var(--border);border-radius:3px;margin-top:10px;overflow:hidden;display:none}
 .progress-bar-fill{height:100%;background:var(--primary);width:0;transition:width .3s;border-radius:3px}
-.toast{position:fixed;bottom:20px;right:20px;padding:12px 20px;border-radius:6px;color:#fff;font-size:13px;z-index:2000;opacity:0;transition:opacity .3s;max-width:300px;box-shadow:var(--shadow)}
+.toast{position:fixed;bottom:16px;left:50%;transform:translateX(-50%);padding:12px 20px;border-radius:6px;color:#fff;font-size:13px;z-index:2000;opacity:0;transition:opacity .3s;max-width:90vw;text-align:center;box-shadow:var(--shadow)}
 .toast.show{opacity:1}.toast.success{background:var(--success)}.toast.error{background:var(--danger)}.toast.info{background:var(--primary)}
 .preview-container{text-align:center;padding:10px}
 .preview-container img{max-width:100%;max-height:60vh;border-radius:6px}
 .preview-container pre{text-align:left;background:var(--bg);padding:15px;border-radius:6px;overflow-x:auto;font-size:12px;max-height:60vh;overflow-y:auto;white-space:pre-wrap;word-break:break-all}
 .preview-container audio,.preview-container video{width:100%;max-height:60vh}
-.drop-zone{border:2px dashed var(--border);border-radius:var(--radius);padding:30px;text-align:center;margin-bottom:12px;transition:all .2s;cursor:pointer;background:var(--card)}
+.drop-zone{border:2px dashed var(--border);border-radius:var(--radius);padding:24px;text-align:center;margin-bottom:10px;transition:all .2s;cursor:pointer;background:var(--card);min-height:80px;display:flex;flex-direction:column;align-items:center;justify-content:center}
 .drop-zone.dragover{border-color:var(--primary);background:#e3f2fd}
 .dark .drop-zone.dragover{background:#1e3a5f}
-.drop-zone p{color:var(--text2);font-size:13px;margin-top:8px}
-.storage-bar{height:6px;background:var(--border);border-radius:3px;overflow:hidden;margin-top:5px}
+.drop-zone p{color:var(--text2);font-size:13px;margin-top:6px}
+.storage-bar{height:6px;background:var(--border);border-radius:3px;overflow:hidden;margin-top:4px}
 .storage-bar-fill{height:100%;background:var(--primary);border-radius:3px;transition:width .3s}
-.storage-info{font-size:11px;color:var(--text2);margin-top:3px}
+.storage-info{font-size:11px;color:var(--text2);margin-top:2px}
+.ctx-menu{display:none;position:fixed;background:var(--card);border:1px solid var(--border);border-radius:var(--radius);box-shadow:var(--shadow);z-index:3000;min-width:180px;overflow:hidden}
+.ctx-menu.show{display:block}
+.ctx-item{padding:12px 16px;cursor:pointer;font-size:13px;display:flex;align-items:center;gap:8px;transition:background .15s;min-height:44px}
+.ctx-item:hover{background:var(--bg)}
+.ctx-sep{height:1px;background:var(--border);margin:4px 0}
+.share-link{display:flex;gap:8px;margin-top:10px}
+.share-link input{flex:1;background:var(--bg);border:1px solid var(--border);padding:10px;border-radius:6px;font-size:13px;color:var(--text)}
+.log-table{width:100%;border-collapse:collapse;font-size:12px}
+.log-table th,.log-table td{padding:8px 10px;text-align:left;border-bottom:1px solid var(--border)}
+.log-table th{background:var(--primary);color:#fff;position:sticky;top:0}
+.log-table tr:hover{background:var(--bg)}
+.log-action{display:inline-block;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600;color:#fff}
+.log-upload{background:var(--success)}.log-delete{background:var(--danger)}.log-rename{background:#6c5ce7}
+.log-download{background:var(--primary)}.log-share{background:#fdcb6e;color:#333}.log-mkdir{background:#00cec9}
+.log-move{background:#a29bfe}.log-copy{background:#74b9ff}
+.nav-tabs{display:flex;gap:4px;margin-bottom:10px;background:var(--card);border-radius:var(--radius);padding:4px;box-shadow:var(--shadow);overflow-x:auto}
+.nav-tab{padding:10px 14px;border-radius:6px;cursor:pointer;font-size:13px;font-weight:500;color:var(--text2);transition:all .2s;border:none;background:transparent;white-space:nowrap;min-height:40px}
+.nav-tab.active{background:var(--primary);color:#fff}
+.nav-tab:hover:not(.active){background:var(--bg)}
+.view{display:none}.view.active{display:block}
+/* File info panel */
+.info-panel{background:var(--card);border-radius:var(--radius);box-shadow:var(--shadow);padding:16px;margin-bottom:10px;font-size:13px;display:none}
+.info-panel.show{display:block}
+.info-panel h3{font-size:14px;margin-bottom:10px;color:var(--primary)}
+.info-row{display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--border)}
+.info-row:last-child{border-bottom:none}
+.info-label{color:var(--text2)}
+/* Settings */
+.settings-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.settings-section{background:var(--card);border-radius:var(--radius);box-shadow:var(--shadow);padding:16px;margin-bottom:12px}
+.settings-section h3{font-size:14px;margin-bottom:12px;color:var(--primary);padding-bottom:8px;border-bottom:1px solid var(--border)}
+/* Folder tree for move dialog */
+.folder-tree{max-height:300px;overflow-y:auto;border:1px solid var(--border);border-radius:6px;padding:8px;background:var(--bg)}
+.folder-tree-item{padding:6px 8px;cursor:pointer;border-radius:4px;font-size:13px;display:flex;align-items:center;gap:6px;min-height:36px}
+.folder-tree-item:hover{background:var(--border)}
+.folder-tree-item.selected{background:#e3f2fd}
 @keyframes modalIn{from{opacity:0;transform:translateY(-20px)}to{opacity:1;transform:translateY(0)}}
 @media(max-width:768px){
-  .file-list-header,.file-item{grid-template-columns:28px 1fr 70px}
-  .file-date,.file-size{display:none}
-  .search-box input{width:120px}
+  .file-list-header,.file-item{grid-template-columns:28px 1fr 80px}
+  .file-size{display:none}
+  .search-box input{width:80px}
   header{flex-direction:column;align-items:flex-start}
+  .settings-grid{grid-template-columns:1fr}
+  .toast{bottom:10px;left:10px;right:10px;transform:none;max-width:none}
 }
 </style>
 </head>
 <body>
 <div class="container">
   <header>
-    <h1>📁 ESP32 File Server <small style="font-size:12px;color:var(--text2)">v2.0</small></h1>
+    <h1>📁 ESP32 File Server <small style="font-size:11px;color:var(--text2)">v3.0</small></h1>
     <div class="header-right">
       <span id="userDisplay"></span>
-      <div class="search-box">🔍<input type="text" id="searchInput" placeholder="Search files..." oninput="filterFiles()"></div>
+      <div class="search-box">🔍<input type="text" id="searchInput" placeholder="Search..." oninput="filterFiles()"></div>
       <button class="btn btn-ghost btn-sm" id="darkToggle" onclick="toggleDark()">🌙</button>
-      <a href="/trash" class="btn btn-ghost btn-sm">🗑️ Trash</a>
-      <a href="/users" class="btn btn-ghost btn-sm admin-only">👥 Users</a>
       <a href="/logout" class="btn btn-sm">Logout</a>
     </div>
   </header>
-  <div class="controls">
-    <button class="btn" onclick="showUploadModal()">⬆️ Upload</button>
-    <button class="btn" onclick="showNewFolderModal()">📁 New Folder</button>
-    <button class="btn" onclick="refreshFiles()">🔄 Refresh</button>
-    <button class="btn btn-danger" id="delSelBtn" style="display:none" onclick="deleteSelected()">🗑️ Delete Selected</button>
-    <select class="btn btn-ghost" id="sortSelect" onchange="sortFiles()" style="padding:8px 12px">
-      <option value="name-asc">Name ↑</option>
-      <option value="name-desc">Name ↓</option>
-      <option value="size-asc">Size ↑</option>
-      <option value="size-desc">Size ↓</option>
-      <option value="date-desc">Newest</option>
-      <option value="date-asc">Oldest</option>
-    </select>
-    <div style="flex:1"></div>
-    <div class="storage-info" id="storageInfo"></div>
+
+  <div class="nav-tabs">
+    <button class="nav-tab active" onclick="switchView('files',this)">📂 Files</button>
+    <button class="nav-tab" onclick="switchView('trash',this)">🗑️ Trash</button>
+    <button class="nav-tab admin-only" onclick="switchView('users',this)">👥 Users</button>
+    <button class="nav-tab admin-only" onclick="switchView('settings',this)">⚙️ Settings</button>
+    <button class="nav-tab admin-only" onclick="switchView('log',this)">📋 Activity</button>
   </div>
-  <div class="path-nav" id="pathNav"><span class="path-part" data-path="/">Root</span></div>
-  <div class="file-list">
-    <div class="file-list-header">
-      <div></div>
-      <div onclick="setSort('name')">Name</div>
-      <div onclick="setSort('size')" style="text-align:right">Size</div>
-      <div class="file-date" onclick="setSort('date')">Date</div>
-      <div style="text-align:right">Actions</div>
+
+  <!-- FILES VIEW -->
+  <div id="filesView" class="view active">
+    <div class="controls">
+      <button class="btn" onclick="showUploadModal()">⬆️ Upload</button>
+      <button class="btn" onclick="showNewFolderModal()">📁 New Folder</button>
+      <button class="btn" onclick="refreshFiles()">🔄 Refresh</button>
+      <button class="btn btn-danger" id="delSelBtn" style="display:none" onclick="deleteSelected()">🗑️ Delete Selected</button>
+      <select class="btn btn-ghost" id="sortSelect" onchange="sortFiles()" style="padding:8px 12px">
+        <option value="name-asc">Name ↑</option>
+        <option value="name-desc">Name ↓</option>
+        <option value="size-asc">Size ↑</option>
+        <option value="size-desc">Size ↓</option>
+      </select>
+      <div style="flex:1"></div>
+      <div class="storage-info" id="storageInfo"></div>
     </div>
-    <div id="fileContainer"><div class="empty-msg">Loading...</div></div>
+    <div class="path-nav" id="pathNav"><span class="path-part">Root</span></div>
+    <div id="infoPanel" class="info-panel">
+      <h3>📄 <span id="infoName"></span></h3>
+      <div class="info-row"><span class="info-label">Type</span><span id="infoType"></span></div>
+      <div class="info-row"><span class="info-label">Size</span><span id="infoSize"></span></div>
+      <div class="info-row"><span class="info-label">Path</span><span id="infoPath" style="word-break:break-all;font-size:11px"></span></div>
+    </div>
+    <div class="file-list">
+      <div class="file-list-header">
+        <div></div>
+        <div onclick="setSort('name')">Name</div>
+        <div onclick="setSort('size')" style="text-align:right">Size</div>
+        <div style="text-align:right">Actions</div>
+      </div>
+      <div id="fileContainer"><div class="empty-msg">Loading...</div></div>
+    </div>
+  </div>
+
+  <!-- TRASH VIEW -->
+  <div id="trashView" class="view">
+    <div class="controls">
+      <button class="btn btn-danger" onclick="emptyTrash()">❌ Empty Trash</button>
+      <button class="btn" onclick="loadTrash()">🔄 Refresh</button>
+    </div>
+    <div class="file-list">
+      <div class="file-list-header"><div></div><div>Name</div><div>Size</div><div style="text-align:right">Actions</div></div>
+      <div id="trashContainer"><div class="empty-msg">Loading...</div></div>
+    </div>
+  </div>
+
+  <!-- USERS VIEW -->
+  <div id="usersView" class="view">
+    <div class="controls"><button class="btn" onclick="showUserModal()">+ Add User</button></div>
+    <div style="background:var(--card);border-radius:var(--radius);box-shadow:var(--shadow);overflow:hidden">
+      <table style="width:100%;border-collapse:collapse">
+        <thead><tr style="background:var(--primary);color:#fff"><th style="padding:10px 15px;text-align:left;font-size:13px">Username</th><th style="padding:10px 15px;text-align:left;font-size:13px">Role</th><th style="padding:10px 15px;text-align:right;font-size:13px">Actions</th></tr></thead>
+        <tbody id="userTable"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- SETTINGS VIEW -->
+  <div id="settingsView" class="view">
+    <div class="settings-section">
+      <h3>📡 WiFi Settings</h3>
+      <div class="settings-grid">
+        <div class="form-group"><label>WiFi SSID</label><input type="text" id="setWifiSsid"></div>
+        <div class="form-group"><label>WiFi Password</label><input type="password" id="setWifiPass"></div>
+      </div>
+    </div>
+    <div class="settings-section">
+      <h3>📶 Access Point Settings</h3>
+      <div class="settings-grid">
+        <div class="form-group"><label>AP SSID</label><input type="text" id="setApSsid"></div>
+        <div class="form-group"><label>AP Password</label><input type="password" id="setApPass"></div>
+      </div>
+    </div>
+    <div class="settings-section">
+      <h3>🔑 FTP Settings</h3>
+      <div class="settings-grid">
+        <div class="form-group"><label>FTP Username</label><input type="text" id="setFtpUser"></div>
+        <div class="form-group"><label>FTP Password</label><input type="password" id="setFtpPass"></div>
+      </div>
+    </div>
+    <div class="settings-section">
+      <h3>ℹ️ System Info</h3>
+      <div class="info-row"><span class="info-label">Version</span><span id="sysVersion"></span></div>
+      <div class="info-row"><span class="info-label">IP Address</span><span id="sysIp"></span></div>
+      <div class="info-row"><span class="info-label">Mode</span><span id="sysMode"></span></div>
+      <div class="info-row"><span class="info-label">Uptime</span><span id="sysUptime"></span></div>
+      <div class="info-row"><span class="info-label">Free Memory</span><span id="sysHeap"></span></div>
+    </div>
+    <div style="margin-top:12px">
+      <button class="btn" onclick="saveSettings()">💾 Save Settings</button>
+      <button class="btn btn-ghost" onclick="loadSettings()">🔄 Refresh</button>
+    </div>
+  </div>
+
+  <!-- ACTIVITY LOG VIEW -->
+  <div id="logView" class="view">
+    <div class="controls"><button class="btn" onclick="loadLog()">🔄 Refresh</button></div>
+    <div style="background:var(--card);border-radius:var(--radius);box-shadow:var(--shadow);overflow:auto;max-height:70vh">
+      <table class="log-table"><thead><tr><th>Time</th><th>User</th><th>Action</th><th>Path</th></tr></thead><tbody id="logTable"></tbody></table>
+    </div>
   </div>
 </div>
 
-<!-- Upload Modal -->
+<!-- Context Menu -->
+<div class="ctx-menu" id="ctxMenu">
+  <div class="ctx-item" onclick="ctxOpen()">📂 Open</div>
+  <div class="ctx-item" onclick="ctxPreview()">👁️ Preview</div>
+  <div class="ctx-item" onclick="ctxInfo()">ℹ️ Info</div>
+  <div class="ctx-item" onclick="ctxDownload()">⬇️ Download</div>
+  <div class="ctx-sep"></div>
+  <div class="ctx-item" onclick="ctxRename()">✏️ Rename</div>
+  <div class="ctx-item" onclick="ctxMove()">📦 Move</div>
+  <div class="ctx-item" onclick="ctxCopy()">📋 Copy</div>
+  <div class="ctx-item" onclick="ctxShare()">🔗 Share</div>
+  <div class="ctx-sep"></div>
+  <div class="ctx-item" onclick="ctxDelete()">🗑️ Delete</div>
+</div>
+
+<!-- Modals -->
 <div class="modal" id="uploadModal">
   <div class="modal-content">
     <div class="modal-header"><h2>Upload Files</h2><span class="close-modal" onclick="closeModal('uploadModal')">&times;</span></div>
     <div class="modal-body">
       <div class="drop-zone" id="dropZone" onclick="document.getElementById('fileInput').click()">
-        <div style="font-size:32px">📤</div>
-        <p>Drag & drop files here or click to browse</p>
-        <input type="file" id="fileInput" multiple style="display:none" onchange="handleFiles(this.files)">
+        <div style="font-size:28px">📤</div>
+        <p>Drag & drop files/folders here or click to browse</p>
+        <input type="file" id="fileInput" multiple webkitdirectory style="display:none" onchange="handleFiles(this.files)">
       </div>
       <div id="uploadList"></div>
       <div class="progress-bar" id="uploadProgress"><div class="progress-bar-fill" id="uploadProgressFill"></div></div>
     </div>
-    <div class="modal-footer">
-      <button class="btn btn-ghost" onclick="closeModal('uploadModal')">Close</button>
-    </div>
+    <div class="modal-footer"><button class="btn btn-ghost" onclick="closeModal('uploadModal')">Close</button></div>
   </div>
 </div>
 
-<!-- New Folder Modal -->
 <div class="modal" id="folderModal">
   <div class="modal-content">
     <div class="modal-header"><h2>Create New Folder</h2><span class="close-modal" onclick="closeModal('folderModal')">&times;</span></div>
-    <div class="modal-body">
-      <div class="form-group"><label>Folder Name</label><input type="text" id="folderName" placeholder="Enter folder name"></div>
-    </div>
-    <div class="modal-footer">
-      <button class="btn btn-ghost" onclick="closeModal('folderModal')">Cancel</button>
-      <button class="btn" onclick="createFolder()">Create</button>
-    </div>
+    <div class="modal-body"><div class="form-group"><label>Folder Name</label><input type="text" id="folderName" placeholder="Enter folder name"></div></div>
+    <div class="modal-footer"><button class="btn btn-ghost" onclick="closeModal('folderModal')">Cancel</button><button class="btn" onclick="createFolder()">Create</button></div>
   </div>
 </div>
 
-<!-- Rename Modal -->
 <div class="modal" id="renameModal">
   <div class="modal-content">
     <div class="modal-header"><h2>Rename</h2><span class="close-modal" onclick="closeModal('renameModal')">&times;</span></div>
-    <div class="modal-body">
-      <div class="form-group"><label>New Name</label><input type="text" id="renameInput"></div>
-      <input type="hidden" id="renamePath">
-    </div>
-    <div class="modal-footer">
-      <button class="btn btn-ghost" onclick="closeModal('renameModal')">Cancel</button>
-      <button class="btn" onclick="doRename()">Rename</button>
-    </div>
+    <div class="modal-body"><div class="form-group"><label>New Name</label><input type="text" id="renameInput"></div><input type="hidden" id="renamePath"></div>
+    <div class="modal-footer"><button class="btn btn-ghost" onclick="closeModal('renameModal')">Cancel</button><button class="btn" onclick="doRename()">Rename</button></div>
   </div>
 </div>
 
-<!-- Preview Modal -->
+<!-- Move/Copy Modal -->
+<div class="modal" id="moveModal">
+  <div class="modal-content">
+    <div class="modal-header"><h2 id="moveModalTitle">Move</h2><span class="close-modal" onclick="closeModal('moveModal')">&times;</span></div>
+    <div class="modal-body">
+      <p style="font-size:13px;color:var(--text2);margin-bottom:10px">Select destination folder:</p>
+      <div class="folder-tree" id="folderTree"></div>
+      <input type="hidden" id="moveSrcPath">
+      <input type="hidden" id="moveMode" value="move">
+    </div>
+    <div class="modal-footer"><button class="btn btn-ghost" onclick="closeModal('moveModal')">Cancel</button><button class="btn" onclick="doMoveCopy()">Move Here</button></div>
+  </div>
+</div>
+
 <div class="modal" id="previewModal">
   <div class="modal-content" style="max-width:900px">
     <div class="modal-header"><h2 id="previewTitle">Preview</h2><span class="close-modal" onclick="closeModal('previewModal')">&times;</span></div>
@@ -183,193 +315,196 @@ header h1{font-size:20px;color:var(--primary)}
   </div>
 </div>
 
-<!-- Confirm Modal -->
+<div class="modal" id="shareModal">
+  <div class="modal-content" style="max-width:500px">
+    <div class="modal-header"><h2>🔗 Share Link</h2><span class="close-modal" onclick="closeModal('shareModal')">&times;</span></div>
+    <div class="modal-body">
+      <p style="font-size:13px;color:var(--text2);margin-bottom:12px">Anyone with this link can download the file.</p>
+      <div class="share-link"><input type="text" id="shareUrl" readonly><button class="btn" onclick="copyShareUrl()">📋 Copy</button></div>
+    </div>
+  </div>
+</div>
+
+<div class="modal" id="userModal">
+  <div class="modal-content">
+    <div class="modal-header"><h2 id="userModalTitle">Add User</h2><span class="close-modal" onclick="closeModal('userModal')">&times;</span></div>
+    <div class="modal-body">
+      <div class="form-group"><label>Username</label><input type="text" id="uName"></div>
+      <div class="form-group"><label>Password</label><input type="password" id="uPass"></div>
+      <div class="form-group"><label>Role</label><select id="uRole"><option value="user">User</option><option value="admin">Admin</option></select></div>
+    </div>
+    <div class="modal-footer"><button class="btn btn-ghost" onclick="closeModal('userModal')">Cancel</button><button class="btn" onclick="saveUser()">Save</button></div>
+  </div>
+</div>
+
 <div class="modal" id="confirmModal">
   <div class="modal-content" style="max-width:400px">
     <div class="modal-header"><h2>Confirm</h2><span class="close-modal" onclick="closeModal('confirmModal')">&times;</span></div>
     <div class="modal-body"><p id="confirmMsg"></p></div>
-    <div class="modal-footer">
-      <button class="btn btn-ghost" onclick="closeModal('confirmModal')">Cancel</button>
-      <button class="btn btn-danger" id="confirmBtn">Delete</button>
-    </div>
+    <div class="modal-footer"><button class="btn btn-ghost" onclick="closeModal('confirmModal')">Cancel</button><button class="btn btn-danger" id="confirmBtn">Delete</button></div>
   </div>
 </div>
 
 <div class="toast" id="toast"></div>
 
 <script>
-let currentPath='/',files=[],selectedFiles=[],userLevel='user',sortBy='name',sortAsc=true;
+let currentPath='/',files=[],selectedFiles=[],userLevel='user',sortBy='name',sortAsc=true,trashFiles=[],users=[],ctxTarget=null;
 const token=getToken();
 
 document.addEventListener('DOMContentLoaded',()=>{
-  // Dark mode from localStorage
   if(localStorage.getItem('dark')==='1'){document.body.classList.add('dark');document.getElementById('darkToggle').textContent='☀️';}
   loadFiles('/');
-  // Drag & drop
   const dz=document.getElementById('dropZone');
   dz.addEventListener('dragover',e=>{e.preventDefault();dz.classList.add('dragover');});
   dz.addEventListener('dragleave',()=>dz.classList.remove('dragover'));
   dz.addEventListener('drop',e=>{e.preventDefault();dz.classList.remove('dragover');handleFiles(e.dataTransfer.files);});
-  // Close modals on outside click
-  window.onclick=e=>{if(e.target.classList.contains('modal'))e.target.style.display='none';};
-  // Enter key on folder name
+  window.onclick=e=>{if(e.target.classList.contains('modal'))e.target.style.display='none';hideCtxMenu();};
   document.getElementById('folderName').addEventListener('keydown',e=>{if(e.key==='Enter')createFolder();});
+  // Keyboard shortcuts
+  document.addEventListener('keydown',e=>{
+    if(e.key==='Escape'){document.querySelectorAll('.modal').forEach(m=>m.style.display='none');hideCtxMenu();selectedFiles=[];updateSelBtn();renderFiles();}
+    if(e.key==='Delete'&&selectedFiles.length>0&&document.activeElement.tagName!=='INPUT'){e.preventDefault();deleteSelected();}
+    if(e.key==='F2'&&selectedFiles.length===1){e.preventDefault();const f=files.find(x=>x.path===selectedFiles[0]);if(f)showRenameModal(f.path,f.name);}
+    if(e.ctrlKey&&e.key==='a'&&document.activeElement.tagName!=='INPUT'){e.preventDefault();selectedFiles=files.map(f=>f.path);updateSelBtn();renderFiles();}
+  });
 });
 
 function getToken(){
-  const p=new URLSearchParams(window.location.search);
-  const t=p.get('token');
+  const p=new URLSearchParams(window.location.search);const t=p.get('token');
   if(t){document.cookie='session_token='+t+';path=/;max-age=1800';return t;}
   const c=document.cookie.split(';');
   for(let x of c){const[n,v]=x.trim().split('=');if(n==='session_token')return v;}
   return '';
 }
-
-function toggleDark(){
-  document.body.classList.toggle('dark');
-  const isDark=document.body.classList.contains('dark');
-  localStorage.setItem('dark',isDark?'1':'0');
-  document.getElementById('darkToggle').textContent=isDark?'☀️':'🌙';
+function toggleDark(){document.body.classList.toggle('dark');const d=document.body.classList.contains('dark');localStorage.setItem('dark',d?'1':'0');document.getElementById('darkToggle').textContent=d?'☀️':'🌙';}
+function switchView(v,btn){
+  document.querySelectorAll('.nav-tab').forEach(t=>t.classList.remove('active'));
+  document.querySelectorAll('.view').forEach(t=>t.classList.remove('active'));
+  if(btn)btn.classList.add('active');else event.target.classList.add('active');
+  document.getElementById(v+'View').classList.add('active');
+  if(v==='trash')loadTrash();if(v==='users')loadUsers();if(v==='log')loadLog();if(v==='settings')loadSettings();
 }
-
-function showToast(msg,type='info'){
-  const t=document.getElementById('toast');
-  t.textContent=msg;t.className='toast '+type+' show';
-  setTimeout(()=>t.classList.remove('show'),3000);
-}
-
+function showToast(msg,type='info'){const t=document.getElementById('toast');t.textContent=msg;t.className='toast '+type+' show';setTimeout(()=>t.classList.remove('show'),3000);}
 function openModal(id){document.getElementById(id).style.display='flex';}
 function closeModal(id){document.getElementById(id).style.display='none';}
 
+// ============== FILES ==============
 function loadFiles(path){
-  selectedFiles=[];
-  updateSelBtn();
+  selectedFiles=[];updateSelBtn();hideInfoPanel();
   fetch('/api/list?path='+encodeURIComponent(path),{headers:{'Authorization':'Bearer '+token}})
     .then(r=>{if(r.status===401){window.location.href='/login';throw new Error();}return r.json();})
     .then(data=>{
-      files=data.files||[];
-      currentPath=path;
-      userLevel=data.userLevel||'user';
+      files=data.files||[];currentPath=path;userLevel=data.userLevel||'user';
       if(userLevel==='admin')document.querySelectorAll('.admin-only').forEach(e=>e.style.display='');
       document.getElementById('userDisplay').textContent='👤 '+data.username;
-      renderFiles();
-      renderPathNav(path);
+      renderFiles();renderPathNav(path);
       if(data.storage){
         const pct=Math.round(data.storage.used/data.storage.total*100);
-        document.getElementById('storageInfo').innerHTML=`💾 ${formatSize(data.storage.used)} / ${formatSize(data.storage.total)} (${pct}%)<div class="storage-bar"><div class="storage-bar-fill" style="width:${pct}%"></div></div>`;
+        document.getElementById('storageInfo').innerHTML=`💾 ${formatSize(data.storage.used)} / ${formatSize(data.storage.total)} (${pct}%)<br><span style="font-size:10px">${data.dirCount} folders, ${data.fileCount} files</span><div class="storage-bar"><div class="storage-bar-fill" style="width:${pct}%"></div></div>`;
       }
     })
     .catch(()=>{document.getElementById('fileContainer').innerHTML='<div class="empty-msg">Error loading files</div>';});
 }
 
 function renderFiles(){
-  let f=files;
+  let f=[...files];
   const q=document.getElementById('searchInput').value.toLowerCase();
   if(q)f=f.filter(x=>x.name.toLowerCase().includes(q));
-  // sort
   f.sort((a,b)=>{
-    if(a.type==='dir' && b.type!=='dir')return -1;
-    if(a.type!=='dir' && b.type==='dir')return 1;
+    if(a.type==='dir'&&b.type!=='dir')return -1;
+    if(a.type!=='dir'&&b.type==='dir')return 1;
     let cmp=0;
     if(sortBy==='name')cmp=a.name.localeCompare(b.name);
     else if(sortBy==='size')cmp=a.size-b.size;
-    else if(sortBy==='date')cmp=a.mtime-b.mtime;
     return sortAsc?cmp:-cmp;
   });
   if(!f.length){document.getElementById('fileContainer').innerHTML='<div class="empty-msg">📂 This folder is empty</div>';return;}
   let html='';
-  if(currentPath!=='/'){
-    const parent=currentPath.split('/').slice(0,-2).join('/')+'/';
-    html+=`<div class="file-item" onclick="loadFiles('${parent}')"><div class="file-icon">📁</div><div class="file-name">..</div><div class="file-size"></div><div class="file-date"></div><div class="file-actions"></div></div>`;
-  }
+  if(currentPath!=='/'){const parent=currentPath.split('/').slice(0,-2).join('/')+'/';html+=`<div class="file-item" onclick="loadFiles('${parent}')"><div class="file-icon">📁</div><div class="file-name">..</div><div class="file-size"></div><div class="file-actions"></div></div>`;}
   f.forEach(file=>{
     const sel=selectedFiles.includes(file.path);
-    html+=`<div class="file-item${sel?' selected':''}" data-path="${file.path}">
+    html+=`<div class="file-item${sel?' selected':''}" data-path="${file.path}" data-name="${file.name}" data-type="${file.type}">
       <div class="file-icon">${file.type==='dir'?'📁':file.icon}</div>
       <div class="file-name" onclick="${file.type==='dir'?`loadFiles('${file.path}')`:`previewFile('${file.path}')`}">${file.name}</div>
       <div class="file-size">${file.type==='dir'?'':formatSize(file.size)}</div>
-      <div class="file-date">${file.mtime?new Date(file.mtime*1000).toLocaleDateString():''}</div>
       <div class="file-actions">
-        <span class="file-action" onclick="showRenameModal('${file.path}','${file.name}')" title="Rename">✏️</span>
+        <span class="file-action" onclick="showRenameModal('${file.path}','${file.name}')" title="Rename (F2)">✏️</span>
         ${file.type!=='dir'?`<span class="file-action" onclick="downloadFile('${file.path}')" title="Download">⬇️</span>`:''}
-        <span class="file-action" onclick="deleteItem('${file.path}','${file.name}')" title="Delete">🗑️</span>
+        <span class="file-action" onclick="deleteItem('${file.path}','${file.name}')" title="Delete (Del)">🗑️</span>
       </div>
     </div>`;
   });
   document.getElementById('fileContainer').innerHTML=html;
-  // Right-click selection
   document.querySelectorAll('.file-item').forEach(item=>{
     if(!item.dataset.path)return;
-    item.addEventListener('contextmenu',e=>{e.preventDefault();toggleSel(item);});
+    item.addEventListener('contextmenu',e=>{e.preventDefault();showCtxMenu(e,item);});
   });
 }
-
 function filterFiles(){renderFiles();}
 function setSort(s){if(sortBy===s)sortAsc=!sortAsc;else{sortBy=s;sortAsc=true;}renderFiles();}
 function sortFiles(){const v=document.getElementById('sortSelect').value;const[p,d]=v.split('-');sortBy=p;sortAsc=d==='asc';renderFiles();}
+function toggleSel(item){const path=item.dataset.path;if(selectedFiles.includes(path)){selectedFiles=selectedFiles.filter(f=>f!==path);item.classList.remove('selected');}else{selectedFiles.push(path);item.classList.add('selected');}updateSelBtn();}
+function updateSelBtn(){const b=document.getElementById('delSelBtn');if(selectedFiles.length>0){b.style.display='';b.textContent='🗑️ Delete ('+selectedFiles.length+')';}else b.style.display='none';}
+function renderPathNav(path){const parts=path.split('/').filter(p=>p);let html='<span class="path-part" onclick="loadFiles(\'/\')">Root</span>',build='/';parts.forEach(p=>{build+=p+'/';html+=`<span class="separator">/</span><span class="path-part" onclick="loadFiles('${build}')">${p}</span>`;});document.getElementById('pathNav').innerHTML=html;}
+function formatSize(b){if(b<1024)return b+' B';if(b<1048576)return(b/1024).toFixed(1)+' KB';if(b<1073741824)return(b/1048576).toFixed(1)+' MB';return(b/1073741824).toFixed(1)+' GB';}
 
-function toggleSel(item){
-  const path=item.dataset.path;
-  if(selectedFiles.includes(path)){selectedFiles=selectedFiles.filter(f=>f!==path);item.classList.remove('selected');}
-  else{selectedFiles.push(path);item.classList.add('selected');}
-  updateSelBtn();
-}
-function updateSelBtn(){
-  const b=document.getElementById('delSelBtn');
-  if(selectedFiles.length>0){b.style.display='';b.textContent='🗑️ Delete Selected ('+selectedFiles.length+')';}
-  else b.style.display='none';
-}
+// ============== CONTEXT MENU ==============
+function showCtxMenu(e,item){ctxTarget=item;const m=document.getElementById('ctxMenu');m.style.display='block';m.style.left=Math.min(e.clientX,window.innerWidth-200)+'px';m.style.top=Math.min(e.clientY,window.innerHeight-300)+'px';}
+function hideCtxMenu(){document.getElementById('ctxMenu').style.display='none';}
+function ctxOpen(){if(ctxTarget.dataset.type==='dir')loadFiles(ctxTarget.dataset.path);else previewFile(ctxTarget.dataset.path);hideCtxMenu();}
+function ctxPreview(){previewFile(ctxTarget.dataset.path);hideCtxMenu();}
+function ctxInfo(){showFileInfo(ctxTarget.dataset.path);hideCtxMenu();}
+function ctxDownload(){downloadFile(ctxTarget.dataset.path);hideCtxMenu();}
+function ctxRename(){showRenameModal(ctxTarget.dataset.path,ctxTarget.dataset.name);hideCtxMenu();}
+function ctxMove(){showMoveModal(ctxTarget.dataset.path,'move');hideCtxMenu();}
+function ctxCopy(){showMoveModal(ctxTarget.dataset.path,'copy');hideCtxMenu();}
+function ctxShare(){shareFile(ctxTarget.dataset.path);hideCtxMenu();}
+function ctxDelete(){deleteItem(ctxTarget.dataset.path,ctxTarget.dataset.name);hideCtxMenu();}
 
-function renderPathNav(path){
-  const parts=path.split('/').filter(p=>p);
-  let html='<span class="path-part" onclick="loadFiles(\'/\')">Root</span>',build='/';
-  parts.forEach(p=>{build+=p+'/';html+=`<span class="separator">/</span><span class="path-part" onclick="loadFiles('${build}')">${p}</span>`;});
-  document.getElementById('pathNav').innerHTML=html;
-}
-
-function formatSize(b){
-  if(b<1024)return b+' B';
-  if(b<1048576)return(b/1024).toFixed(1)+' KB';
-  if(b<1073741824)return(b/1048576).toFixed(1)+' MB';
-  return(b/1073741824).toFixed(1)+' GB';
-}
-
-function showUploadModal(){document.getElementById('uploadList').innerHTML='';document.getElementById('uploadProgress').style.display='none';document.getElementById('uploadProgressFill').style.width='0%';openModal('uploadModal');}
-function showNewFolderModal(){document.getElementById('folderName').value='';openModal('folderModal');document.getElementById('folderName').focus();}
-
-function handleFiles(fileList){
-  const list=document.getElementById('uploadList');
-  list.innerHTML='';
-  Array.from(fileList).forEach(f=>{
-    list.innerHTML+=`<div style="display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--border);font-size:13px"><span>${f.name}</span><span id="ul-${f.name.replace(/[^a-zA-Z0-9]/g,'_')}">⏳</span></div>`;
-  });
-  uploadFiles(fileList,0);
-}
-
-function uploadFiles(fileList,i){
-  if(i>=fileList.length){showToast('All files uploaded!','success');setTimeout(()=>{closeModal('uploadModal');loadFiles(currentPath);},1500);return;}
-  const file=fileList[i];
-  const id='ul-'+file.name.replace(/[^a-zA-Z0-9]/g,'_');
-  fetch('/api/upload-auth',{headers:{'Authorization':'Bearer '+token}})
+// ============== FILE INFO ==============
+function showFileInfo(path){
+  fetch('/api/info?path='+encodeURIComponent(path),{headers:{'Authorization':'Bearer '+token}})
     .then(r=>r.json())
     .then(data=>{
-      const fd=new FormData();
-      fd.append('file',file);
-      fd.append('path',currentPath);
-      const xhr=new XMLHttpRequest();
-      document.getElementById('uploadProgress').style.display='block';
-      xhr.upload.onprogress=e=>{if(e.lengthComputable)document.getElementById('uploadProgressFill').style.width=(e.loaded/e.total*100)+'%';};
-      xhr.onload=()=>{
-        document.getElementById(id).textContent=xhr.status===200?'✅':'❌';
-        uploadFiles(fileList,i+1);
-      };
-      xhr.onerror=()=>{document.getElementById(id).textContent='❌';uploadFiles(fileList,i+1);};
-      xhr.open('POST','/api/upload?token='+data.token);
-      xhr.send(fd);
-    })
-    .catch(()=>{document.getElementById(id).textContent='❌';uploadFiles(fileList,i+1);});
+      document.getElementById('infoName').textContent=data.name;
+      document.getElementById('infoType').textContent=data.type;
+      document.getElementById('infoSize').textContent=data.sizeFormatted;
+      document.getElementById('infoPath').textContent=data.path;
+      document.getElementById('infoPanel').classList.add('show');
+    });
 }
+function hideInfoPanel(){document.getElementById('infoPanel').classList.remove('show');}
 
+// ============== UPLOAD ==============
+function showUploadModal(){document.getElementById('uploadList').innerHTML='';document.getElementById('uploadProgress').style.display='none';document.getElementById('uploadProgressFill').style.width='0%';openModal('uploadModal');}
+function showNewFolderModal(){document.getElementById('folderName').value='';openModal('folderModal');document.getElementById('folderName').focus();}
+function handleFiles(fileList){
+  const list=document.getElementById('uploadList');list.innerHTML='';
+  Array.from(fileList).forEach(f=>{
+    const name=f.webkitRelativePath||f.name;
+    list.innerHTML+=`<div style="display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--border);font-size:12px"><span>${name}</span><span id="ul-${name.replace(/[^a-zA-Z0-9]/g,'_')}">⏳</span></div>`;
+  });
+  uploadFiles(Array.from(fileList),0);
+}
+function uploadFiles(fileList,i){
+  if(i>=fileList.length){showToast('All files uploaded!','success');setTimeout(()=>{closeModal('uploadModal');loadFiles(currentPath);},1500);return;}
+  const file=fileList[i];const name=file.webkitRelativePath||file.name;const id='ul-'+name.replace(/[^a-zA-Z0-9]/g,'_');
+  // Create subdirectories if needed
+  const parts=name.split('/');let uploadPath=currentPath;
+  if(!uploadPath.endsWith('/'))uploadPath+='/';
+  if(parts.length>1){
+    for(let j=0;j<parts.length-1;j++)uploadPath+=parts[j]+'/';
+  }
+  fetch('/api/upload-auth',{headers:{'Authorization':'Bearer '+token}}).then(r=>r.json()).then(data=>{
+    const fd=new FormData();fd.append('file',file);fd.append('path',uploadPath);
+    const xhr=new XMLHttpRequest();
+    document.getElementById('uploadProgress').style.display='block';
+    xhr.upload.onprogress=e=>{if(e.lengthComputable)document.getElementById('uploadProgressFill').style.width=(e.loaded/e.total*100)+'%';};
+    xhr.onload=()=>{document.getElementById(id).textContent=xhr.status===200?'✅':'❌';uploadFiles(fileList,i+1);};
+    xhr.onerror=()=>{document.getElementById(id).textContent='❌';uploadFiles(fileList,i+1);};
+    xhr.open('POST','/api/upload?token='+data.token);xhr.send(fd);
+  }).catch(()=>{document.getElementById(id).textContent='❌';uploadFiles(fileList,i+1);});
+}
 function createFolder(){
   const name=document.getElementById('folderName').value.trim();
   if(!name){showToast('Enter a folder name','error');return;}
@@ -378,23 +513,52 @@ function createFolder(){
     .then(()=>{showToast('Folder created','success');closeModal('folderModal');loadFiles(currentPath);})
     .catch(()=>showToast('Failed to create folder','error'));
 }
-
-function showRenameModal(path,name){
-  document.getElementById('renamePath').value=path;
-  document.getElementById('renameInput').value=name;
-  openModal('renameModal');
-  document.getElementById('renameInput').focus();
-  document.getElementById('renameInput').select();
-}
-
+function showRenameModal(path,name){document.getElementById('renamePath').value=path;document.getElementById('renameInput').value=name;openModal('renameModal');document.getElementById('renameInput').focus();document.getElementById('renameInput').select();}
 function doRename(){
-  const path=document.getElementById('renamePath').value;
-  const name=document.getElementById('renameInput').value.trim();
+  const path=document.getElementById('renamePath').value;const name=document.getElementById('renameInput').value.trim();
   if(!name){showToast('Enter a name','error');return;}
   fetch('/api/rename',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded','Authorization':'Bearer '+token},body:'path='+encodeURIComponent(path)+'&name='+encodeURIComponent(name)})
     .then(r=>{if(!r.ok)throw new Error();return r.text();})
     .then(()=>{showToast('Renamed','success');closeModal('renameModal');loadFiles(currentPath);})
     .catch(()=>showToast('Failed to rename','error'));
+}
+
+// ============== MOVE/COPY ==============
+function showMoveModal(path,mode){
+  document.getElementById('moveSrcPath').value=path;
+  document.getElementById('moveMode').value=mode;
+  document.getElementById('moveModalTitle').textContent=mode==='move'?'📦 Move':'📋 Copy';
+  // Build folder tree
+  buildFolderTree();
+  openModal('moveModal');
+}
+
+function buildFolderTree(){
+  const tree=document.getElementById('folderTree');
+  tree.innerHTML='<div class="folder-tree-item selected" data-path="/" onclick="selectFolder(this,\'/\')">📁 / (Root)</div>';
+  // Add current subdirectories
+  files.filter(f=>f.type==='dir').forEach(f=>{
+    tree.innerHTML+=`<div class="folder-tree-item" data-path="${f.path}" onclick="selectFolder(this,'${f.path}')">📁 ${f.name}</div>`;
+  });
+}
+
+function selectFolder(el,path){
+  document.querySelectorAll('.folder-tree-item').forEach(i=>i.classList.remove('selected'));
+  el.classList.add('selected');
+  document.getElementById('moveDestPath').value=path;
+}
+
+function doMoveCopy(){
+  const src=document.getElementById('moveSrcPath').value;
+  const mode=document.getElementById('moveMode').value;
+  // Get selected destination
+  const sel=document.querySelector('.folder-tree-item.selected');
+  const dest=sel?sel.dataset.path:'/';
+  const endpoint=mode==='move'?'/api/move':'/api/copy';
+  fetch(endpoint,{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded','Authorization':'Bearer '+token},body:'path='+encodeURIComponent(src)+'&dest='+encodeURIComponent(dest)})
+    .then(r=>{if(!r.ok)throw new Error();return r.text();})
+    .then(()=>{showToast(mode==='move'?'Moved':'Copied','success');closeModal('moveModal');loadFiles(currentPath);})
+    .catch(()=>showToast('Failed to '+mode,'error'));
 }
 
 function previewFile(path){
@@ -407,46 +571,147 @@ function previewFile(path){
   if(type==='image'){content.innerHTML=`<img src="${path}?token=${token}" alt="preview">`;}
   else if(type==='audio'){content.innerHTML=`<audio controls src="${path}?token=${token}"></audio>`;}
   else if(type==='video'){content.innerHTML=`<video controls src="${path}?token=${token}"></video>`;}
-  else{
-    fetch(path+'?token='+token).then(r=>r.text()).then(t=>{content.innerHTML=`<pre>${t.replace(/</g,'&lt;').replace(/>/g,'&gt;')}</pre>`;})
-    .catch(()=>{content.innerHTML='<p>Cannot preview this file</p>';});
-  }
+  else{fetch(path+'?token='+token).then(r=>r.text()).then(t=>{content.innerHTML=`<pre>${t.replace(/</g,'&lt;').replace(/>/g,'&gt;')}</pre>`;}).catch(()=>{content.innerHTML='<p>Cannot preview</p>';});}
   openModal('previewModal');
 }
-
-function downloadFile(path){
-  window.location.href='/api/download?path='+encodeURIComponent(path)+'&token='+token;
+function downloadFile(path){window.location.href='/api/download?path='+encodeURIComponent(path)+'&token='+token;}
+function shareFile(path){
+  fetch('/api/share',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded','Authorization':'Bearer '+token},body:'path='+encodeURIComponent(path)})
+    .then(r=>r.json()).then(data=>{document.getElementById('shareUrl').value=data.url;openModal('shareModal');})
+    .catch(()=>showToast('Failed to create share link','error'));
 }
-
+function copyShareUrl(){const input=document.getElementById('shareUrl');input.select();navigator.clipboard.writeText(input.value);showToast('Link copied!','success');}
 function deleteItem(path,name){
   document.getElementById('confirmMsg').textContent=`Move "${name}" to trash?`;
   document.getElementById('confirmBtn').onclick=()=>{
     fetch('/api/delete?path='+encodeURIComponent(path),{method:'DELETE',headers:{'Authorization':'Bearer '+token}})
       .then(r=>{if(!r.ok)throw new Error();return r.text();})
       .then(()=>{showToast('Moved to trash','success');closeModal('confirmModal');loadFiles(currentPath);})
-      .catch(()=>{showToast('Failed to delete','error');closeModal('confirmModal');});
+      .catch(()=>{showToast('Failed','error');closeModal('confirmModal');});
   };
   openModal('confirmModal');
 }
-
 function deleteSelected(){
   if(!selectedFiles.length)return;
   document.getElementById('confirmMsg').textContent=`Move ${selectedFiles.length} items to trash?`;
   document.getElementById('confirmBtn').onclick=()=>{
     Promise.all(selectedFiles.map(p=>fetch('/api/delete?path='+encodeURIComponent(p),{method:'DELETE',headers:{'Authorization':'Bearer '+token}})))
       .then(()=>{showToast('Moved to trash','success');closeModal('confirmModal');loadFiles(currentPath);})
-      .catch(()=>{showToast('Some items failed','error');closeModal('confirmModal');loadFiles(currentPath);});
+      .catch(()=>{showToast('Some failed','error');closeModal('confirmModal');loadFiles(currentPath);});
+  };
+  openModal('confirmModal');
+}
+function refreshFiles(){loadFiles(currentPath);}
+
+// ============== TRASH ==============
+function loadTrash(){
+  fetch('/api/trash',{headers:{'Authorization':'Bearer '+token}})
+    .then(r=>r.json()).then(data=>{
+      trashFiles=data.files||[];
+      if(!trashFiles.length){document.getElementById('trashContainer').innerHTML='<div class="empty-msg">🗑️ Trash is empty</div>';return;}
+      let html='';
+      trashFiles.forEach(f=>{
+        html+=`<div class="file-item"><div class="file-icon">${f.type==='dir'?'📁':'📄'}</div><div class="file-name">${f.name}</div><div class="file-size">${f.type==='dir'?'':formatSize(f.size)}</div><div class="file-actions" style="justify-content:flex-end"><span class="file-action" onclick="restoreItem('${f.path}')">♻️</span><span class="file-action" onclick="permanentDelete('${f.path}','${f.name}')">❌</span></div></div>`;
+      });
+      document.getElementById('trashContainer').innerHTML=html;
+    })
+    .catch(()=>{document.getElementById('trashContainer').innerHTML='<div class="empty-msg">Error loading trash</div>';});
+}
+function restoreItem(path){
+  fetch('/api/restore?path='+encodeURIComponent(path),{headers:{'Authorization':'Bearer '+token}})
+    .then(r=>{if(r.ok){showToast('Restored','success');loadTrash();}else showToast('Failed','error');})
+    .catch(()=>showToast('Failed','error'));
+}
+function permanentDelete(path,name){
+  document.getElementById('confirmMsg').textContent=`Permanently delete "${name}"?`;
+  document.getElementById('confirmBtn').onclick=()=>{
+    fetch('/api/empty-trash?path='+encodeURIComponent(path),{headers:{'Authorization':'Bearer '+token}})
+      .then(r=>{if(r.ok){showToast('Deleted','success');loadTrash();}else showToast('Failed','error');closeModal('confirmModal');})
+      .catch(()=>{showToast('Failed','error');closeModal('confirmModal');});
+  };
+  openModal('confirmModal');
+}
+function emptyTrash(){
+  document.getElementById('confirmMsg').textContent='Empty all trash? This cannot be undone.';
+  document.getElementById('confirmBtn').onclick=()=>{
+    fetch('/api/empty-trash',{headers:{'Authorization':'Bearer '+token}})
+      .then(r=>{if(r.ok){showToast('Trash emptied','success');loadTrash();}else showToast('Failed','error');closeModal('confirmModal');})
+      .catch(()=>{showToast('Failed','error');closeModal('confirmModal');});
   };
   openModal('confirmModal');
 }
 
-function refreshFiles(){loadFiles(currentPath);}
+// ============== USERS ==============
+function loadUsers(){
+  fetch('/api/users',{headers:{'Authorization':'Bearer '+token}})
+    .then(r=>r.json()).then(data=>{
+      users=data.users||[];
+      let html='';
+      users.forEach((u,i)=>{html+=`<tr><td style="padding:10px 15px;font-size:13px">${u.username}</td><td style="padding:10px 15px;font-size:13px">${u.userLevel}</td><td style="padding:10px 15px;text-align:right"><button class="btn btn-sm" onclick="editUser(${i})">✏️</button> <button class="btn btn-sm btn-danger" onclick="deleteUser(${i})">🗑️</button></td></tr>`;});
+      document.getElementById('userTable').innerHTML=html;
+    });
+}
+function showUserModal(){document.getElementById('userModalTitle').textContent='Add User';document.getElementById('uName').value='';document.getElementById('uPass').value='';document.getElementById('uRole').value='user';document.getElementById('uName').disabled=false;openModal('userModal');document.getElementById('uName').focus();}
+function editUser(i){document.getElementById('userModalTitle').textContent='Edit User';document.getElementById('uName').value=users[i].username;document.getElementById('uPass').value='';document.getElementById('uRole').value=users[i].userLevel;document.getElementById('uName').disabled=true;openModal('userModal');}
+function saveUser(){
+  const n=document.getElementById('uName').value,p=document.getElementById('uPass').value,r=document.getElementById('uRole').value;
+  const isEdit=document.getElementById('uName').disabled;
+  const body={username:n,userLevel:r};if(p)body.password=p;
+  fetch(isEdit?'/api/users/'+n:'/api/users',{method:isEdit?'PUT':'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+token},body:JSON.stringify(body)})
+    .then(r=>{if(r.ok){closeModal('userModal');loadUsers();showToast('Saved','success');}else showToast('Failed','error');});
+}
+function deleteUser(i){if(!confirm('Delete user "'+users[i].username+'"?'))return;fetch('/api/users/'+users[i].username,{method:'DELETE',headers:{'Authorization':'Bearer '+token}}).then(r=>{if(r.ok){loadUsers();showToast('Deleted','success');}else showToast('Failed','error');});}
+
+// ============== SETTINGS ==============
+function loadSettings(){
+  fetch('/api/settings',{headers:{'Authorization':'Bearer '+token}})
+    .then(r=>r.json()).then(data=>{
+      document.getElementById('setWifiSsid').value=data.saved_wifi_ssid||data.wifi_ssid||'';
+      document.getElementById('setApSsid').value=data.saved_ap_ssid||data.ap_ssid||'';
+      document.getElementById('setFtpUser').value=data.ftp_user||'';
+      document.getElementById('sysVersion').textContent=data.version||'';
+      document.getElementById('sysIp').textContent=data.ip||'';
+      document.getElementById('sysMode').textContent=data.mode||'';
+      document.getElementById('sysUptime').textContent=formatUptime(data.uptime||0);
+      document.getElementById('sysHeap').textContent=formatSize(data.free_heap||0);
+    });
+}
+function formatUptime(s){const h=Math.floor(s/3600),m=Math.floor((s%3600)/60);return h+'h '+m+'m';}
+function saveSettings(){
+  const body={
+    wifi_ssid:document.getElementById('setWifiSsid').value,
+    wifi_pass:document.getElementById('setWifiPass').value,
+    ap_ssid:document.getElementById('setApSsid').value,
+    ap_pass:document.getElementById('setApPass').value,
+    ftp_user:document.getElementById('setFtpUser').value,
+    ftp_pass:document.getElementById('setFtpPass').value
+  };
+  fetch('/api/settings',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+token},body:JSON.stringify(body)})
+    .then(r=>r.json()).then(data=>{showToast(data.msg||'Settings saved','success');})
+    .catch(()=>showToast('Failed to save','error'));
+}
+
+// ============== ACTIVITY LOG ==============
+function loadLog(){
+  fetch('/api/log',{headers:{'Authorization':'Bearer '+token}})
+    .then(r=>r.json()).then(data=>{
+      const entries=data.log||[];
+      if(!entries.length){document.getElementById('logTable').innerHTML='<tr><td colspan="4" style="padding:20px;text-align:center;color:var(--text2)">No activity recorded</td></tr>';return;}
+      let html='';
+      entries.reverse().forEach(e=>{
+        const cls='log-'+(e.action||'').split('-')[0];
+        const time=e.time?new Date(e.time).toLocaleString():'';
+        html+=`<tr><td style="white-space:nowrap">${time}</td><td>${e.user||''}</td><td><span class="log-action ${cls}">${e.action||''}</span></td><td style="word-break:break-all">${e.path||''}</td></tr>`;
+      });
+      document.getElementById('logTable').innerHTML=html;
+    })
+    .catch(()=>{document.getElementById('logTable').innerHTML='<tr><td colspan="4" style="padding:20px;text-align:center;color:var(--danger)">Error</td></tr>';});
+}
 </script>
 </body>
 </html>
 )rawliteral";
 
-// Minimal login page
 const char login_html[] PROGMEM = R"rawliteral(
 <!DOCTYPE html>
 <html lang="en">
@@ -463,9 +728,9 @@ h1{text-align:center;color:var(--primary);font-size:24px;margin-bottom:5px}
 .sub{text-align:center;color:#999;font-size:13px;margin-bottom:25px}
 .form-group{margin-bottom:15px}
 label{display:block;margin-bottom:5px;font-weight:500;font-size:13px;color:var(--text)}
-input[type="text"],input[type="password"]{width:100%;padding:12px;border:1px solid #ddd;border-radius:8px;font-size:15px;transition:border .2s}
+input[type="text"],input[type="password"]{width:100%;padding:12px;border:1px solid #ddd;border-radius:8px;font-size:15px;transition:border .2s;min-height:44px}
 input:focus{outline:none;border-color:var(--primary)}
-.btn{width:100%;background:var(--primary);color:#fff;border:none;padding:12px;border-radius:8px;cursor:pointer;font-size:15px;font-weight:600;margin-top:5px;transition:background .2s}
+.btn{width:100%;background:var(--primary);color:#fff;border:none;padding:12px;border-radius:8px;cursor:pointer;font-size:15px;font-weight:600;margin-top:5px;transition:background .2s;min-height:44px}
 .btn:hover{background:#0652DD}
 .error{color:var(--danger);font-size:13px;text-align:center;margin-top:15px}
 .info{text-align:center;font-size:11px;color:#999;margin-top:25px}
