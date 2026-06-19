@@ -1,5 +1,5 @@
 /*
- * ESP32 File Server v3.1
+ * ESP32 File Server v3.2
  * (c) 2024 CyberXcyborg
  */
 
@@ -11,6 +11,7 @@
 #include <SPI.h>
 #include <FS.h>
 #include <ArduinoJson.h>
+#include <Update.h>
 
 #include "config.h"
 #include "auth.h"
@@ -23,6 +24,7 @@ FtpServer ftpSrv;
 bool wifiConnected = false;
 bool accessPointMode = false;
 String server_ip = "";
+unsigned long lastWiFiCheck = 0;
 
 bool connectToWiFi() {
   WiFi.mode(WIFI_STA);
@@ -56,9 +58,32 @@ void setupAccessPoint() {
   if (MDNS.begin("esp32files")) { MDNS.addService("http", "tcp", webServerPort); }
 }
 
+void checkWiFi() {
+  if (millis() - lastWiFiCheck < 30000) return; // check every 30s
+  lastWiFiCheck = millis();
+  if (!accessPointMode && WiFi.status() != WL_CONNECTED) {
+    Serial.println("WiFi lost, reconnecting...");
+    WiFi.disconnect();
+    delay(1000);
+    WiFi.begin(ssid, password);
+    int attempts = 0;
+    while (WiFi.status() != WL_CONNECTED && attempts < 10) { delay(500); attempts++; }
+    if (WiFi.status() == WL_CONNECTED) {
+      server_ip = WiFi.localIP().toString();
+      wifiConnected = true;
+      Serial.println("Reconnected: " + server_ip);
+    }
+  }
+}
+
 void handleServerInfo() {
   String m = accessPointMode ? "AP" : "WiFi";
-  webServer.send(200,"application/json","{\"ip\":\""+server_ip+"\",\"mode\":\""+m+"\",\"version\":\""+String(FIRMWARE_VERSION)+"\"}");
+  String json = "{\"ip\":\""+server_ip+"\",\"mode\":\""+m+"\",\"version\":\""+String(FIRMWARE_VERSION)+"\"";
+  json += ",\"uptime\":"+String(millis()/1000);
+  json += ",\"heap\":"+String(ESP.getFreeHeap());
+  json += ",\"rssi\":"+String(WiFi.RSSI());
+  json += "}";
+  webServer.send(200,"application/json",json);
 }
 
 void handleListFiles() {
@@ -246,7 +271,6 @@ void handleSharedFile() {
   f.close();
 }
 
-// ============== ZIP DOWNLOAD ==============
 uint32_t crc32c(uint32_t crc, uint8_t val) {
   crc ^= val;
   for(int i=0;i<8;i++) crc = (crc>>1)^(0x82F63B78&(-(crc&1)));
@@ -291,7 +315,6 @@ void handleZipDownload() {
   logActivity("zip",String(fc)+" files",u);
 }
 
-// ============== AUTO-REFRESH ==============
 void handleChanges() {
   String u, lvl;
   if (!isAuthenticated(webServer, u, lvl)) { webServer.send(401); return; }
@@ -317,6 +340,65 @@ void handleChanges() {
   webServer.send(200, "application/json", out);
 }
 
+// ============== OTA UPDATE ==============
+void handleOtaPage() {
+  String u, lvl;
+  if (!isAuthenticated(webServer, u, lvl) || lvl != "admin") { webServer.send(403); return; }
+  webServer.send(200, "text/html", String(index_html));
+}
+
+void handleOtaUpload() {
+  String u, lvl;
+  if (!isAuthenticated(webServer, u, lvl)) { webServer.send(401); return; }
+  HTTPUpload& up = webServer.upload();
+  static bool updateStarted = false;
+  static size_t updateSize = 0;
+  
+  if (up.status == UPLOAD_FILE_START) {
+    updateStarted = false;
+    updateSize = 0;
+    Serial.println("OTA: " + String(up.filename) + " size: " + String(up.totalSize));
+    if (!Update.begin(up.totalSize, U_FLASH)) {
+      Serial.println("OTA begin failed: " + String(Update.getError()));
+    } else {
+      updateStarted = true;
+    }
+  } else if (up.status == UPLOAD_FILE_WRITE) {
+    if (updateStarted) {
+      size_t written = Update.write(up.buf, up.currentSize);
+      if (written != up.currentSize) {
+        Serial.println("OTA write failed");
+        updateStarted = false;
+      }
+      updateSize += written;
+    }
+  } else if (up.status == UPLOAD_FILE_END) {
+    if (updateStarted && Update.end(true)) {
+      Serial.println("OTA success: " + String(updateSize) + " bytes");
+      logActivity("ota", "firmware updated "+String(updateSize)+"B", u);
+      webServer.send(200, "text/plain", "OK: Firmware updated. Rebooting...");
+      delay(1000);
+      ESP.restart();
+    } else {
+      Serial.println("OTA end failed: " + String(Update.getError()));
+      webServer.send(500, "text/plain", "OTA failed: " + String(Update.getError()));
+    }
+  }
+}
+
+void handleOtaStatus() {
+  String u, lvl;
+  if (!isAuthenticated(webServer, u, lvl)) { webServer.send(401); return; }
+  DynamicJsonDocument doc(256);
+  doc["version"] = FIRMWARE_VERSION;
+  doc["sketch_size"] = ESP.getSketchSize();
+  doc["free_space"] = ESP.getFreeSketchSpace();
+  doc["heap"] = ESP.getFreeHeap();
+  doc["chip"] = ESP.getChipModel();
+  String out; serializeJson(doc, out);
+  webServer.send(200, "application/json", out);
+}
+
 // ============== SETTINGS ==============
 void handleGetSettings() {
   String u, lvl;
@@ -330,6 +412,7 @@ void handleGetSettings() {
   doc["mode"] = accessPointMode ? "AP" : "WiFi";
   doc["uptime"] = millis() / 1000;
   doc["free_heap"] = ESP.getFreeHeap();
+  doc["rssi"] = WiFi.RSSI();
   if (SD.exists(SETTINGS_FILE)) {
     File f = SD.open(SETTINGS_FILE, FILE_READ);
     if (f) {
@@ -578,6 +661,7 @@ void setup() {
   webServer.on("/server-info", handleServerInfo);
   webServer.on("/users", handleUserManagementPage);
   webServer.on("/trash", handleTrashPage);
+  webServer.on("/ota", handleOtaPage);
   webServer.on("/manifest.json", handleManifest);
   webServer.on("/s/", HTTP_GET, handleSharedFile);
 
@@ -600,6 +684,8 @@ void setup() {
   webServer.on("/api/log", HTTP_GET, handleGetLog);
   webServer.on("/api/settings", HTTP_GET, handleGetSettings);
   webServer.on("/api/settings", HTTP_POST, handleSaveSettings);
+  webServer.on("/api/ota-status", HTTP_GET, handleOtaStatus);
+  webServer.on("/api/ota-upload", HTTP_POST, [](){webServer.send(200);}, handleOtaUpload);
   webServer.on("/api/users", HTTP_GET, handleGetUsers);
   webServer.on("/api/users", HTTP_POST, handleAddUser);
   webServer.on("/api/users/", HTTP_PUT, handleUpdateUser);
@@ -614,4 +700,5 @@ void setup() {
 void loop() {
   webServer.handleClient();
   ftpSrv.handleFTP();
+  checkWiFi();
 }

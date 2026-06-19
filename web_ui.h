@@ -1,4 +1,5 @@
 /usr/bin/bash: warning: setlocale: LC_ALL: cannot change locale (en_US.UTF-8): No such file or directory
+/usr/bin/bash: warning: setlocale: LC_ALL: cannot change locale (en_US.UTF-8): No such file or directory
 #ifndef WEB_UI_H
 #define WEB_UI_H
 
@@ -8,7 +9,7 @@ const char index_html[] PROGMEM = R"rawliteral(
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>ESP32 File Server v3</title>
+<title>ESP32 File Server v3.2</title>
 <link rel="manifest" href="/manifest.json">
 <meta name="theme-color" content="#0984e3">
 <style>
