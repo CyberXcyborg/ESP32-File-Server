@@ -1,7 +1,6 @@
 #ifndef CONFIG_H
 #define CONFIG_H
 
-// ============== CONFIGURATION ==============
 const char* ssid = "TEST";
 const char* password = "TEST";
 const char* ap_ssid = "ESP32-FileServer";
@@ -26,6 +25,6 @@ const char* ftp_password = "esp32";
 #define DEFAULT_ADMIN_USER "admin"
 #define DEFAULT_ADMIN_PASS "admin123"
 
-#define FIRMWARE_VERSION "3.1.0"
+#define FIRMWARE_VERSION "3.3.0"
 
 #endif
