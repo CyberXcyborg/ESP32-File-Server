@@ -28,10 +28,13 @@ const char* ftp_password = "esp32";
 #define SESSION_TIMEOUT 1800000  // 30 minutes
 #define USERS_FILE "/users.json"
 #define TRASH_FOLDER "/.trash"
+#define LOG_FILE "/.activity.log"
+#define SHARES_FILE "/.shares.json"
+#define VERSIONS_FOLDER "/.versions"
 #define DEFAULT_ADMIN_USER "admin"
 #define DEFAULT_ADMIN_PASS "admin123"
 
 // Version
-#define FIRMWARE_VERSION "2.0.0"
+#define FIRMWARE_VERSION "2.1.0"
 
 #endif
