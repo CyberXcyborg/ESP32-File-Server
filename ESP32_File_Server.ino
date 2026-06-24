@@ -1061,6 +1061,72 @@ void handleToggleFavorite() {
   webServer.send(200, "application/json", "{"ok":true,"favorite":"+String(exists?"false":"true")+"}");
 }
 
+// ============== SESSION MANAGEMENT ==============
+void handleListSessions() {
+  String u, lvl;
+  if (!isAuthenticated(webServer, u, lvl) || lvl != "admin") { sendError(403,"Admin only"); return; }
+  DynamicJsonDocument doc(1024);
+  JsonArray arr = doc.createNestedArray("sessions");
+  for (int i = 0; i < MAX_SESSIONS; i++) {
+    if (sessions[i].isActive) {
+      JsonObject s = arr.createNestedObject();
+      s["id"] = i;
+      s["username"] = sessions[i].username;
+      s["level"] = sessions[i].userLevel;
+      s["last_activity"] = millis() - sessions[i].lastActivity;
+      s["active"] = true;
+    }
+  }
+  doc["total"] = arr.size();
+  doc["max"] = MAX_SESSIONS;
+  String out; serializeJson(doc, out);
+  webServer.send(200, "application/json", out);
+}
+
+void handleKillSession() {
+  String u, lvl;
+  if (!isAuthenticated(webServer, u, lvl) || lvl != "admin") { sendError(403,"Admin only"); return; }
+  if (!webServer.hasArg("id")) { sendError(400,"Missing session id"); return; }
+  int id = webServer.arg("id").toInt();
+  if (id >= 0 && id < MAX_SESSIONS) {
+    logActivity("session-kill", sessions[id].username, u);
+    sessions[id].isActive = false;
+    webServer.send(200, "application/json", "{"ok":true}");
+  } else {
+    sendError(404,"Session not found");
+  }
+}
+
+// ============== ERROR STATS ==============
+void handleErrorLogs() {
+  String u, lvl;
+  if (!isAuthenticated(webServer, u, lvl)) { sendError(401,"Not authenticated"); return; }
+  String since = webServer.hasArg("since") ? webServer.arg("since") : "10";
+  int sinceCount = since.toInt();
+  DynamicJsonDocument doc(4096);
+  JsonArray arr = doc.createNestedArray("recent_errors");
+  if (SD.exists(LOG_FILE)) {
+    File f = SD.open(LOG_FILE, FILE_READ);
+    if (f) {
+      String lines[100];
+      int count = 0; String line = "";
+      while (f.available()) {
+        char c = f.read();
+        if (c == "\n") { lines[count % 100] = line; count++; line = ""; }
+        else line += c;
+      }
+      f.close();
+      int start = count > sinceCount ? count - sinceCount : 0;
+      for (int i = start; i < count; i++) {
+        String l = lines[i % 100];
+        if (l.length() > 0) arr.add(l);
+      }
+    }
+  }
+  String out; serializeJson(doc, out);
+  webServer.send(200, "application/json", out);
+}
+
 void setup() {
   Serial.begin(115200);
   Serial.println("\nESP32 File Server v"+String(FIRMWARE_VERSION));
@@ -1118,6 +1184,9 @@ void setup() {
   webServer.on("/api/storage",HTTP_GET,handleStorageBreakdown);
   webServer.on("/api/favorites",HTTP_GET,handleGetFavorites);
   webServer.on("/api/favorites/toggle",HTTP_POST,handleToggleFavorite);
+  webServer.on("/api/sessions",HTTP_GET,handleListSessions);
+  webServer.on("/api/sessions/kill",HTTP_POST,handleKillSession);
+  webServer.on("/api/errors",HTTP_GET,handleErrorLogs);
   webServer.on("/api/users",HTTP_GET,handleGetUsers);
   webServer.on("/api/users",HTTP_POST,handleAddUser);
   webServer.on("/api/users/",HTTP_PUT,handleUpdateUser);
