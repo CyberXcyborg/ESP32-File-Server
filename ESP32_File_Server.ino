@@ -1195,6 +1195,67 @@ void handleSaveNote() {
   webServer.send(200, "application/json", "{"ok":true}");
 }
 
+
+// ============== CLEANUP TOOLS ==============
+void handleScanStorage() {
+  String u, lvl;
+  if (!isAuthenticated(webServer, u, lvl)) { sendError(401,"Not authenticated"); return; }
+  if (!checkSD()) { sendError(503,"SD card not available"); return; }
+  String path = webServer.hasArg("path") ? webServer.arg("path") : "/";
+  DynamicJsonDocument doc(2048);
+  int totalFiles = 0, totalDirs = 0, bigFiles = 0, oldFiles = 0;
+  uint64_t totalSize = 0, oldSize = 0, trashSize = 0;
+  int trashCount = 0;
+  unsigned long now = millis();
+  unsigned long thirtyDaysMs = (unsigned long)30 * 86400000UL;
+
+  // Scan directory
+  File dir = SD.open(path);
+  if (dir && dir.isDirectory()) {
+    File file;
+    while (file = dir.openNextFile()) {
+      if (file.isDirectory()) {
+        totalDirs++;
+      } else {
+        totalFiles++;
+        totalSize += file.size();
+        if (file.size() > 10485760) bigFiles++;
+        if ((now - file.fileTime()) > thirtyDaysMs) { oldFiles++; oldSize += file.size(); }
+      }
+      file.close();
+    }
+    dir.close();
+  }
+
+  // Trash stats
+  if (SD.exists(TRASH_FOLDER)) {
+    File td = SD.open(TRASH_FOLDER);
+    if (td && td.isDirectory()) {
+      File tf;
+      while (tf = td.openNextFile()) {
+        if (!tf.isDirectory()) { trashCount++; trashSize += tf.size(); }
+        tf.close();
+      }
+      td.close();
+    }
+  }
+
+  doc["total_files"] = totalFiles;
+  doc["total_dirs"] = totalDirs;
+  doc["total_size"] = (uint64_t)totalSize;
+  doc["total_size_formatted"] = getFileSize((uint64_t)totalSize);
+  doc["big_files"] = bigFiles;
+  doc["old_files"] = oldFiles;
+  doc["old_size"] = (uint64_t)oldSize;
+  doc["old_size_formatted"] = getFileSize((uint64_t)oldSize);
+  doc["trash_count"] = trashCount;
+  doc["trash_size"] = (uint64_t)trashSize;
+  doc["trash_size_formatted"] = getFileSize((uint64_t)trashSize);
+  String out; serializeJson(doc, out);
+  webServer.send(200, "application/json", out);
+  logActivity("scan", path, u);
+}
+
 void setup() {
   Serial.begin(115200);
   Serial.println("\nESP32 File Server v"+String(FIRMWARE_VERSION));
@@ -1257,6 +1318,7 @@ void setup() {
   webServer.on("/api/errors",HTTP_GET,handleErrorLogs);
   webServer.on("/api/notes",HTTP_GET,handleGetNotes);
   webServer.on("/api/notes",HTTP_POST,handleSaveNote);
+  webServer.on("/api/scan",HTTP_GET,handleScanStorage);
   webServer.on("/api/users",HTTP_GET,handleGetUsers);
   webServer.on("/api/users",HTTP_POST,handleAddUser);
   webServer.on("/api/users/",HTTP_PUT,handleUpdateUser);
