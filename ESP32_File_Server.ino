@@ -571,9 +571,33 @@ void handleTrashPage() {
 }
 void handleTrashList() {
   String u,lvl;
-  if(!isAuthenticated(webServer,u,lvl)){webServer.send(401);return;}
+  if(!isAuthenticated(webServer,u,lvl)){sendError(401,"Not authenticated");return;}
+  if(!checkSD()){sendError(503,"SD card not available");return;}
   DynamicJsonDocument doc(8192); JsonArray arr=doc.createNestedArray("files");
-  if(SD.exists(TRASH_FOLDER)){File dir=SD.open(TRASH_FOLDER);if(dir){File f;while(f=dir.openNextFile()){String name=String(f.name());int sl=name.lastIndexOf('/');String sn=(sl>=0)?name.substring(sl+1):name;JsonObject it=arr.createNestedObject();it["name"]=sn;it["path"]=name;it["type"]=f.isDirectory()?"dir":"file";it["size"]=f.isDirectory()?0:f.size();f.close();}dir.close();}}
+  if(SD.exists(TRASH_FOLDER)){
+    File dir=SD.open(TRASH_FOLDER);
+    if(dir){
+      File f;
+      while(f=dir.openNextFile()){
+        String name=String(f.name());
+        int sl=name.lastIndexOf('/');
+        String sn=(sl>=0)?name.substring(sl+1):name;
+        JsonObject it=arr.createNestedObject();
+        it["name"]=sn;
+        it["path"]=name;
+        it["type"]=f.isDirectory()?"dir":"file";
+        it["size"]=f.isDirectory()?0:f.size();
+        it["deleted"]=f.fileTime();
+        // Compute original path
+        String orig=name;
+        orig.replace(TRASH_FOLDER,"");
+        it["original_path"]=orig;
+        f.close();
+      }
+      dir.close();
+    }
+  }
+  doc["count"]=arr.size();
   String out;serializeJson(doc,out);webServer.send(200,"application/json",out);
 }
 void handleRestore() {
@@ -1127,6 +1151,50 @@ void handleErrorLogs() {
   webServer.send(200, "application/json", out);
 }
 
+// ============== FILE NOTES ==============
+void handleGetNotes() {
+  String u, lvl;
+  if (!isAuthenticated(webServer, u, lvl)) { sendError(401,"Not authenticated"); return; }
+  String path = webServer.hasArg("path") ? webServer.arg("path") : "";
+  String notesFile = "/.notes.json";
+  DynamicJsonDocument doc(2048);
+  if (SD.exists(notesFile)) {
+    File f = SD.open(notesFile, FILE_READ);
+    if (f) { deserializeJson(doc, f); f.close(); }
+  }
+  if (path.length() > 0 && doc.containsKey(path)) {
+    webServer.send(200, "application/json", "{"notes":""+doc[path].as<String>()+""}");
+  } else {
+    webServer.send(200, "application/json", "{}");
+  }
+}
+
+void handleSaveNote() {
+  String u, lvl;
+  if (!isAuthenticated(webServer, u, lvl)) { sendError(401,"Not authenticated"); return; }
+  if (!webServer.hasArg("plain")) { sendError(400,"Missing data"); return; }
+  DynamicJsonDocument input(512);
+  deserializeJson(input, webServer.arg("plain"));
+  String path = input["path"] | "";
+  String note = input["notes"] | "";
+  if (path.length() == 0) { sendError(400,"Missing path"); return; }
+  String notesFile = "/.notes.json";
+  DynamicJsonDocument doc(2048);
+  if (SD.exists(notesFile)) {
+    File f = SD.open(notesFile, FILE_READ);
+    if (f) { deserializeJson(doc, f); f.close(); }
+  }
+  if (note.length() == 0) {
+    doc.remove(path);
+  } else {
+    doc[path] = note;
+  }
+  File f = SD.open(notesFile, FILE_WRITE);
+  if (f) { serializeJson(doc, f); f.close(); }
+  logActivity("note", path, u);
+  webServer.send(200, "application/json", "{"ok":true}");
+}
+
 void setup() {
   Serial.begin(115200);
   Serial.println("\nESP32 File Server v"+String(FIRMWARE_VERSION));
@@ -1187,6 +1255,8 @@ void setup() {
   webServer.on("/api/sessions",HTTP_GET,handleListSessions);
   webServer.on("/api/sessions/kill",HTTP_POST,handleKillSession);
   webServer.on("/api/errors",HTTP_GET,handleErrorLogs);
+  webServer.on("/api/notes",HTTP_GET,handleGetNotes);
+  webServer.on("/api/notes",HTTP_POST,handleSaveNote);
   webServer.on("/api/users",HTTP_GET,handleGetUsers);
   webServer.on("/api/users",HTTP_POST,handleAddUser);
   webServer.on("/api/users/",HTTP_PUT,handleUpdateUser);
