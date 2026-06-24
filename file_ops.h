@@ -1,3 +1,4 @@
+/usr/bin/bash: warning: setlocale: LC_ALL: cannot change locale (en_US.UTF-8): No such file or directory
 #ifndef FILE_OPS_H
 #define FILE_OPS_H
 
@@ -243,6 +244,162 @@ bool isPreviewable(String fileName) {
   return ext=="jpg"||ext=="jpeg"||ext=="png"||ext=="gif"||ext=="bmp"||ext=="svg"||ext=="webp"||
          ext=="txt"||ext=="html"||ext=="htm"||ext=="css"||ext=="js"||ext=="json"||ext=="xml"||
          ext=="md"||ext=="csv"||ext=="pdf"||ext=="mp3"||ext=="wav"||ext=="ogg";
+}
+
+// ============== COLLECT FILES RECURSIVELY ==============
+void collectFiles(String path, JsonArray &files) {
+  File dir = SD.open(path);
+  if (!dir || !dir.isDirectory()) return;
+  File file;
+  while (file = dir.openNextFile()) {
+    String fn = String(file.name());
+    int sl = fn.lastIndexOf('/');
+    String name = (sl >= 0) ? fn.substring(sl+1) : fn;
+    if (!file.isDirectory()) {
+      String p = path + (path.endsWith("/")?"":"/") + name;
+      JsonObject f = files.createNestedObject();
+      f["name"] = name;
+      f["path"] = p;
+      f["size"] = file.size();
+    } else {
+      collectFiles(fn, files);
+    }
+    file.close();
+  }
+  dir.close();
+}
+
+// ============== AUTO-CLEANUP TRASH ==============
+int autoCleanTrash(int maxAgeDays) {
+  if (!SD.exists(TRASH_FOLDER)) return 0;
+  unsigned long cutoff = millis() - ((unsigned long)maxAgeDays * 86400000UL);
+  int cleaned = 0;
+  File dir = SD.open(TRASH_FOLDER);
+  if (!dir || !dir.isDirectory()) return 0;
+  File file;
+  while (file = dir.openNextFile()) {
+    String fn = String(file.name());
+    if (file.isDirectory()) {
+      // Check if old
+      if (file.fileTime() < cutoff) {
+        removeDir(fn);
+        cleaned++;
+      }
+    } else {
+      if (file.fileTime() < cutoff) {
+        SD.remove(fn);
+        cleaned++;
+      }
+    }
+    file.close();
+  }
+  dir.close();
+  return cleaned;
+}
+
+// ============== COUNT FILES IN DIR ==============
+int countFiles(String path) {
+  int count = 0;
+  File dir = SD.open(path);
+  if (!dir || !dir.isDirectory()) return 0;
+  File file;
+  while (file = dir.openNextFile()) {
+    if (!file.isDirectory()) count++;
+    else count += countFiles(String(file.path()));
+    file.close();
+  }
+  dir.close();
+  return count;
+}
+
+int countDirs(String path) {
+  int count = 0;
+  File dir = SD.open(path);
+  if (!dir || !dir.isDirectory()) return 0;
+  File file;
+  while (file = dir.openNextFile()) {
+    if (file.isDirectory()) {
+      count++;
+      count += countDirs(String(file.path()));
+    }
+    file.close();
+  }
+  dir.close();
+  return count;
+}
+
+#endif
+
+// ============== COLLECT FILES RECURSIVELY ==============
+void collectFiles(String path, JsonArray &files) {
+  File dir = SD.open(path);
+  if (!dir || !dir.isDirectory()) return;
+  File file;
+  while (file = dir.openNextFile()) {
+    String fn = String(file.name());
+    int sl = fn.lastIndexOf('/');
+    String name = (sl >= 0) ? fn.substring(sl+1) : fn;
+    if (!file.isDirectory()) {
+      String p = path + (path.endsWith("/")?"":"/") + name;
+      JsonObject f = files.createNestedObject();
+      f["name"] = name;
+      f["path"] = p;
+      f["size"] = file.size();
+    } else {
+      collectFiles(fn, files);
+    }
+    file.close();
+  }
+  dir.close();
+}
+
+// ============== AUTO-CLEANUP TRASH ==============
+int autoCleanTrash(int maxAgeDays) {
+  if (!SD.exists(TRASH_FOLDER)) return 0;
+  unsigned long cutoff = millis() - ((unsigned long)maxAgeDays * 86400000UL);
+  int cleaned = 0;
+  File dir = SD.open(TRASH_FOLDER);
+  if (!dir || !dir.isDirectory()) return 0;
+  File file;
+  while (file = dir.openNextFile()) {
+    String fn = String(file.name());
+    if (file.isDirectory()) {
+      if (file.fileTime() < cutoff) { removeDir(fn); cleaned++; }
+    } else {
+      if (file.fileTime() < cutoff) { SD.remove(fn); cleaned++; }
+    }
+    file.close();
+  }
+  dir.close();
+  return cleaned;
+}
+
+// ============== COUNT FILES IN DIR ==============
+int countFilesInDir(String path) {
+  int count = 0;
+  File dir = SD.open(path);
+  if (!dir || !dir.isDirectory()) return 0;
+  File file;
+  while (file = dir.openNextFile()) {
+    if (!file.isDirectory()) count++;
+    else count += countFilesInDir(String(file.path()));
+    file.close();
+  }
+  dir.close();
+  return count;
+}
+
+int countDirsInDir(String path) {
+  int count = 0;
+  File dir = SD.open(path);
+  if (!dir || !dir.isDirectory()) return 0;
+  File file;
+  while (file = dir.openNextFile()) {
+    if (file.isDirectory()) { count++; count += countDirsInDir(String(file.path())); }
+    file.close();
+  }
+  dir.close();
+  return count;
 }
 
 #endif
