@@ -1,7 +1,7 @@
 /usr/bin/bash: warning: setlocale: LC_ALL: cannot change locale (en_US.UTF-8): No such file or directory
 /usr/bin/bash: warning: setlocale: LC_ALL: cannot change locale (en_US.UTF-8): No such file or directory
 /*
- * ESP32 File Server v3.4
+ * ESP32 File Server v3.5
  * (c) 2024 CyberXcyborg
  */
 
@@ -85,6 +85,11 @@ bool checkSD() {
     if (SD.begin(SD_CS)) { sdOK = true; Serial.println("SD reconnected"); }
   }
   return sdOK;
+}
+
+void sendError(int code, String msg) {
+  String json = "{"error":""+msg+"","code":"+String(code)+"}";
+  webServer.send(code, "application/json", json);
 }
 
 // ============== SERVER INFO ==============
@@ -552,7 +557,7 @@ void handleTrashList() {
 void handleRestore() {
   String u,lvl;
   if(!isAuthenticated(webServer,u,lvl)){webServer.send(401);return;}
-  if(!webServer.hasArg("path")){webServer.send(400);return;}
+  if(!webServer.hasArg("path")){sendError(400,"Bad request");return;}
   String path=webServer.arg("path");
   if(restoreFromTrash(path)){logActivity("restore",path,u);webServer.send(200,"text/plain","Restored");}
   else webServer.send(500,"text/plain","Failed");
@@ -579,10 +584,10 @@ void handleGetUsers() {
 void handleAddUser() {
   String u,lvl;
   if(!isAuthenticated(webServer,u,lvl)||lvl!="admin"){webServer.send(403);return;}
-  if(!webServer.hasArg("plain")){webServer.send(400);return;}
+  if(!webServer.hasArg("plain")){sendError(400,"Bad request");return;}
   DynamicJsonDocument doc(256);deserializeJson(doc,webServer.arg("plain"));
   String nu=doc["username"]|"",np=doc["password"]|"",nl=doc["userLevel"]|"user";
-  if(nu.length()==0||np.length()==0){webServer.send(400);return;}
+  if(nu.length()==0||np.length()==0){sendError(400,"Bad request");return;}
   File f=SD.open(USERS_FILE);String c="{\"users\":[]}";if(f){c="";while(f.available())c+=(char)f.read();f.close();}
   DynamicJsonDocument ex(1024);deserializeJson(ex,c);
   JsonObject u2=ex["users"].createNestedObject();u2["username"]=nu;u2["password"]=np;u2["userLevel"]=nl;
@@ -593,7 +598,7 @@ void handleUpdateUser() {
   String u,lvl;
   if(!isAuthenticated(webServer,u,lvl)||lvl!="admin"){webServer.send(403);return;}
   String path=webServer.pathArg(0);
-  if(!webServer.hasArg("plain")){webServer.send(400);return;}
+  if(!webServer.hasArg("plain")){sendError(400,"Bad request");return;}
   DynamicJsonDocument doc(256);deserializeJson(doc,webServer.arg("plain"));
   File f=SD.open(USERS_FILE);String c="{\"users\":[]}";if(f){c="";while(f.available())c+=(char)f.read();f.close();}
   DynamicJsonDocument ex(1024);deserializeJson(ex,c);
@@ -734,6 +739,133 @@ void handleSearch() {
 }
 
 // ============== SETUP/LOOP ==============
+// ============== FOLDER DOWNLOAD AS ZIP ==============
+void handleFolderZip() {
+  String u, lvl;
+  if (!isAuthenticated(webServer, u, lvl)) { webServer.send(401); return; }
+  if (!checkSD()) { webServer.send(503); return; }
+  if (!webServer.hasArg("path")) { webServer.send(400); return; }
+  String path = webServer.arg("path");
+  if (!SD.exists(path)) { webServer.send(404); return; }
+  File d = SD.open(path);
+  if (!d || !d.isDirectory()) { if(d) d.close(); webServer.send(400); return; }
+  d.close();
+  DynamicJsonDocument doc(16384);
+  JsonArray paths = doc.createNestedArray("paths");
+  collectFiles(path, paths);
+  if (paths.size() == 0) { webServer.send(404, "text/plain", "Folder empty"); return; }
+  webServer.setContentLength(CONTENT_LENGTH_UNKNOWN);
+  webServer.send(200, "application/zip", "");
+  uint16_t fc = 0;
+  for (const char* ps : paths) {
+    String p = ps;
+    if (!SD.exists(p)) continue;
+    File f = SD.open(p, FILE_READ);
+    if (!f || f.isDirectory()) { if(f) f.close(); continue; }
+    String name = p.substring(p.lastIndexOf(/)+1);
+    uint32_t sz = f.size();
+    uint32_t crc = 0; uint8_t buf[256];
+    while (f.available()) { int n=f.read(buf,256); for(int i=0;i<n;i++) crc=crc32c(crc,buf[i]); }
+    f.seek(0);
+    uint8_t lh[30] = {0x50,0x4b,0x03,0x04,20,0,20,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0};
+    lh[26]=name.length()&0xFF; lh[27]=(name.length()>>8)&0xFF;
+    webServer.sendContent((char*)lh,30);
+    webServer.sendContent(name);
+    while(f.available()){int n=f.read(buf,256);webServer.sendContent((char*)buf,n);}
+    f.close();
+    uint8_t cdh[46]={0x50,0x4b,0x01,0x02,20,0,20,0,20,0,0,0,0,0,0,0,0,0,0,0,0,0,(uint8_t)(crc&0xFF),(uint8_t)((crc>>8)&0xFF),(uint8_t)((crc>>16)&0xFF),(uint8_t)((crc>>24)&0xFF),(uint8_t)(sz&0xFF),(uint8_t)((sz>>8)&0xFF),(uint8_t)((sz>>16)&0xFF),(uint8_t)((sz>>24)&0xFF),(uint8_t)(sz&0xFF),(uint8_t)((sz>>8)&0xFF),(uint8_t)((sz>>16)&0xFF),(uint8_t)((sz>>24)&0xFF),0,0,0,0,0,0,0,0,0,0,0,0,0,0};
+    cdh[28]=name.length()&0xFF; cdh[29]=(name.length()>>8)&0xFF;
+    webServer.sendContent((char*)cdh,46);
+    webServer.sendContent(name);
+    fc++;
+  }
+  uint8_t eocd[22]={0x50,0x4b,0x05,0x06,0,0,0,0,(uint8_t)(fc&0xFF),(uint8_t)((fc>>8)&0xFF),(uint8_t)(fc&0xFF),(uint8_t)((fc>>8)&0xFF),0,0,0,0,0,0,0,0,0,0};
+  webServer.sendContent((char*)eocd,22);
+  logActivity("folder-zip", path+" ("+String(fc)+" files)", u);
+}
+
+// ============== AUTO-CLEANUP ==============
+void handleAutoCleanup() {
+  String u, lvl;
+  if (!isAuthenticated(webServer, u, lvl) || lvl != "admin") { webServer.send(403); return; }
+  int days = webServer.hasArg("days") ? webServer.arg("days").toInt() : 30;
+  int cleaned = autoCleanTrash(days);
+  logActivity("auto-cleanup", String(cleaned)+" files older than "+String(days)+" days", u);
+  webServer.send(200, "application/json", "{"cleaned":"+String(cleaned)+"}");
+}
+
+// ============== DIR COUNTS ==============
+void handleDirInfo() {
+  String u, lvl;
+  if (!isAuthenticated(webServer, u, lvl)) { webServer.send(401); return; }
+  if (!checkSD()) { webServer.send(503); return; }
+  String path = webServer.hasArg("path") ? webServer.arg("path") : "/";
+  DynamicJsonDocument doc(256);
+  doc["path"] = path;
+  doc["files"] = countFilesInDir(path);
+  doc["folders"] = countDirsInDir(path);
+  doc["size"] = getDirSize(path);
+  doc["sizeFormatted"] = getFileSize(getDirSize(path));
+  String out; serializeJson(doc, out);
+  webServer.send(200, "application/json", out);
+}
+
+// ============== CONFIG WIZARD ==============
+bool needsSetup() {
+  // Check if this is first boot (no settings file or no admin user set)
+  if (!SD.exists(SETTINGS_FILE)) return true;
+  if (!SD.exists(USERS_FILE)) return true;
+  File f = SD.open(USERS_FILE);
+  if (!f) return true;
+  String content = ""; while(f.available()) content += (char)f.read(); f.close();
+  if (content.indexOf(""admin"") < 0) return true;
+  return false;
+}
+
+void handleSetupPage() {
+  if (!needsSetup()) { webServer.sendHeader("Location","/"); webServer.send(302); return; }
+  String html = "<!DOCTYPE html><html><head><meta name="viewport" content="width=device-width,initial-scale=1.0">";
+  html += "<title>ESP32 File Server - Setup</title>";
+  html += "<style>:root{--bg:#f5f6fa;--card:#fff;--text:#2d3436;--primary:#0984e3;--border:#dfe6e9}";
+  html += "*{margin:0;padding:0;box-sizing:border-box;font-family:system-ui,sans-serif}";
+  html += "body{background:var(--bg);display:flex;justify-content:center;align-items:center;min-height:100vh;padding:20px}";
+  html += ".card{background:var(--card);border-radius:12px;padding:35px;max-width:450px;width:100%;box-shadow:0 4px 20px rgba(0,0,0,0.08)}";
+  html += "h1{color:var(--primary);font-size:22px;margin-bottom:5px}";
+  html += ".sub{color:#999;font-size:13px;margin-bottom:25px}";
+  html += ".form-group{margin-bottom:15px}";
+  html += "label{display:block;margin-bottom:5px;font-weight:500;font-size:13px}";
+  html += "input{width:100%;padding:12px;border:1px solid var(--border);border-radius:8px;font-size:15px}";
+  html += "input:focus{outline:none;border-color:var(--primary)}";
+  html += ".btn{width:100%;background:var(--primary);color:#fff;border:none;padding:14px;border-radius:8px;cursor:pointer;font-size:15px;font-weight:600;margin-top:10px}";
+  html += ".btn:hover{background:#0652DD}</style></head><body>";
+  html += "<div class="card"><h1>📁 ESP32 File Server</h1><p class="sub">Initial setup - configure your server</p>";
+  html += "<form method="post" action="/api/complete-setup">";
+  html += "<div class="form-group"><label>Admin Username</label><input type="text" name="admin_user" value="admin" required></div>";
+  html += "<div class="form-group"><label>Admin Password</label><input type="password" name="admin_pass" required></div>";
+  html += "<div class="form-group"><label>WiFi SSID</label><input type="text" name="wifi_ssid" required></div>";
+  html += "<div class="form-group"><label>WiFi Password</label><input type="password" name="wifi_pass" required></div>";
+  html += "<button type="submit" class="btn">Complete Setup</button></form></div></body></html>";
+  webServer.send(200, "text/html", html);
+}
+
+void handleCompleteSetup() {
+  if (!webServer.hasArg("admin_user") || !webServer.hasArg("admin_pass") || !webServer.hasArg("wifi_ssid") || !webServer.hasArg("wifi_pass")) {
+    webServer.send(400); return;
+  }
+  String au = webServer.arg("admin_user");
+  String ap = webServer.arg("admin_pass");
+  String ws = webServer.arg("wifi_ssid");
+  String wp = webServer.arg("wifi_pass");
+  // Save users file
+  File f = SD.open(USERS_FILE, FILE_WRITE);
+  if (f) { f.print("{\"users\":[{\"username\":\""+au+"\",\"password\":\""+ap+"\",\"userLevel\":\"admin\"}]}"); f.close(); }
+  // Save settings
+  saveSettings(ws, wp, ap_ssid, ap_password, ftp_user, ftp_password);
+  webServer.send(200, "text/html", "<html><body style="font-family:system-ui;padding:40px;text-align:center"><h1>✅ Setup Complete!</h1><p>Device will now connect to WiFi and restart.</p></body></html>");
+  delay(2000);
+  ESP.restart();
+}
+
 void setup() {
   Serial.begin(115200);
   Serial.println("\nESP32 File Server v"+String(FIRMWARE_VERSION));
@@ -753,6 +885,8 @@ void setup() {
   webServer.on("/trash",handleTrashPage);
   webServer.on("/ota",handleOtaPage);
   webServer.on("/manifest.json",handleManifest);
+  webServer.on("/setup",handleSetupPage);
+  webServer.on("/api/complete-setup",HTTP_POST,handleCompleteSetup);
   webServer.on("/s/",HTTP_GET,handleSharedFile);
 
   webServer.on("/api/list",HTTP_GET,handleListFiles);
@@ -771,6 +905,9 @@ void setup() {
   webServer.on("/api/batch-move",HTTP_POST,handleBatchMove);
   webServer.on("/api/search",HTTP_GET,handleSearch);
   webServer.on("/api/changes",HTTP_GET,handleChanges);
+  webServer.on("/api/folder-zip",HTTP_POST,handleFolderZip);
+  webServer.on("/api/cleanup",HTTP_POST,handleAutoCleanup);
+  webServer.on("/api/dir-info",HTTP_GET,handleDirInfo);
   webServer.on("/api/trash",HTTP_GET,handleTrashList);
   webServer.on("/api/restore",HTTP_GET,handleRestore);
   webServer.on("/api/empty-trash",HTTP_GET,handleEmptyTrash);
