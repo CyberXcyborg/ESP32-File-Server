@@ -237,8 +237,30 @@ void handleCreateDir() {
 // ============== RENAME ==============
 void handleRename() {
   String u, lvl;
-  if (!isAuthenticated(webServer, u, lvl)) { webServer.send(401); return; }
-  if (!checkSD()) { webServer.send(503); return; }
+  if (!isAuthenticated(webServer, u, lvl)) { sendError(401,"Not authenticated"); return; }
+  if (!checkSD()) { sendError(503,"SD card not available"); return; }
+  if (!webServer.hasArg("path") || !webServer.hasArg("name")) { sendError(400,"Missing path or name"); return; }
+  String path = webServer.arg("path"), newName = webServer.arg("name");
+  if (!SD.exists(path)) { sendError(404,"Source file not found"); return; }
+  if (!SD.open(path).isDirectory()) createVersion(path);
+  int sl = path.lastIndexOf('/');
+  String parent = (sl > 0) ? path.substring(0, sl+1) : "/";
+  String np = parent + newName;
+  // Auto-rename if target exists
+  if (SD.exists(np)) {
+    int dot = newName.lastIndexOf('.');
+    String base, ext;
+    if (dot > 0) { base = newName.substring(0, dot); ext = newName.substring(dot); }
+    else { base = newName; ext = ""; }
+    int counter = 1;
+    do {
+      np = parent + base + "_" + String(counter) + ext;
+      counter++;
+    } while (SD.exists(np) && counter < 1000);
+  }
+  if (SD.rename(path, np)) { logActivity("rename", path+" -> "+np, u); webServer.send(200, "application/json", "{\"ok\":true,\"path\":\""+np+"\"}"); }
+  else sendError(500,"Rename failed");
+}
   if (!webServer.hasArg("path") || !webServer.hasArg("name")) { webServer.send(400); return; }
   String path = webServer.arg("path"), newName = webServer.arg("name");
   if (!SD.exists(path)) { webServer.send(404); return; }
@@ -866,6 +888,43 @@ void handleCompleteSetup() {
   ESP.restart();
 }
 
+// ============== ACTIVITY LOG EXPORT ==============
+void handleExportLog() {
+  String u, lvl;
+  if (!isAuthenticated(webServer, u, lvl) || lvl != "admin") { sendError(403,"Admin only"); return; }
+  String format = webServer.hasArg("format") ? webServer.hasArg("format") : "json";
+  if (format == "csv") {
+    webServer.setContentLength(CONTENT_LENGTH_UNKNOWN);
+    webServer.send(200, "text/csv", "timestamp,username,action,path\n");
+    if (SD.exists(LOG_FILE)) {
+      File f = SD.open(LOG_FILE, FILE_READ);
+      if (f) { while(f.available()) webServer.sendContent(String((char)f.read())); f.close(); }
+    }
+  } else {
+    File f = SD.open(LOG_FILE, FILE_READ);
+    if (f) { String c=""; while(f.available()) c+=(char)f.read(); f.close(); webServer.send(200,"application/json",c); }
+    else webServer.send(200,"application/json","[]");
+  }
+}
+
+// ============== SYSTEM STATS ==============
+void handleStats() {
+  String u, lvl;
+  if (!isAuthenticated(webServer, u, lvl)) { sendError(401,"Not authenticated"); return; }
+  DynamicJsonDocument doc(1024);
+  doc["uptime"] = millis() / 1000;
+  doc["heap"] = ESP.getFreeHeap();
+  doc["rssi"] = WiFi.RSSI();
+  doc["ip"] = server_ip;
+  doc["mode"] = accessPointMode ? "AP" : "WiFi";
+  doc["sd_total"] = SD.totalBytes();
+  doc["sd_used"] = SD.usedBytes();
+  doc["sd_free"] = SD.totalBytes() - SD.usedBytes();
+  doc["version"] = FIRMWARE_VERSION;
+  String out; serializeJson(doc, out);
+  webServer.send(200, "application/json", out);
+}
+
 void setup() {
   Serial.begin(115200);
   Serial.println("\nESP32 File Server v"+String(FIRMWARE_VERSION));
@@ -917,6 +976,8 @@ void setup() {
   webServer.on("/api/ota-status",HTTP_GET,handleOtaStatus);
   webServer.on("/api/ota-upload",HTTP_POST,[](){webServer.send(200);},handleOtaUpload);
   webServer.on("/api/reboot",HTTP_POST,handleReboot);
+  webServer.on("/api/export-log",HTTP_GET,handleExportLog);
+  webServer.on("/api/stats",HTTP_GET,handleStats);
   webServer.on("/api/users",HTTP_GET,handleGetUsers);
   webServer.on("/api/users",HTTP_POST,handleAddUser);
   webServer.on("/api/users/",HTTP_PUT,handleUpdateUser);
