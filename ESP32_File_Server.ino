@@ -1,5 +1,7 @@
+/usr/bin/bash: warning: setlocale: LC_ALL: cannot change locale (en_US.UTF-8): No such file or directory
+/usr/bin/bash: warning: setlocale: LC_ALL: cannot change locale (en_US.UTF-8): No such file or directory
 /*
- * ESP32 File Server v3.3
+ * ESP32 File Server v3.4
  * (c) 2024 CyberXcyborg
  */
 
@@ -652,6 +654,85 @@ void handleManifest() {
   webServer.send(200,"application/manifest+json","{\"name\":\"ESP32 File Server\",\"short_name\":\"ESP32-FS\",\"start_url\":\"/\",\"display\":\"standalone\",\"background_color\":\"#0984e3\",\"theme_color\":\"#0984e3\",\"icons\":[]}");
 }
 
+// ============== BATCH OPERATIONS ==============
+void handleBatchDelete() {
+  String u, lvl;
+  if (!isAuthenticated(webServer, u, lvl)) { webServer.send(401); return; }
+  if (!webServer.hasArg("plain")) { webServer.send(400); return; }
+  DynamicJsonDocument doc(4096);
+  deserializeJson(doc, webServer.arg("plain"));
+  JsonArray paths = doc["paths"];
+  int ok = 0, fail = 0;
+  for (const char* ps : paths) {
+    String p = ps;
+    if (SD.exists(p) && moveToTrash(p)) { ok++; logActivity("batch-delete", p, u); }
+    else fail++;
+  }
+  String result = "{\"ok\":"+String(ok)+",\"fail\":"+String(fail)+"}";
+  webServer.send(200, "application/json", result);
+}
+
+void handleBatchMove() {
+  String u, lvl;
+  if (!isAuthenticated(webServer, u, lvl)) { webServer.send(401); return; }
+  if (!webServer.hasArg("plain")) { webServer.send(400); return; }
+  DynamicJsonDocument doc(4096);
+  deserializeJson(doc, webServer.arg("plain"));
+  JsonArray paths = doc["paths"];
+  String dest = doc["dest"] | "/";
+  int ok = 0, fail = 0;
+  for (const char* ps : paths) {
+    String p = ps;
+    if (!SD.exists(p)) { fail++; continue; }
+    String dp;
+    File dd = SD.open(dest);
+    if (dd && dd.isDirectory()) { String n = p.substring(p.lastIndexOf('/')+1); dp = dest + (dest.endsWith("/")?"":"/") + n; dd.close(); }
+    else dp = dest;
+    if (moveFile(p, dp)) { ok++; logActivity("batch-move", p+" -> "+dp, u); }
+    else fail++;
+  }
+  webServer.send(200, "application/json", "{\"ok\":"+String(ok)+",\"fail\":"+String(fail)+"}");
+}
+
+// ============== RECURSIVE SEARCH ==============
+void searchRecursive(String path, String query, JsonArray &results) {
+  File dir = SD.open(path);
+  if (!dir || !dir.isDirectory()) return;
+  File file;
+  while (file = dir.openNextFile()) {
+    String fn = String(file.name());
+    int sl = fn.lastIndexOf('/');
+    String name = (sl >= 0) ? fn.substring(sl+1) : fn;
+    if (file.isDirectory()) {
+      searchRecursive(fn, query, results);
+    } else {
+      if (name.toLowerCase().indexOf(query) >= 0) {
+        String p = path + (path.endsWith("/")?"":"/") + name;
+        JsonObject r = results.createNestedObject();
+        r["name"] = name;
+        r["path"] = p;
+        r["size"] = file.size();
+        r["icon"] = getFileIcon(name);
+      }
+    }
+    file.close();
+  }
+  dir.close();
+}
+
+void handleSearch() {
+  String u, lvl;
+  if (!isAuthenticated(webServer, u, lvl)) { webServer.send(401); return; }
+  String query = webServer.hasArg("q") ? webServer.arg("q") : "";
+  if (query.length() == 0) { webServer.send(400); return; }
+  DynamicJsonDocument doc(8192);
+  JsonArray results = doc.createNestedArray("results");
+  searchRecursive("/", query.toLowerCase(), results);
+  doc["count"] = results.size();
+  String out; serializeJson(doc, out);
+  webServer.send(200, "application/json", out);
+}
+
 // ============== SETUP/LOOP ==============
 void setup() {
   Serial.begin(115200);
@@ -686,6 +767,9 @@ void setup() {
   webServer.on("/api/upload",HTTP_POST,[](){webServer.send(200);},handleUpload);
   webServer.on("/api/share",HTTP_POST,handleCreateShare);
   webServer.on("/api/zip",HTTP_POST,handleZipDownload);
+  webServer.on("/api/batch-delete",HTTP_POST,handleBatchDelete);
+  webServer.on("/api/batch-move",HTTP_POST,handleBatchMove);
+  webServer.on("/api/search",HTTP_GET,handleSearch);
   webServer.on("/api/changes",HTTP_GET,handleChanges);
   webServer.on("/api/trash",HTTP_GET,handleTrashList);
   webServer.on("/api/restore",HTTP_GET,handleRestore);
