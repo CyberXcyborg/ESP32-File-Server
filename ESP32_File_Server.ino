@@ -925,6 +925,142 @@ void handleStats() {
   webServer.send(200, "application/json", out);
 }
 
+// ============== FILE TYPE FILTER ==============
+void handleListFilesFiltered() {
+  String u, lvl;
+  if (!isAuthenticated(webServer, u, lvl)) { sendError(401,"Not authenticated"); return; }
+  if (!checkSD()) { sendError(503,"SD card not available"); return; }
+  String path = webServer.hasArg("path") ? webServer.arg("path") : "/";
+  String filter = webServer.hasArg("type") ? webServer.arg("type") : "all";
+  DynamicJsonDocument doc(16384);
+  doc["username"] = u; doc["userLevel"] = lvl; doc["filter"] = filter;
+  JsonArray arr = doc.createNestedArray("files");
+  File dir = SD.open(path);
+  if (!dir || !dir.isDirectory()) { sendError(400,"Invalid directory"); return; }
+  int fc = 0, dc = 0, totalSize = 0;
+  File file;
+  while (file = dir.openNextFile()) {
+    String fn = String(file.name());
+    int sl = fn.lastIndexOf('/');
+    String name = (sl >= 0) ? fn.substring(sl+1) : fn;
+    bool isD = file.isDirectory();
+    bool include = true;
+    if (!isD && filter != "all") {
+      String ext = name.substring(name.lastIndexOf('.')+1); ext.toLowerCase();
+      if (filter == "images") include = ext=="jpg"||ext=="jpeg"||ext=="png"||ext=="gif"||ext=="bmp"||ext=="svg"||ext=="webp";
+      else if (filter == "video") include = ext=="mp4"||ext=="avi"||ext=="mov"||ext=="mkv";
+      else if (filter == "audio") include = ext=="mp3"||ext=="wav"||ext=="ogg"||ext=="flac";
+      else if (filter == "docs") include = ext=="pdf"||ext=="doc"||ext=="docx"||ext=="txt"||ext=="md";
+      else if (filter == "archives") include = ext=="zip"||ext=="rar"||ext=="7z"||ext=="tar"||ext=="gz";
+      else if (filter == "code") include = ext=="c"||ext=="cpp"||ext=="h"||ext=="py"||ext=="js"||ext=="html"||ext=="css"||ext=="json"||ext=="xml";
+      else include = false;
+    }
+    if (include) {
+      if (isD) dc++; else { fc++; totalSize += file.size(); }
+      JsonObject f = arr.createNestedObject();
+      f["name"] = name;
+      f["path"] = path + (path.endsWith("/")?"":"/") + name + (isD?"/":"");
+      f["type"] = isD ? "dir" : "file";
+      f["size"] = isD ? 0 : file.size();
+      f["icon"] = isD ? "📁" : getFileIcon(name);
+      f["previewable"] = isPreviewable(name);
+    }
+    file.close();
+  }
+  dir.close();
+  doc["fileCount"] = fc; doc["dirCount"] = dc; doc["totalSize"] = (uint64_t)totalSize; doc["totalSizeFormatted"] = getFileSize((uint64_t)totalSize);
+  String out; serializeJson(doc, out);
+  webServer.send(200, "application/json", out);
+}
+
+// ============== STORAGE BREAKDOWN ==============
+void handleStorageBreakdown() {
+  String u, lvl;
+  if (!isAuthenticated(webServer, u, lvl)) { sendError(401,"Not authenticated"); return; }
+  if (!checkSD()) { sendError(503,"SD card not available"); return; }
+  DynamicJsonDocument doc(1024);
+  doc["total"] = SD.totalBytes();
+  doc["used"] = SD.usedBytes();
+  doc["free"] = SD.totalBytes() - SD.usedBytes();
+  // Count by type
+  uint64_t images = 0, video = 0, audio = 0, docs = 0, archives = 0, code = 0, other = 0, dirs = 0, trash = 0;
+  // Simple breakdown by scanning root
+  File dir = SD.open("/");
+  if (dir && dir.isDirectory()) {
+    File file;
+    while (file = dir.openNextFile()) {
+      String fn = String(file.name());
+      int sl = fn.lastIndexOf('/');
+      String name = (sl >= 0) ? fn.substring(sl+1) : fn;
+      if (file.isDirectory()) { dirs++; }
+      else {
+        String ext = name.substring(name.lastIndexOf('.')+1); ext.toLowerCase();
+        if (ext=="jpg"||ext=="jpeg"||ext=="png"||ext=="gif"||ext=="bmp"||ext=="svg"||ext=="webp") images += file.size();
+        else if (ext=="mp4"||ext=="avi"||ext=="mov"||ext=="mkv") video += file.size();
+        else if (ext=="mp3"||ext=="wav"||ext=="ogg"||ext=="flac") audio += file.size();
+        else if (ext=="pdf"||ext=="doc"||ext=="docx"||ext=="txt") docs += file.size();
+        else if (ext=="zip"||ext=="rar"||ext=="7z"||ext=="tar"||ext=="gz") archives += file.size();
+        else if (ext=="c"||ext=="cpp"||ext=="h"||ext=="py"||ext=="js"||ext=="html"||ext=="css"||ext=="json"||ext=="xml") code += file.size();
+        else other += file.size();
+      }
+      file.close();
+    }
+    dir.close();
+  }
+  trash = getDirSize(TRASH_FOLDER);
+  JsonObject breakdown = doc.createNestedObject("breakdown");
+  JsonObject img = breakdown.createNestedObject("images"); img["size"] = images; img["formatted"] = getFileSize(images);
+  JsonObject vid = breakdown.createNestedObject("video"); vid["size"] = video; vid["formatted"] = getFileSize(video);
+  JsonObject aud = breakdown.createNestedObject("audio"); aud["size"] = audio; aud["formatted"] = getFileSize(audio);
+  JsonObject d = breakdown.createNestedObject("documents"); d["size"] = docs; d["formatted"] = getFileSize(docs);
+  JsonObject arc = breakdown.createNestedObject("archives"); arc["size"] = archives; arc["formatted"] = getFileSize(archives);
+  JsonObject cod = breakdown.createNestedObject("code"); cod["size"] = code; cod["formatted"] = getFileSize(code);
+  JsonObject oth = breakdown.createNestedObject("other"); oth["size"] = other; oth["formatted"] = getFileSize(other);
+  JsonObject tr = breakdown.createNestedObject("trash"); tr["size"] = trash; tr["formatted"] = getFileSize(trash);
+  JsonObject dr = breakdown.createNestedObject("empty"); dr["size"] = (SD.totalBytes()-SD.usedBytes()); dr["formatted"] = getFileSize((uint64_t)(SD.totalBytes()-SD.usedBytes()));
+  String out; serializeJson(doc, out);
+  webServer.send(200, "application/json", out);
+}
+
+// ============== FAVORITES ==============
+void handleGetFavorites() {
+  String u, lvl;
+  if (!isAuthenticated(webServer, u, lvl)) { sendError(401,"Not authenticated"); return; }
+  DynamicJsonDocument doc(4096);
+  JsonArray arr = doc.createNestedArray("favorites");
+  String favFile = "/.favorites_" + u + ".json";
+  if (SD.exists(favFile)) {
+    File f = SD.open(favFile, FILE_READ);
+    if (f) { deserializeJson(doc, f); f.close(); }
+  }
+  String out; serializeJson(doc, out);
+  webServer.send(200, "application/json", out);
+}
+
+void handleToggleFavorite() {
+  String u, lvl;
+  if (!isAuthenticated(webServer, u, lvl)) { sendError(401,"Not authenticated"); return; }
+  if (!webServer.hasArg("path")) { sendError(400,"Missing path"); return; }
+  String path = webServer.arg("path");
+  String favFile = "/.favorites_" + u + ".json";
+  DynamicJsonDocument doc(512);
+  JsonArray arr = doc.createNestedArray("paths");
+  if (SD.exists(favFile)) {
+    File f = SD.open(favFile, FILE_READ);
+    if (f) { deserializeJson(doc, f); f.close(); }
+    arr = doc["paths"];
+  }
+  // Check if already exists, remove if so
+  bool exists = false;
+  for (int i = 0; i < arr.size(); i++) {
+    if (arr[i].as<String>() == path) { arr.remove(i); exists = true; break; }
+  }
+  if (!exists) arr.add(path);
+  File f = SD.open(favFile, FILE_WRITE);
+  if (f) { serializeJson(doc, f); f.close(); }
+  webServer.send(200, "application/json", "{"ok":true,"favorite":"+String(exists?"false":"true")+"}");
+}
+
 void setup() {
   Serial.begin(115200);
   Serial.println("\nESP32 File Server v"+String(FIRMWARE_VERSION));
@@ -978,6 +1114,10 @@ void setup() {
   webServer.on("/api/reboot",HTTP_POST,handleReboot);
   webServer.on("/api/export-log",HTTP_GET,handleExportLog);
   webServer.on("/api/stats",HTTP_GET,handleStats);
+  webServer.on("/api/list-filtered",HTTP_GET,handleListFilesFiltered);
+  webServer.on("/api/storage",HTTP_GET,handleStorageBreakdown);
+  webServer.on("/api/favorites",HTTP_GET,handleGetFavorites);
+  webServer.on("/api/favorites/toggle",HTTP_POST,handleToggleFavorite);
   webServer.on("/api/users",HTTP_GET,handleGetUsers);
   webServer.on("/api/users",HTTP_POST,handleAddUser);
   webServer.on("/api/users/",HTTP_PUT,handleUpdateUser);
