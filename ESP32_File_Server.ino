@@ -1130,6 +1130,34 @@ void handleStats() {
   webServer.send(200, "application/json", out);
 }
 
+// ============== FILE CRC32 INTEGRITY ==============
+void handleFileCRC() {
+  String u, lvl;
+  if (!isAuthenticated(webServer, u, lvl)) { webServer.send(401); return; }
+  if (!sdOK) { webServer.send(503); return; }
+  if (!webServer.hasArg("path")) { webServer.send(400); return; }
+  String path = sanitizePath(webServer.arg("path"));
+  if (!SD.exists(path)) { webServer.send(404); return; }
+  // Check for stored CRC file first
+  String crcPath = path + ".crc32";
+  String crcStored = "";
+  if (SD.exists(crcPath)) {
+    File cf = SD.open(crcPath, FILE_READ);
+    if (cf) { crcStored = cf.readString().trim(); cf.close(); }
+  }
+  String crcComputed = getFileCRC32(path);
+  DynamicJsonDocument doc(512);
+  doc["path"] = path;
+  File sf = SD.open(path, FILE_READ);
+  doc["size"] = sf ? sf.size() : 0;
+  if (sf) sf.close();
+  doc["crc32"] = crcComputed;
+  doc["stored_crc32"] = crcStored.length() > 0 ? crcStored : (char*)nullptr;
+  doc["match"] = crcStored.length() == 0 || crcStored == crcComputed;
+  String out; serializeJson(doc, out);
+  webServer.send(200, "application/json", out);
+}
+
 // ============== SD HEALTH ENDPOINT ==============
 void handleSdHealth() {
   String u, lvl;
@@ -1531,6 +1559,7 @@ void setup() {
   webServer.on("/api/notes",HTTP_POST,handleSaveNote);
   webServer.on("/api/scan",HTTP_GET,handleScanStorage);
   webServer.on("/api/sd-health",HTTP_GET,handleSdHealth);
+  webServer.on("/api/crc",HTTP_GET,handleFileCRC);
   webServer.on("/api/users",HTTP_GET,handleGetUsers);
   webServer.on("/api/users",HTTP_POST,handleAddUser);
   webServer.on("/api/users/",HTTP_PUT,handleUpdateUser);

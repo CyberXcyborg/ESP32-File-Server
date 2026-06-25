@@ -508,4 +508,38 @@ int countDirs(String path) {
 #define countFilesInDir countFiles
 #define countDirsInDir countDirs
 
+// ============== CRC32 INTEGRITY CHECK ==============
+// Compute CRC32 for a file on SD card (for integrity verification)
+uint32_t computeFileCRC32(String path) {
+  if (!SD.exists(path)) return 0;
+  File f = SD.open(path, FILE_READ);
+  if (!f) return 0;
+  uint32_t crc = 0xFFFFFFFF;
+  uint8_t buf[512];
+  while (f.available()) {
+    int n = f.read(buf, 512);
+    for (int i = 0; i < n; i++) {
+      crc ^= buf[i];
+      for (int j = 0; j < 8; j++) {
+        crc = (crc >> 1) ^ (0xEDB88320 & (-(crc & 1)));
+      }
+    }
+  }
+  f.close();
+  return crc ^ 0xFFFFFFFF;
+}
+
+// Verify file integrity by computing CRC32 of a file
+// Returns hex string of CRC32 for client-side verification
+String getFileCRC32(String path) {
+  uint32_t crc = computeFileCRC32(path);
+  String result = "";
+  for (int i = 3; i >= 0; i--) {
+    uint8_t byte = (crc >> (i * 8)) & 0xFF;
+    if (byte < 0x10) result += "0";
+    result += String(byte, HEX);
+  }
+  return result;
+}
+
 #endif
