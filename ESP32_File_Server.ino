@@ -872,17 +872,35 @@ void handleUserManagementPage() {
 void handleLogin() {
   String err="";
   if(webServer.method()==HTTP_POST){
-    String u=webServer.arg("username"),p=webServer.arg("password");String lvl;
-    if(authenticateUser(u,p,lvl)){
-      String tok=createSession(u,lvl);
-      generateCsrfForSession(tok);
-      webServer.sendHeader("Set-Cookie","session_token="+tok+"; Path=/; Max-Age=1800; SameSite=Strict; HttpOnly");
-      String r=webServer.hasArg("redirect")?webServer.arg("redirect"):"/";
-      webServer.sendHeader("Location",r+"?token="+tok,true);webServer.send(302,"text/plain","");return;
-    } else err="Invalid username or password";
+    String u=webServer.arg("username"),p=webServer.arg("password");
+    // Validate login CSRF token (submitted in form body must match cookie)
+    String submittedCsrf=webServer.hasArg("csrf")?webServer.arg("csrf"):"";
+    String cookieCsrf="";
+    if(webServer.hasHeader("Cookie")){
+      String cookies=webServer.header("Cookie");
+      int pos=cookies.indexOf("login_csrf=");
+      if(pos!=-1){pos+=10;int end=cookies.indexOf(";",pos);cookieCsrf=(end!=-1)?cookies.substring(pos,end):cookies.substring(pos);}
+    }
+    if(submittedCsrf.length()==0 || cookieCsrf.length()==0 || submittedCsrf!=cookieCsrf){
+      err="Security token mismatch";
+    } else {
+      String lvl;
+      if(authenticateUser(u,p,lvl)){
+        String tok=createSession(u,lvl);
+        webServer.sendHeader("Set-Cookie","session_token="+tok+"; Path=/; Max-Age=1800; SameSite=Strict; HttpOnly");
+        String r=webServer.hasArg("redirect")?webServer.arg("redirect"):"/";
+        webServer.sendHeader("Location",r+"?token="+tok,true);webServer.send(302,"text/plain","");return;
+      } else err="Invalid username or password";
+    }
   }
   String info=accessPointMode?"AP: "+String(ap_ssid):"IP: "+server_ip;
-  String h=String(login_html);h.replace("%ERROR%",err);h.replace("%INFO%",info);
+  // Generate a pre-login CSRF token (sessionless)
+  String preLoginCsrf="";
+  const char cs[]="ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+  for(int i=0;i<16;i++) preLoginCsrf+=cs[esp_random()%62];
+  String h=String(login_html);h.replace("%ERROR%",err);h.replace("%INFO%",info);h.replace("%CSRF%",preLoginCsrf);
+  // Store for validation (associate with client via cookie)
+  webServer.sendHeader("Set-Cookie","login_csrf="+preLoginCsrf+"; Path=/login; SameSite=Strict; HttpOnly");
   webServer.send(200,"text/html",h);
 }
 void handleLogout() {

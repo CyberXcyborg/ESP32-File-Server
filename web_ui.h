@@ -822,6 +822,7 @@ input:focus{outline:none;border-color:var(--primary)}
   <h1>📁 ESP32 File Server</h1>
   <p class="sub">Please log in to continue</p>
   <form method="post" action="/login">
+    <input type="hidden" name="csrf" value="%CSRF%">
     <div class="form-group"><label>Username</label><input type="text" name="username" required autofocus></div>
     <div class="form-group"><label>Password</label><input type="password" name="password" required></div>
     <button type="submit" class="btn">Log In</button>
