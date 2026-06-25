@@ -67,14 +67,20 @@ void checkWiFi() {
   lastWiFiCheck = millis();
   if (!accessPointMode && WiFi.status() != WL_CONNECTED) {
     Serial.println("WiFi lost, reconnecting...");
-    WiFi.disconnect(); delay(1000);
-    WiFi.begin(ssid, password);
-    int a = 0;
-    while (WiFi.status() != WL_CONNECTED && a < 10) { delay(500); a++; }
+    WiFi.disconnect();
+    delay(100);
+    WiFi.reconnect(); // non-blocking
+    unsigned long start = millis();
+    while (WiFi.status() != WL_CONNECTED && millis() - start < 5000) {
+      delay(100);
+    }
     if (WiFi.status() == WL_CONNECTED) {
       server_ip = WiFi.localIP().toString();
       wifiConnected = true;
       Serial.println("Reconnected: " + server_ip);
+    } else {
+      Serial.println("Reconnect failed — staying in AP mode");
+      setupAccessPoint();
     }
   }
 }

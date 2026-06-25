@@ -49,6 +49,26 @@ void setupAuthentication() {
   if (!SD.exists(USERS_FILE)) {
     createDefaultUsersFile();
   }
+  // Auto-restore valid trash items on boot (items less than 30 days old)
+  // This ensures trash survives unexpected reboots
+  if (SD.exists(TRASH_FOLDER)) {
+    unsigned long cutoff = millis() - 30UL * 86400000UL;
+    File dir = SD.open(TRASH_FOLDER);
+    if (dir && dir.isDirectory()) {
+      File f;
+      while (f = dir.openNextFile()) {
+        if (!f.isDirectory() && f.fileTime() > cutoff) {
+          // Item is valid, ensure parent dir exists for restore
+          String orig = String(f.name());
+          orig.replace(TRASH_FOLDER, "");
+          int sl = orig.lastIndexOf('/');
+          if (sl > 0) createDirRecursive(orig.substring(0, sl));
+        }
+        f.close();
+      }
+      dir.close();
+    }
+  }
   for (int i = 0; i < MAX_SESSIONS; i++) {
     sessions[i].isActive = false;
   }
