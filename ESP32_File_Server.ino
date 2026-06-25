@@ -24,6 +24,7 @@
 WebServer webServer(webServerPort);
 WebSocketsServer webSocket(81); // WebSocket on port 81
 FtpServer ftpSrv;
+int wsClientCount = 0; // Track connected WebSocket clients
 
 // ============== API RATE LIMITER ==============
 // Sliding window rate limiter per IP: max 30 requests per 10 seconds
@@ -97,9 +98,11 @@ void onWebSocketEvent(uint8_t num, WStype_t type, uint8_t * payload, size_t leng
   switch(type) {
     case WStype_DISCONNECTED:
       Serial.printf("[%u] WS Disconnected\n", num);
+      wsClientCount--;
       break;
     case WStype_CONNECTED:
       {
+        wsClientCount++;
         IPAddress ip = webSocket.remoteIP(num);
         Serial.printf("[%u] WS Connected from %s\n", num, ip.toString().c_str());
         // Send initial status on connect
@@ -1206,6 +1209,7 @@ void handleStats() {
   doc["sd_used"] = SD.usedBytes();
   doc["sd_free"] = SD.totalBytes() - SD.usedBytes();
   doc["version"] = FIRMWARE_VERSION;
+  doc["ws_clients"] = wsClientCount;
   // Add SD health stats
   doc["sd_sector_errors"] = sectorErrors;
   doc["sd_health_interval"] = healthCheckInterval / 1000;
