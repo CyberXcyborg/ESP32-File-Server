@@ -73,6 +73,8 @@ bool sdOK = true;
 unsigned long lastHealthCheck = 0;
 uint32_t sectorErrors = 0;
 uint32_t healthCheckInterval = 600000UL; // 10 minutes
+uint32_t totalWriteOps = 0; // Track total write operations for wear estimation
+uint32_t totalWriteBytes = 0; // Total bytes written (wear leveling hint)
 struct HealthLog {
   unsigned long timestamp;
   bool ok;
@@ -533,6 +535,8 @@ void handleUpload() {
     }
   } else if (up.status == UPLOAD_FILE_END) {
     if (uf) uf.close();
+    totalWriteOps++;
+    totalWriteBytes += up.totalSize;
     logActivity("upload", upp+" ("+String(up.totalSize)+"B)", u);
     broadcastChange("upload", upp);
   }
@@ -1245,6 +1249,79 @@ void handleFileCRC() {
   webServer.send(200, "application/json", out);
 }
 
+// ============== STORAGE ANALYTICS ==============
+void handleStorageAnalytics() {
+  String u, lvl;
+  if (!isAuthenticated(webServer, u, lvl)) { sendError(401,"Not authenticated"); return; }
+  if (!sdOK) { sendError(503,"SD card not available"); return; }
+  DynamicJsonDocument doc(8192);
+  // File type distribution
+  uint32_t imgCount=0, vidCount=0, audCount=0, docCount=0, arcCount=0, codeCount=0, otherCount=0;
+  uint64_t imgSize=0, vidSize=0, audSize=0, docSize=0, arcSize=0, codeSize=0, otherSize=0;
+  uint32_t totalFiles=0; uint64_t totalSize=0;
+  // Recursive scan from root
+  File dir = SD.open("/");
+  if (!dir || !dir.isDirectory()) { sendError(500,"Cannot open root"); return; }
+  File file;
+  while (file = dir.openNextFile()) {
+    if (file.isDirectory()) {
+      // Skip hidden/system dirs
+      String fn = String(file.name());
+      if (fn.startsWith("/.")) { file.close(); continue; }
+      // Count files in subdir (one level)
+      File sub = SD.open(fn);
+      if (sub) {
+        File sf;
+        while (sf = sub.openNextFile()) {
+          if (!sf.isDirectory()) {
+            totalFiles++; totalSize += sf.size();
+            String name = String(sf.name());
+            int dot = name.lastIndexOf('.');
+            String ext = (dot >= 0) ? name.substring(dot+1).toLowerCase() : "";
+            if (ext=="jpg"||ext=="jpeg"||ext=="png"||ext=="gif"||ext=="bmp"||ext=="svg"||ext=="webp") { imgCount++; imgSize+=sf.size(); }
+            else if (ext=="mp4"||ext=="avi"||ext=="mov"||ext=="mkv"||ext=="webm") { vidCount++; vidSize+=sf.size(); }
+            else if (ext=="mp3"||ext=="wav"||ext=="ogg"||ext=="flac"||ext=="aac") { audCount++; audSize+=sf.size(); }
+            else if (ext=="pdf"||ext=="doc"||ext=="docx"||ext=="txt"||ext=="md"||ext=="rtf") { docCount++; docSize+=sf.size(); }
+            else if (ext=="zip"||ext=="rar"||ext=="7z"||ext=="tar"||ext=="gz") { arcCount++; arcSize+=sf.size(); }
+            else if (ext=="c"||ext=="cpp"||ext=="h"||ext=="py"||ext=="js"||ext=="html"||ext=="css"||ext=="json"||ext=="xml") { codeCount++; codeSize+=sf.size(); }
+            else { otherCount++; otherSize+=sf.size(); }
+          }
+          sf.close();
+        }
+        sub.close();
+      }
+    } else {
+      totalFiles++; totalSize += file.size();
+      String name = String(file.name());
+      int dot = name.lastIndexOf('.');
+      String ext = (dot >= 0) ? name.substring(dot+1).toLowerCase() : "";
+      if (ext=="jpg"||ext=="jpeg"||ext=="png"||ext=="gif"||ext=="bmp"||ext=="svg"||ext=="webp") { imgCount++; imgSize+=file.size(); }
+      else if (ext=="mp4"||ext=="avi"||ext=="mov"||ext=="mkv"||ext=="webm") { vidCount++; vidSize+=file.size(); }
+      else if (ext=="mp3"||ext=="wav"||ext=="ogg"||ext=="flac"||ext=="aac") { audCount++; audSize+=file.size(); }
+      else if (ext=="pdf"||ext=="doc"||ext=="docx"||ext=="txt"||ext=="md"||ext=="rtf") { docCount++; docSize+=file.size(); }
+      else if (ext=="zip"||ext=="rar"||ext=="7z"||ext=="tar"||ext=="gz") { arcCount++; arcSize+=file.size(); }
+      else if (ext=="c"||ext=="cpp"||ext=="h"||ext=="py"||ext=="js"||ext=="html"||ext=="css"||ext=="json"||ext=="xml") { codeCount++; codeSize+=file.size(); }
+      else { otherCount++; otherSize+=file.size(); }
+    }
+    file.close();
+  }
+  dir.close();
+  doc["total_files"] = totalFiles;
+  doc["total_size"] = (uint64_t)totalSize;
+  doc["total_size_formatted"] = getFileSize((uint64_t)totalSize);
+  JsonObject breakdown = doc.createNestedObject("breakdown");
+  JsonObject cat;
+  cat = breakdown.createNestedObject("images"); cat["count"]=imgCount; cat["size"]=(uint64_t)imgSize; cat["size_fmt"]=getFileSize((uint64_t)imgSize);
+  cat = breakdown.createNestedObject("video"); cat["count"]=vidCount; cat["size"]=(uint64_t)vidSize; cat["size_fmt"]=getFileSize((uint64_t)vidSize);
+  cat = breakdown.createNestedObject("audio"); cat["count"]=audCount; cat["size"]=(uint64_t)audSize; cat["size_fmt"]=getFileSize((uint64_t)audSize);
+  cat = breakdown.createNestedObject("documents"); cat["count"]=docCount; cat["size"]=(uint64_t)docSize; cat["size_fmt"]=getFileSize((uint64_t)docSize);
+  cat = breakdown.createNestedObject("archives"); cat["count"]=arcCount; cat["size"]=(uint64_t)arcSize; cat["size_fmt"]=getFileSize((uint64_t)arcSize);
+  cat = breakdown.createNestedObject("code"); cat["count"]=codeCount; cat["size"]=(uint64_t)codeSize; cat["size_fmt"]=getFileSize((uint64_t)codeSize);
+  cat = breakdown.createNestedObject("other"); cat["count"]=otherCount; cat["size"]=(uint64_t)otherSize; cat["size_fmt"]=getFileSize((uint64_t)otherSize);
+  String out; serializeJson(doc, out);
+  webServer.send(200, "application/json", out);
+}
+
 // ============== SD HEALTH ENDPOINT ==============
 void handleSdHealth() {
   String u, lvl;
@@ -1258,6 +1335,10 @@ void handleSdHealth() {
   doc["last_check"] = (uint32_t)(lastHealthCheck / 1000);
   doc["card_type"] = SD.cardType();
   doc["sector_count"] = SD.sectorsPerCluster() * SD.clusterCount();
+  // Wear leveling stats
+  doc["total_write_ops"] = totalWriteOps;
+  doc["total_write_mb"] = (uint32_t)(totalWriteBytes / 1048576UL);
+  doc["wear_percent"] = totalWriteOps > 0 ? min(100, (int)(totalWriteOps / 10000UL)) : 0; // Rough estimate: 10K ops = 1% wear
   JsonArray arr = doc.createNestedArray("history");
   for (int i = 0; i < 48 && i < healthIndex; i++) {
     int idx = (healthIndex - 1 - i + 48) % 48;
@@ -1646,6 +1727,7 @@ void setup() {
   webServer.on("/api/notes",HTTP_POST,handleSaveNote);
   webServer.on("/api/scan",HTTP_GET,handleScanStorage);
   webServer.on("/api/sd-health",HTTP_GET,handleSdHealth);
+  webServer.on("/api/analytics",HTTP_GET,handleStorageAnalytics);
   webServer.on("/api/crc",HTTP_GET,handleFileCRC);
   webServer.on("/api/users",HTTP_GET,handleGetUsers);
   webServer.on("/api/users",HTTP_POST,handleAddUser);

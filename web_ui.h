@@ -132,7 +132,7 @@ header h1{font-size:18px;color:var(--primary)}
 <body>
 <div class="container">
   <header>
-    <h1>📁 ESP32 File Server <small style="font-size:11px;color:var(--text2)">v3.0</small></h1>
+    <h1>📁 ESP32 File Server <small style="font-size:11px;color:var(--text2)">v5.3</small></h1>
     <div class="header-right">
       <span id="userDisplay"></span>
       <div class="search-box">🔍<input type="text" id="searchInput" placeholder="Search..." oninput="filterFiles()"></div>
@@ -158,6 +158,7 @@ header h1{font-size:18px;color:var(--primary)}
     <button class="nav-tab admin-only" onclick="switchView('users',this)">👥 Users</button>
     <button class="nav-tab admin-only" onclick="switchView('settings',this)">⚙️ Settings</button>
     <button class="nav-tab admin-only" onclick="switchView('log',this)">📋 Activity</button>
+    <button class="nav-tab" onclick="switchView('analytics',this)">📊 Analytics</button>
   </div>
 
   <!-- FILES VIEW -->
@@ -266,6 +267,24 @@ header h1{font-size:18px;color:var(--primary)}
     <div class="controls"><button class="btn" onclick="loadLog()">🔄 Refresh</button></div>
     <div style="background:var(--card);border-radius:var(--radius);box-shadow:var(--shadow);overflow:auto;max-height:70vh">
       <table class="log-table"><thead><tr><th>Time</th><th>User</th><th>Action</th><th>Path</th></tr></thead><tbody id="logTable"></tbody></table>
+    </div>
+  </div>
+  <div id="analyticsView" class="view">
+    <div class="controls"><button class="btn" onclick="loadAnalytics()">🔄 Refresh</button></div>
+    <div class="settings-grid" style="grid-template-columns:1fr 1fr;align-items:start">
+      <div class="info-panel show" style="margin:0">
+        <h3 style="margin-bottom:12px">📊 Storage Breakdown</h3>
+        <div id="analyticsBreakdown"><p style="color:var(--text2)">Loading...</p></div>
+      </div>
+      <div class="info-panel show" style="margin:0">
+        <h3 style="margin-bottom:12px">💾 SD Card Health</h3>
+        <div id="analyticsHealth"><p style="color:var(--text2)">Loading...</p></div>
+        <div id="wearBar" style="margin-top:8px"><div class="progress-bar" style="height:10px"><div id="wearFill" style="height:100%;background:var(--primary);width:0%;border-radius:5px;transition:width .5s"></div></div></div>
+      </div>
+    </div>
+    <div class="info-panel show" style="margin-top:10px" id="analyticsCharts">
+      <h3 style="margin-bottom:12px">📈 File Type Distribution</h3>
+      <div id="typeBars"></div>
     </div>
   </div>
 </div>
@@ -787,6 +806,66 @@ function loadLog(){
       document.getElementById('logTable').innerHTML=html;
     })
     .catch(()=>{document.getElementById('logTable').innerHTML='<tr><td colspan="4" style="padding:20px;text-align:center;color:var(--danger)">Error</td></tr>';});
+}
+
+// ============== STORAGE ANALYTICS ==============
+function loadAnalytics(){
+  // Load storage breakdown
+  fetch('/api/analytics',{headers:{'Authorization':'Bearer '+token}})
+    .then(r=>r.json()).then(data=>{
+      const b=data.breakdown||{};
+      let html='';
+      const types=[
+        {key:'images',icon:'🖼️',label:'Images'},
+        {key:'video',icon:'🎬',label:'Video'},
+        {key:'audio',icon:'🎵',label:'Audio'},
+        {key:'documents',icon:'📄',label:'Documents'},
+        {key:'archives',icon:'📦',label:'Archives'},
+        {key:'code',icon:'💻',label:'Code'},
+        {key:'other',icon:'📎',label:'Other'}
+      ];
+      types.forEach(t=>{
+        const c=b[t.key]||{count:0,size:0,size_fmt:'0 B'};
+        html+=`<div class="info-row"><span>${t.icon} ${t.label}</span><span>${c.count} files · ${c.size_fmt||c.size}</span></div>`;
+      });
+      html+=`<div class="info-row" style="font-weight:600;border-top:2px solid var(--border);margin-top:4px;padding-top:8px"><span>Total</span><span>${data.total_files||0} files · ${data.total_size_formatted||'0 B'}</span></div>`;
+      document.getElementById('analyticsBreakdown').innerHTML=html;
+    }).catch(()=>{document.getElementById('analyticsBreakdown').innerHTML='<p style="color:var(--danger)">Error loading</p>';});
+  // Load SD health
+  fetch('/api/sd-health',{headers:{'Authorization':'Bearer '+token}})
+    .then(r=>r.json()).then(data=>{
+      const totalGB=((data.total||0)/1024).toFixed(1);
+      const freeGB=((data.free||0)/1024).toFixed(1);
+      const usedPct=totalGB>0?((totalGB-freeGB)/totalGB*100).toFixed(0):0;
+      let html=`<div class="info-row"><span>Status</span><span style="color:${data.ok?'#00b894':'#d63031'}">${data.ok?'✅ Healthy':'❌ Error'}</span></div>`;
+      html+=`<div class="info-row"><span>Used</span><span>${usedPct}% (${freeGB}GB free / ${totalGB}GB total)</span></div>`;
+      if(data.total_write_ops!==undefined) html+=`<div class="info-row"><span>Write Ops</span><span>${(data.total_write_ops/1000).toFixed(1)}K (${(data.total_write_mb||0)}MB written)</span></div>`;
+      if(data.card_type!==undefined){const types={0:'SD',1:'SDHC',2:'SDXC',3:'MMC'};html+=`<div class="info-row"><span>Card Type</span><span>${types[data.card_type]||'Unknown'}</span></div>`;}
+      document.getElementById('analyticsHealth').innerHTML=html;
+      const wear=data.wear_percent||0;
+      const wf=document.getElementById('wearFill');
+      if(wf){wf.style.width=wear+'%';wf.style.background=wear>50?'#d63031':wear>20?'#fdcb6e':'#00b894';}
+    }).catch(()=>{document.getElementById('analyticsHealth').innerHTML='<p style="color:var(--danger)">Error loading</p>';});
+  // Load file type distribution bars
+  fetch('/api/list',{headers:{'Authorization':'Bearer '+token}})
+    .then(r=>r.json()).then(data=>{
+      const files=data.files||[];
+      const exts={};
+      files.forEach(f=>{
+        if(f.type==='dir')return;
+        const e=(f.name.split('.').pop()||'').toLowerCase()||'no-ext';
+        exts[e]=(exts[e]||0)+1;
+      });
+      const sorted=Object.entries(exts).sort((a,b)=>b[1]-a[1]).slice(0,10);
+      const max=sorted.length>0?sorted[0][1]:1;
+      let html='<div style="display:flex;flex-direction:column;gap:4px;margin-top:8px">';
+      sorted.forEach(([ext,cnt])=>{
+        const pct=(cnt/max*100).toFixed(0);
+        html+=`<div style="display:flex;align-items:center;gap:8px;font-size:12px"><span style="width:55px;text-align:right;font-family:monospace">${ext}</span><div style="flex:1;height:18px;background:var(--bg);border-radius:3px;overflow:hidden"><div style="height:100%;width:${pct}%;background:var(--primary);display:flex;align-items:center;padding-left:4px;color:#fff;font-size:11px">${cnt}</div></div></div>`;
+      });
+      html+='</div>';
+      document.getElementById('typeBars').innerHTML=html;
+    }).catch(()=>{document.getElementById('typeBars').innerHTML='<p style="color:var(--danger)">Error</p>';});
 }
 </script>
 </body>
