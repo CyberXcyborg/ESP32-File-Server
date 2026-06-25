@@ -535,6 +535,60 @@ void handleZipDownload() {
   streamZipFromJsonArray(paths, "zip", u);
 }
 
+// ============== VIDEO THUMBNAIL / STREAM ==============
+void handleVideoThumbnail() {
+  String u, lvl;
+  if (!isAuthenticated(webServer, u, lvl)) { webServer.send(401); return; }
+  if (!sdOK) { webServer.send(503); return; }
+  if (!webServer.hasArg("path")) { webServer.send(400); return; }
+  String path = webServer.arg("path");
+  if (!SD.exists(path)) { webServer.send(404); return; }
+  // For ESP32 we can't generate actual thumbnails, but we can:
+  // 1. Serve a placeholder icon image for video files
+  // 2. Support range requests for streaming playback
+  File f = SD.open(path, FILE_READ);
+  if (!f) { webServer.send(500); return; }
+  String name = path.substring(path.lastIndexOf('/')+1);
+  String ctype = getContentType(name);
+  // Support range requests for video streaming
+  if (webServer.hasHeader("Range")) {
+    // Parse range header for partial content
+    String range = webServer.header("Range");
+    int64_t start = 0, end = f.size() - 1;
+    int64_t pos = range.indexOf('=');
+    if (pos > 0) {
+      String rangeSpec = range.substring(pos + 1);
+      int dash = rangeSpec.indexOf('-');
+      if (dash > 0) {
+        start = rangeSpec.substring(0, dash).toInt();
+        String endStr = rangeSpec.substring(dash + 1);
+        if (endStr.length() > 0) end = endStr.toInt();
+      }
+    }
+    int64_t contentLen = end - start + 1;
+    webServer.setContentLength(contentLen);
+    webServer.send(206, ctype, "");
+    f.seek(start);
+    int64_t remaining = contentLen;
+    uint8_t buf[512];
+    while (remaining > 0 && f.available()) {
+      int toRead = remaining > 512 ? 512 : (int)remaining;
+      int n = f.read(buf, toRead);
+      if (n <= 0) break;
+      webServer.sendContent((const char*)buf, n);
+      remaining -= n;
+    }
+    webServer.sendContent("");
+  } else {
+    // Full file with Accept-Ranges header for streaming support
+    webServer.sendHeader("Accept-Ranges", "bytes");
+    webServer.sendHeader("Content-Disposition", "inline; filename=\"" + name + "\"");
+    webServer.streamFile(f, ctype);
+  }
+  f.close();
+  logActivity("video-stream", path, u);
+}
+
 // ============== CHANGES ==============
 void handleChanges() {
   String u, lvl;
@@ -1422,6 +1476,7 @@ void setup() {
   webServer.on("/api/upload",HTTP_POST,[](){webServer.send(200);},handleUpload);
   webServer.on("/api/share",HTTP_POST,handleCreateShare);
   webServer.on("/api/zip",HTTP_POST,handleZipDownload);
+  webServer.on("/api/video",HTTP_GET,handleVideoThumbnail);
   webServer.on("/api/batch-delete",HTTP_POST,handleBatchDelete);
   webServer.on("/api/batch-move",HTTP_POST,handleBatchMove);
   webServer.on("/api/search",HTTP_GET,handleSearch);
