@@ -1249,6 +1249,95 @@ void handleFileCRC() {
   webServer.send(200, "application/json", out);
 }
 
+// ============== DUPLICATE FILE FINDER ==============
+void handleFindDuplicates() {
+  String u, lvl;
+  if (!isAuthenticated(webServer, u, lvl)) { sendError(401,"Not authenticated"); return; }
+  if (!sdOK) { sendError(503,"SD card not available"); return; }
+  // Scan for duplicates: group by size first, then CRC
+  // Limit scan to avoid memory issues - max 500 files
+  struct FileInfo { String path; uint32_t size; };
+  FileInfo files[500];
+  int fileCount = 0;
+  // Collect all files (one level deep from each dir)
+  File dir = SD.open("/");
+  if (!dir) { sendError(500,"Cannot open root"); return; }
+  File file;
+  while (file = dir.openNextFile()) {
+    if (!file.isDirectory()) {
+      if (fileCount < 500) {
+        files[fileCount].path = String(file.name());
+        files[fileCount].size = file.size();
+        fileCount++;
+      }
+    } else {
+      String fn = String(file.name());
+      if (fn.startsWith("/.")) { file.close(); continue; }
+      File sub = SD.open(fn);
+      if (sub) {
+        File sf;
+        while (sf = sub.openNextFile()) {
+          if (!sf.isDirectory() && fileCount < 500) {
+            files[fileCount].path = String(sf.name());
+            files[fileCount].size = sf.size();
+            fileCount++;
+          }
+          sf.close();
+        }
+        sub.close();
+      }
+    }
+    file.close();
+  }
+  dir.close();
+  // Find duplicates: same size files
+  DynamicJsonDocument doc(8192);
+  JsonArray groups = doc.createNestedArray("duplicates");
+  int dupGroups = 0;
+  for (int i = 0; i < fileCount && dupGroups < 20; i++) {
+    if (files[i].size == 0) continue;
+    // Check if any other file has same size
+    bool found = false;
+    for (int j = i + 1; j < fileCount; j++) {
+      if (files[j].size == files[i].size) {
+        if (!found) {
+          // First match - verify with CRC
+          String crc1 = getFileCRC32(files[i].path);
+          String crc2 = getFileCRC32(files[j].path);
+          if (crc1.length() > 0 && crc1 == crc2) {
+            found = true;
+            JsonObject g = groups.createNestedObject();
+            g["size"] = files[i].size;
+            g["size_formatted"] = getFileSize((uint64_t)files[i].size);
+            g["crc32"] = crc1;
+            JsonArray paths = g.createNestedArray("files");
+            paths.add(files[i].path);
+            paths.add(files[j].path);
+            dupGroups++;
+          }
+        } else {
+          // Additional duplicate - check CRC matches the group
+          String crc = getFileCRC32(files[j].path);
+          JsonObject g = groups[dupGroups - 1];
+          if (crc == g["crc32"]) {
+            g["files"].add(files[j].path);
+          }
+        }
+      }
+    }
+    // Mark matched files to avoid re-processing
+    if (found) {
+      for (int j = i + 1; j < fileCount; j++) {
+        if (files[j].size == files[i].size) files[j].size = 0;
+      }
+    }
+  }
+  doc["groups"] = dupGroups;
+  doc["files_scanned"] = fileCount;
+  String out; serializeJson(doc, out);
+  webServer.send(200, "application/json", out);
+}
+
 // ============== STORAGE ANALYTICS ==============
 void handleStorageAnalytics() {
   String u, lvl;
@@ -1729,6 +1818,7 @@ void setup() {
   webServer.on("/api/sd-health",HTTP_GET,handleSdHealth);
   webServer.on("/api/analytics",HTTP_GET,handleStorageAnalytics);
   webServer.on("/api/crc",HTTP_GET,handleFileCRC);
+  webServer.on("/api/duplicates",HTTP_GET,handleFindDuplicates);
   webServer.on("/api/users",HTTP_GET,handleGetUsers);
   webServer.on("/api/users",HTTP_POST,handleAddUser);
   webServer.on("/api/users/",HTTP_PUT,handleUpdateUser);

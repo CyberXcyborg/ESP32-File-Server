@@ -286,6 +286,10 @@ header h1{font-size:18px;color:var(--primary)}
       <h3 style="margin-bottom:12px">📈 File Type Distribution</h3>
       <div id="typeBars"></div>
     </div>
+    <div class="info-panel show" style="margin-top:10px">
+      <h3 style="margin-bottom:12px">🔍 Duplicate Files</h3>
+      <div id="dupResults"><p style="color:var(--text2)">Click Refresh to scan for duplicates</p></div>
+    </div>
   </div>
 </div>
 
@@ -866,6 +870,22 @@ function loadAnalytics(){
       html+='</div>';
       document.getElementById('typeBars').innerHTML=html;
     }).catch(()=>{document.getElementById('typeBars').innerHTML='<p style="color:var(--danger)">Error</p>';});
+  // Load duplicates
+  fetch('/api/duplicates',{headers:{'Authorization':'Bearer '+token}})
+    .then(r=>r.json()).then(data=>{
+      if(!data.duplicates||data.duplicates.length===0){
+        document.getElementById('dupResults').innerHTML=`<p style="color:var(--text2)">✅ No duplicates found (scanned ${data.files_scanned||0} files)</p>`;
+        return;
+      }
+      let html=`<p style="margin-bottom:8px;color:var(--text2)">Found <strong>${data.groups}</strong> duplicate groups (scanned ${data.files_scanned||0} files)</p>`;
+      data.duplicates.forEach((g,i)=>{
+        html+=`<div style="background:var(--bg);border-radius:6px;padding:8px;margin-bottom:6px">`;
+        html+=`<div style="font-size:12px;color:var(--text2);margin-bottom:4px">📦 ${g.size_formatted||g.size+'B'} · CRC: ${g.crc32?.substring(0,8)||''} · ${g.files.length} copies</div>`;
+        g.files.forEach(p=>{html+=`<div style="font-size:11px;padding:2px 0;font-family:monospace;color:var(--text2)">${p}</div>`;});
+        html+=`</div>`;
+      });
+      document.getElementById('dupResults').innerHTML=html;
+    }).catch(()=>{document.getElementById('dupResults').innerHTML='<p style="color:var(--danger)">Error scanning</p>';});
 }
 </script>
 </body>
