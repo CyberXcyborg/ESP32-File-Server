@@ -7,6 +7,7 @@
 
 #include <WiFi.h>
 #include <WebServer.h>
+#include <WebSocketsServer.h>
 #include <SimpleFTPServer.h>
 #include <ESPmDNS.h>
 #include <SD.h>
@@ -21,6 +22,7 @@
 #include "web_ui.h"
 
 WebServer webServer(webServerPort);
+WebSocketsServer webSocket(81); // WebSocket on port 81
 FtpServer ftpSrv;
 
 bool wifiConnected = false;
@@ -28,6 +30,65 @@ bool accessPointMode = false;
 String server_ip = "";
 unsigned long lastWiFiCheck = 0;
 bool sdOK = true;
+
+// ============== SD HEALTH MONITORING ==============
+unsigned long lastHealthCheck = 0;
+uint32_t sectorErrors = 0;
+uint32_t healthCheckInterval = 600000UL; // 10 minutes
+struct HealthLog {
+  unsigned long timestamp;
+  bool ok;
+  uint32_t freeSpace;
+  uint32_t errors;
+};
+HealthLog healthHistory[48]; // Last 48 entries (~8 hours at 10min intervals)
+int healthIndex = 0;
+
+// ============== WE BROADCAST ==============
+void broadcastChange(String action, String path) {
+  // Broadcast file change event to all connected WebSocket clients
+  DynamicJsonDocument doc(256);
+  doc["event"] = action; // "upload", "delete", "rename", "mkdir", "move"
+  doc["path"] = path;
+  doc["time"] = millis();
+  String msg;
+  serializeJson(doc, msg);
+  webSocket.broadcastTXT(msg);
+}
+
+void onWebSocketEvent(uint8_t num, WStype_t type, uint8_t * payload, size_t length) {
+  switch(type) {
+    case WStype_DISCONNECTED:
+      Serial.printf("[%u] WS Disconnected\n", num);
+      break;
+    case WStype_CONNECTED:
+      {
+        IPAddress ip = webSocket.remoteIP(num);
+        Serial.printf("[%u] WS Connected from %s\n", num, ip.toString().c_str());
+        // Send initial status on connect
+        DynamicJsonDocument doc(256);
+        doc["event"] = "connected";
+        doc["uptime"] = millis() / 1000;
+        doc["sd_ok"] = sdOK;
+        String msg;
+        serializeJson(doc, msg);
+        webSocket.sendTXT(num, msg);
+      }
+      break;
+    case WStype_TEXT:
+      // Handle ping/pong or auth
+      if (length > 0 && payload[0] == '{') {
+        DynamicJsonDocument doc(256);
+        if (!deserializeJson(doc, payload, length)) {
+          String cmd = doc["cmd"] | "";
+          if (cmd == "ping") {
+            webSocket.sendTXT(num, "{\"event\":\"pong\"}");
+          }
+        }
+      }
+      break;
+  }
+}
 
 // ============== WIFI ==============
 bool connectToWiFi() {
@@ -85,12 +146,25 @@ void checkWiFi() {
   }
 }
 
-bool checkSD() {
+void checkSD() {
   if (!sdOK) {
     // Try to reinit
     if (SD.begin(SD_CS)) { sdOK = true; Serial.println("SD reconnected"); }
   }
-  return sdOK;
+  // Periodic health check
+  if (millis() - lastHealthCheck > healthCheckInterval) {
+    lastHealthCheck = millis();
+    bool ok = SD.begin(SD_CS);
+    uint32_t free = SD.totalBytes() - SD.usedBytes();
+    healthHistory[healthIndex % 48] = {(unsigned long)(millis() / 1000), ok, (uint32_t)(free / 1024), sectorErrors};
+    healthIndex++;
+    if (!ok) {
+      sdOK = false;
+      Serial.println("SD health check FAILED");
+    } else {
+      sdOK = true;
+    }
+  }
 }
 
 void sendError(int code, String msg) {
@@ -122,7 +196,7 @@ void handleHealth() {
   doc["heap"] = ESP.getFreeHeap();
   doc["wifi"] = wifiConnected;
   doc["rssi"] = WiFi.RSSI();
-  doc["sd"] = checkSD();
+  checkSD(); doc["sd"] = sdOK;
   doc["ip"] = server_ip;
   String out; serializeJson(doc, out);
   webServer.send(200, "application/json", out);
@@ -161,7 +235,7 @@ String sanitizePath(String path) {
 void handleListFiles() {
   String u, lvl;
   if (!isAuthenticated(webServer, u, lvl)) { webServer.send(401); return; }
-  if (!checkSD()) { webServer.send(503, "application/json", "{\"error\":\"SD card not available\"}"); return; }
+  if (!sdOK) { webServer.send(503, "application/json", "{\"error\":\"SD card not available\"}"); return; }
   String path = sanitizePath(webServer.hasArg("path") ? webServer.arg("path") : "/");
   DynamicJsonDocument doc(16384);
   doc["username"] = u; doc["userLevel"] = lvl;
@@ -198,7 +272,7 @@ void handleListFiles() {
 void handleFileInfo() {
   String u, lvl;
   if (!isAuthenticated(webServer, u, lvl)) { webServer.send(401); return; }
-  if (!checkSD()) { webServer.send(503); return; }
+  if (!sdOK) { webServer.send(503); return; }
   if (!webServer.hasArg("path")) { webServer.send(400); return; }
   String path = webServer.arg("path");
   if (!SD.exists(path)) { webServer.send(404); return; }
@@ -219,7 +293,7 @@ void handleFileInfo() {
 void handleDownload() {
   String u, lvl;
   if (!isAuthenticated(webServer, u, lvl)) { webServer.send(401); return; }
-  if (!checkSD()) { webServer.send(503); return; }
+  if (!sdOK) { webServer.send(503); return; }
   if (!webServer.hasArg("path")) { webServer.send(400); return; }
   String path = webServer.arg("path");
   if (!SD.exists(path)) { webServer.send(404); return; }
@@ -236,11 +310,11 @@ void handleDownload() {
 void handleDelete() {
   String u, lvl;
   if (!isAuthenticated(webServer, u, lvl) || !checkCsrf(webServer)) { webServer.send(403); return; }
-  if (!checkSD()) { webServer.send(503); return; }
+  if (!sdOK) { webServer.send(503); return; }
   if (!webServer.hasArg("path")) { webServer.send(400); return; }
   String path = webServer.arg("path");
   if (!SD.exists(path)) { webServer.send(404); return; }
-  if (moveToTrash(path)) { logActivity("delete", path, u); webServer.send(200, "text/plain", "Moved to trash"); }
+  if (moveToTrash(path)) { logActivity("delete", path, u); broadcastChange("delete", path); webServer.send(200, "text/plain", "Moved to trash"); }
   else webServer.send(500, "text/plain", "Failed");
 }
 
@@ -248,14 +322,14 @@ void handleDelete() {
 void handleCreateDir() {
   String u, lvl;
   if (!isAuthenticated(webServer, u, lvl) || !checkCsrf(webServer)) { webServer.send(403); return; }
-  if (!checkSD()) { webServer.send(503); return; }
+  if (!sdOK) { webServer.send(503); return; }
   if (!webServer.hasArg("path")) { webServer.send(400); return; }
   String path = webServer.arg("path");
   // Check SD free space
   if (SD.totalBytes() - SD.usedBytes() < 1024) {
     webServer.send(507, "text/plain", "SD card full"); return;
   }
-  if (createDirRecursive(path)) { logActivity("mkdir", path, u); webServer.send(200, "text/plain", "OK"); }
+  if (createDirRecursive(path)) { logActivity("mkdir", path, u); broadcastChange("mkdir", path); webServer.send(200, "text/plain", "OK"); }
   else webServer.send(500, "text/plain", "Failed");
 }
 
@@ -263,7 +337,7 @@ void handleCreateDir() {
 void handleRename() {
   String u, lvl;
   if (!isAuthenticated(webServer, u, lvl) || !checkCsrf(webServer)) { webServer.send(403); return; }
-  if (!checkSD()) { sendError(503,"SD card not available"); return; }
+  if (!sdOK) { sendError(503,"SD card not available"); return; }
   if (!webServer.hasArg("path") || !webServer.hasArg("name")) { sendError(400,"Missing path or name"); return; }
   String path = webServer.arg("path"), newName = webServer.arg("name");
   if (!SD.exists(path)) { sendError(404,"Source file not found"); return; }
@@ -271,6 +345,7 @@ void handleRename() {
   if (newName.indexOf('/') >= 0 || newName.indexOf('\\') >= 0 || newName.length() == 0) {
     sendError(400,"Invalid file name"); return;
   }
+  if (!acquireFileLock(path)) { sendError(423,"File is locked"); return; }
   // Create version for files (not directories)
   if (!SD.open(path).isDirectory()) createVersion(path);
   int sl = path.lastIndexOf('/');
@@ -280,7 +355,7 @@ void handleRename() {
   if (SD.exists(np)) {
     int dot = newName.lastIndexOf('.');
     String base, ext;
-    if (dot > 0) { base = newName.substring(0, dot); ext = newName.substring(dot); }
+    if () { base = newName.substring(0, dot); ext = newName.substring(dot); }
     else { base = newName; ext = ""; }
     int counter = 1;
     do {
@@ -288,15 +363,16 @@ void handleRename() {
       counter++;
     } while (SD.exists(np) && counter < 1000);
   }
-  if (SD.rename(path, np)) { logActivity("rename", path+" -> "+np, u); webServer.send(200, "application/json", "{\"ok\":true,\"path\":\""+np+"\"}\"); }
+  if (SD.rename(path, np)) { logActivity("rename", path+" -> "+np, u); broadcastChange("rename", np); webServer.send(200, "application/json", "{\"ok\":true,\"path\":\""+np+"\"}"); }
   else sendError(500,"Rename failed");
+  releaseFileLock(path);
 }
 
 // ============== MOVE ==============
 void handleMove() {
   String u, lvl;
   if (!isAuthenticated(webServer, u, lvl) || !checkCsrf(webServer)) { webServer.send(403); return; }
-  if (!checkSD()) { webServer.send(503); return; }
+  if (!sdOK) { webServer.send(503); return; }
   if (!webServer.hasArg("path") || !webServer.hasArg("dest")) { webServer.send(400); return; }
   String path = webServer.arg("path"), dest = webServer.arg("dest");
   if (!SD.exists(path)) { webServer.send(404); return; }
@@ -312,7 +388,7 @@ void handleMove() {
 void handleCopy() {
   String u, lvl;
   if (!isAuthenticated(webServer, u, lvl) || !checkCsrf(webServer)) { webServer.send(403); return; }
-  if (!checkSD()) { webServer.send(503); return; }
+  if (!sdOK) { webServer.send(503); return; }
   if (!webServer.hasArg("path") || !webServer.hasArg("dest")) { webServer.send(400); return; }
   String path = webServer.arg("path"), dest = webServer.arg("dest");
   if (!SD.exists(path)) { webServer.send(404); return; }
@@ -336,7 +412,7 @@ void handleUploadAuth() {
 void handleUpload() {
   String u, lvl;
   if (!isAuthenticated(webServer, u, lvl) || !checkCsrf(webServer)) { webServer.send(403); return; }
-  if (!checkSD()) { webServer.send(503); return; }
+  if (!sdOK) { webServer.send(503); return; }
   HTTPUpload& up = webServer.upload();
   static File uf;
   static String upp;
@@ -365,6 +441,7 @@ void handleUpload() {
   } else if (up.status == UPLOAD_FILE_END) {
     if (uf) uf.close();
     logActivity("upload", upp+" ("+String(up.totalSize)+"B)", u);
+    broadcastChange("upload", upp);
   }
 }
 
@@ -372,7 +449,7 @@ void handleUpload() {
 void handleCreateShare() {
   String u, lvl;
   if (!isAuthenticated(webServer, u, lvl)) { webServer.send(401); return; }
-  if (!checkSD()) { webServer.send(503); return; }
+  if (!sdOK) { webServer.send(503); return; }
   if (!webServer.hasArg("path")) { webServer.send(400); return; }
   String path = webServer.arg("path");
   if (!SD.exists(path)) { webServer.send(404); return; }
@@ -407,7 +484,7 @@ uint32_t crc32c(uint32_t crc, uint8_t val) {
 void handleZipDownload() {
   String u, lvl;
   if (!isAuthenticated(webServer, u, lvl)) { webServer.send(401); return; }
-  if (!checkSD()) { webServer.send(503); return; }
+  if (!sdOK) { webServer.send(503); return; }
   if (!webServer.hasArg("plain")) { webServer.send(400); return; }
   DynamicJsonDocument doc(4096);
   deserializeJson(doc, webServer.arg("plain"));
@@ -566,7 +643,7 @@ void handleTrashPage() {
 void handleTrashList() {
   String u,lvl;
   if(!isAuthenticated(webServer,u,lvl)){sendError(401,"Not authenticated");return;}
-  if(!checkSD()){sendError(503,"SD card not available");return;}
+  if(!sdOK){sendError(503,"SD card not available");return;}
   DynamicJsonDocument doc(8192); JsonArray arr=doc.createNestedArray("files");
   if(SD.exists(TRASH_FOLDER)){
     File dir=SD.open(TRASH_FOLDER);
@@ -784,7 +861,7 @@ void handleSearch() {
 void handleFolderZip() {
   String u, lvl;
   if (!isAuthenticated(webServer, u, lvl)) { webServer.send(401); return; }
-  if (!checkSD()) { webServer.send(503); return; }
+  if (!sdOK) { webServer.send(503); return; }
   if (!webServer.hasArg("path")) { webServer.send(400); return; }
   String path = sanitizePath(webServer.arg("path"));
   if (!SD.exists(path)) { webServer.send(404); return; }
@@ -817,7 +894,7 @@ void handleAutoCleanup() {
 void handleDirInfo() {
   String u, lvl;
   if (!isAuthenticated(webServer, u, lvl)) { webServer.send(401); return; }
-  if (!checkSD()) { webServer.send(503); return; }
+  if (!sdOK) { webServer.send(503); return; }
   String path = webServer.hasArg("path") ? webServer.arg("path") : "/";
   DynamicJsonDocument doc(256);
   doc["path"] = path;
@@ -918,6 +995,36 @@ void handleStats() {
   doc["sd_used"] = SD.usedBytes();
   doc["sd_free"] = SD.totalBytes() - SD.usedBytes();
   doc["version"] = FIRMWARE_VERSION;
+  // Add SD health stats
+  doc["sd_sector_errors"] = sectorErrors;
+  doc["sd_health_interval"] = healthCheckInterval / 1000;
+  String out; serializeJson(doc, out);
+  webServer.send(200, "application/json", out);
+}
+
+// ============== SD HEALTH ENDPOINT ==============
+void handleSdHealth() {
+  String u, lvl;
+  if (!isAuthenticated(webServer, u, lvl)) { sendError(401,"Not authenticated"); return; }
+  DynamicJsonDocument doc(2048);
+  doc["ok"] = sdOK;
+  doc["total"] = (uint32_t)(SD.totalBytes() / 1024);
+  doc["used"] = (uint32_t)(SD.usedBytes() / 1024);
+  doc["free"] = (uint32_t)((SD.totalBytes() - SD.usedBytes()) / 1024);
+  doc["sector_errors"] = sectorErrors;
+  doc["last_check"] = (uint32_t)(lastHealthCheck / 1000);
+  doc["card_type"] = SD.cardType();
+  doc["sector_count"] = SD.sectorsPerCluster() * SD.clusterCount();
+  JsonArray arr = doc.createNestedArray("history");
+  for (int i = 0; i < 48 && i < healthIndex; i++) {
+    int idx = (healthIndex - 1 - i + 48) % 48;
+    if (healthHistory[idx].timestamp == 0) continue;
+    JsonObject h = arr.createNestedObject();
+    h["t"] = healthHistory[idx].timestamp;
+    h["ok"] = healthHistory[idx].ok;
+    h["free_kb"] = healthHistory[idx].freeSpace;
+    h["err"] = healthHistory[idx].errors;
+  }
   String out; serializeJson(doc, out);
   webServer.send(200, "application/json", out);
 }
@@ -926,7 +1033,7 @@ void handleStats() {
 void handleListFilesFiltered() {
   String u, lvl;
   if (!isAuthenticated(webServer, u, lvl)) { sendError(401,"Not authenticated"); return; }
-  if (!checkSD()) { sendError(503,"SD card not available"); return; }
+  if (!sdOK) { sendError(503,"SD card not available"); return; }
   String path = webServer.hasArg("path") ? webServer.arg("path") : "/";
   String filter = webServer.hasArg("type") ? webServer.arg("type") : "all";
   DynamicJsonDocument doc(16384);
@@ -974,7 +1081,7 @@ void handleListFilesFiltered() {
 void handleStorageBreakdown() {
   String u, lvl;
   if (!isAuthenticated(webServer, u, lvl)) { sendError(401,"Not authenticated"); return; }
-  if (!checkSD()) { sendError(503,"SD card not available"); return; }
+  if (!sdOK) { sendError(503,"SD card not available"); return; }
   DynamicJsonDocument doc(1024);
   doc["total"] = SD.totalBytes();
   doc["used"] = SD.usedBytes();
@@ -1173,7 +1280,7 @@ void handleSaveNote() {
 void handleScanStorage() {
   String u, lvl;
   if (!isAuthenticated(webServer, u, lvl)) { sendError(401,"Not authenticated"); return; }
-  if (!checkSD()) { sendError(503,"SD card not available"); return; }
+  if (!sdOK) { sendError(503,"SD card not available"); return; }
   String path = webServer.hasArg("path") ? webServer.arg("path") : "/";
   DynamicJsonDocument doc(2048);
   int totalFiles = 0, totalDirs = 0, bigFiles = 0, oldFiles = 0;
@@ -1292,6 +1399,7 @@ void setup() {
   webServer.on("/api/notes",HTTP_GET,handleGetNotes);
   webServer.on("/api/notes",HTTP_POST,handleSaveNote);
   webServer.on("/api/scan",HTTP_GET,handleScanStorage);
+  webServer.on("/api/sd-health",HTTP_GET,handleSdHealth);
   webServer.on("/api/users",HTTP_GET,handleGetUsers);
   webServer.on("/api/users",HTTP_POST,handleAddUser);
   webServer.on("/api/users/",HTTP_PUT,handleUpdateUser);
@@ -1299,12 +1407,17 @@ void setup() {
 
   webServer.begin();
   Serial.println("HTTP on "+String(webServerPort));
+  webSocket.begin();
+  webSocket.onEvent(onWebSocketEvent);
+  Serial.println("WebSocket on 81");
   ftpSrv.begin(ftp_user,ftp_password);
   Serial.println("FTP started");
 }
 
 void loop() {
   webServer.handleClient();
+  webSocket.loop();
   ftpSrv.handleFTP();
   checkWiFi();
+  checkSD();
 }

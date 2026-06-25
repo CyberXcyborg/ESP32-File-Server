@@ -258,6 +258,40 @@ bool saveSettings(String wifiSsid, String wifiPass, String apSsid, String apPass
   return true;
 }
 
+// ============== FILE LOCKING ==============
+bool acquireFileLock(String path, unsigned long timeoutMs = 5000) {
+  String lockPath = path + ".lock";
+  unsigned long start = millis();
+  while (SD.exists(lockPath)) {
+    // Check if lock is stale (>30s old)
+    File lockFile = SD.open(lockPath, FILE_READ);
+    if (lockFile) {
+      unsigned long lockTime = lockFile.read() | (lockFile.read() << 8) | (lockFile.read() << 16) | (lockFile.read() << 24);
+      lockFile.close();
+      if (millis() - lockTime > 30000UL) {
+        SD.remove(lockPath);
+        break;
+      }
+    }
+    if (millis() - start > timeoutMs) return false;
+    delay(10);
+  }
+  File lockFile = SD.open(lockPath, FILE_WRITE);
+  if (!lockFile) return false;
+  unsigned long now = millis();
+  lockFile.write((uint8_t)(now & 0xFF));
+  lockFile.write((uint8_t)((now >> 8) & 0xFF));
+  lockFile.write((uint8_t)((now >> 16) & 0xFF));
+  lockFile.write((uint8_t)((now >> 24) & 0xFF));
+  lockFile.close();
+  return true;
+}
+
+void releaseFileLock(String path) {
+  String lockPath = path + ".lock";
+  if (SD.exists(lockPath)) SD.remove(lockPath);
+}
+
 // ============== ICONS & HELPERS ==============
 String getFileIcon(String fileName) {
   String ext = fileName.substring(fileName.lastIndexOf('.') + 1);
