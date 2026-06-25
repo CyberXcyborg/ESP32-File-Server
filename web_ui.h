@@ -84,6 +84,7 @@ header h1{font-size:18px;color:var(--primary)}
 .storage-info{font-size:11px;color:var(--text2);margin-top:2px}
 .ctx-menu{display:none;position:fixed;background:var(--card);border:1px solid var(--border);border-radius:var(--radius);box-shadow:var(--shadow);z-index:3000;min-width:180px;overflow:hidden}
 .ctx-menu.show{display:block}
+kbd{font-family:monospace;font-size:12px}
 .ctx-item{padding:12px 16px;cursor:pointer;font-size:13px;display:flex;align-items:center;gap:8px;transition:background .15s;min-height:44px}
 .ctx-item:hover{background:var(--bg)}
 .ctx-sep{height:1px;background:var(--border);margin:4px 0}
@@ -139,6 +140,7 @@ header h1{font-size:18px;color:var(--primary)}
       <button class="btn btn-ghost btn-sm" id="themeBtn" onclick="showThemeMenu()" title="Change theme">🎨</button>
       <button class="btn btn-ghost btn-sm" id="darkToggle" onclick="toggleDark()">🌙</button>
       <button class="btn btn-ghost btn-sm" onclick="showRecentFiles()" title="Recent files">🕐</button>
+      <button class="btn btn-ghost btn-sm" onclick="showShortcuts()" title="Keyboard shortcuts (?)">⌨️</button>
       <a href="/logout" class="btn btn-sm">Logout</a>
     </div>
   </header>
@@ -379,6 +381,7 @@ header h1{font-size:18px;color:var(--primary)}
     <div class="modal-body">
       <p style="font-size:13px;color:var(--text2);margin-bottom:12px">Anyone with this link can download the file.</p>
       <div class="share-link"><input type="text" id="shareUrl" readonly><button class="btn" onclick="copyShareUrl()">📋 Copy</button></div>
+      <p style="margin-top:10px;font-size:12px;color:var(--text2)">⏱️ Link expires in: <span id="shareExpiry">24h</span></p>
     </div>
   </div>
 </div>
@@ -400,6 +403,25 @@ header h1{font-size:18px;color:var(--primary)}
     <div class="modal-header"><h2>Confirm</h2><span class="close-modal" onclick="closeModal('confirmModal')">&times;</span></div>
     <div class="modal-body"><p id="confirmMsg"></p></div>
     <div class="modal-footer"><button class="btn btn-ghost" onclick="closeModal('confirmModal')">Cancel</button><button class="btn btn-danger" id="confirmBtn">Delete</button></div>
+  </div>
+</div>
+
+<!-- Shortcuts Modal -->
+<div class="modal" id="shortcutsModal">
+  <div class="modal-content" style="max-width:500px">
+    <div class="modal-header"><h2>⌨️ Keyboard Shortcuts</h2><span class="close-modal" onclick="closeModal('shortcutsModal')">&times;</span></div>
+    <div class="modal-body">
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;font-size:13px">
+        <div style="padding:8px;background:var(--bg);border-radius:6px"><kbd style="background:var(--card);padding:2px 8px;border-radius:4px;border:1px solid var(--border)">Ctrl+U</kbd> Upload</div>
+        <div style="padding:8px;background:var(--bg);border-radius:6px"><kbd style="background:var(--card);padding:2px 8px;border-radius:4px;border:1px solid var(--border)">Ctrl+N</kbd> New folder</div>
+        <div style="padding:8px;background:var(--bg);border-radius:6px"><kbd style="background:var(--card);padding:2px 8px;border-radius:4px;border:1px solid var(--border)">Ctrl+A</kbd> Select all</div>
+        <div style="padding:8px;background:var(--bg);border-radius:6px"><kbd style="background:var(--card);padding:2px 8px;border-radius:4px;border:1px solid var(--border)">Esc</kbd> Close modal</div>
+        <div style="padding:8px;background:var(--bg);border-radius:6px"><kbd style="background:var(--card);padding:2px 8px;border-radius:4px;border:1px solid var(--border)">Del</kbd> Delete selected</div>
+        <div style="padding:8px;background:var(--bg);border-radius:6px"><kbd style="background:var(--card);padding:2px 8px;border-radius:4px;border:1px solid var(--border">F5</kbd> Refresh</div>
+        <div style="padding:8px;background:var(--bg);border-radius:6px"><kbd style="background:var(--card);padding:2px 8px;border-radius:4px;border:1px solid var(--border)">?</kbd> This help</div>
+        <div style="padding:8px;background:var(--bg);border-radius:6px"><kbd style="background:var(--card);padding:2px 8px;border-radius:4px;border:1px solid var(--border)">←</kbd> Go back</div>
+      </div>
+    </div>
   </div>
 </div>
 
@@ -432,6 +454,7 @@ document.addEventListener('DOMContentLoaded',()=>{
     if(e.key==='Delete'&&selectedFiles.length>0&&document.activeElement.tagName!=='INPUT'){e.preventDefault();deleteSelected();}
     if(e.key==='F2'&&selectedFiles.length===1){e.preventDefault();const f=files.find(x=>x.path===selectedFiles[0]);if(f)showRenameModal(f.path,f.name);}
     if(e.ctrlKey&&e.key==='a'&&document.activeElement.tagName!=='INPUT'){e.preventDefault();selectedFiles=files.map(f=>f.path);updateSelBtn();renderFiles();}
+    if(e.key==='?'&&document.activeElement.tagName!=='INPUT'){e.preventDefault();showShortcuts();}
   });
 });
 
@@ -507,6 +530,7 @@ function switchView(v,btn){
 function showToast(msg,type='info'){const t=document.getElementById('toast');t.textContent=msg;t.className='toast '+type+' show';setTimeout(()=>t.classList.remove('show'),3000);}
 function openModal(id){document.getElementById(id).style.display='flex';}
 function closeModal(id){document.getElementById(id).style.display='none';}
+function showShortcuts(){openModal('shortcutsModal');}
 
 // ============== FILES ==============
 function loadFiles(path){
@@ -734,7 +758,7 @@ function openRecent(path){
 function downloadFile(path){window.location.href='/api/download?path='+encodeURIComponent(path)+'&token='+token;}
 function shareFile(path){
   fetch('/api/share',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded','Authorization':'Bearer '+token},body:'path='+encodeURIComponent(path)+'&csrf='+encodeURIComponent(csrfToken)})
-    .then(r=>r.json()).then(data=>{document.getElementById('shareUrl').value=data.url;openModal('shareModal');})
+    .then(r=>r.json()).then(data=>{document.getElementById('shareUrl').value=data.url;document.getElementById('shareExpiry').textContent=data.expires||'24h';openModal('shareModal');})
     .catch(()=>showToast('Failed to create share link','error'));}
 }
 function copyShareUrl(){const input=document.getElementById('shareUrl');input.select();navigator.clipboard.writeText(input.value);showToast('Link copied!','success');}
