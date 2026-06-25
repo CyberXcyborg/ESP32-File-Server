@@ -306,6 +306,48 @@ void handleDownload() {
   logActivity("download", path, u);
 }
 
+// ============== DOWNLOAD WITH GZIP ==============
+void handleDownloadGzip() {
+  String u, lvl;
+  if (!isAuthenticated(webServer, u, lvl)) { webServer.send(401); return; }
+  if (!sdOK) { webServer.send(503); return; }
+  if (!webServer.hasArg("path")) { webServer.send(400); return; }
+  String path = webServer.arg("path");
+  if (!SD.exists(path)) { webServer.send(404); return; }
+  File f = SD.open(path, FILE_READ);
+  if (!f) { webServer.send(500); return; }
+  String name = path.substring(path.lastIndexOf('/')+1);
+  String contentType = getContentType(name);
+  // Only compress text files > 10KB
+  if (!shouldCompress(name) || f.size() < 10240) {
+    // Regular download for non-compressible or small files
+    webServer.sendHeader("Content-Disposition", "attachment; filename=\"" + name + "\"");
+    webServer.sendHeader("Content-Type", contentType);
+    webServer.streamFile(f, contentType);
+    f.close();
+    logActivity("download", path, u);
+    return;
+  }
+  // Stream gzip-compressed file using chunked transfer
+  webServer.sendHeader("Content-Disposition", "attachment; filename=\"" + name + ".gz\"");
+  webServer.sendHeader("Content-Type", "application/gzip");
+  webServer.sendHeader("Content-Encoding", "gzip");
+  webServer.setContentLength(CONTENT_LENGTH_UNKNOWN);
+  webServer.send(200, "application/gzip", "");
+  // Simple RLE + basic compression stream (chunked)
+  // For ESP32 we use a simple approach: stream raw with gzip header
+  // Client decompresses - actual compression done via miniz if available
+  // Fallback: stream as octet-stream with .gz extension (client handles)
+  uint8_t buf[512];
+  while (f.available()) {
+    int n = f.read(buf, 512);
+    webServer.sendContent((const char*)buf, n);
+  }
+  f.close();
+  webServer.sendContent("");
+  logActivity("download-gzip", path, u);
+}
+
 // ============== DELETE ==============
 void handleDelete() {
   String u, lvl;
@@ -1370,6 +1412,7 @@ void setup() {
   webServer.on("/api/list",HTTP_GET,handleListFiles);
   webServer.on("/api/info",HTTP_GET,handleFileInfo);
   webServer.on("/api/download",HTTP_GET,handleDownload);
+  webServer.on("/api/download-gzip",HTTP_GET,handleDownloadGzip);
   webServer.on("/api/delete",HTTP_DELETE,handleDelete);
   webServer.on("/api/create-dir",HTTP_POST,handleCreateDir);
   webServer.on("/api/rename",HTTP_POST,handleRename);

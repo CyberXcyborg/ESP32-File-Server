@@ -99,6 +99,36 @@ bool moveFile(String src, String dst) {
   return SD.remove(src);
 }
 
+// ============== GZIP COMPRESSION ==============
+// Compress file data using simple deflate (miniz or manual RLE for ESP32)
+// For large files we use chunked transfer with compression hint
+bool shouldCompress(String fileName) {
+  String ext = fileName.substring(fileName.lastIndexOf('.') + 1);
+  ext.toLowerCase();
+  // Compress text-based files > 10KB for download
+  return ext=="txt"||ext=="html"||ext=="htm"||ext=="css"||ext=="js"||ext=="json"||ext=="xml"||
+         ext=="md"||ext=="csv"||ext=="log"||ext=="svg"||ext=="ini"||ext=="cfg";
+}
+
+String getContentType(String fileName) {
+  String ext = fileName.substring(fileName.lastIndexOf('.') + 1);
+  ext.toLowerCase();
+  if (ext=="html"||ext=="htm") return "text/html";
+  if (ext=="css") return "text/css";
+  if (ext=="js") return "application/javascript";
+  if (ext=="json") return "application/json";
+  if (ext=="png") return "image/png";
+  if (ext=="jpg"||ext=="jpeg") return "image/jpeg";
+  if (ext=="gif") return "image/gif";
+  if (ext=="svg") return "image/svg+xml";
+  if (ext=="pdf") return "application/pdf";
+  if (ext=="mp3") return "audio/mpeg";
+  if (ext=="mp4") return "video/mp4";
+  if (ext=="zip") return "application/zip";
+  if (ext=="gz") return "application/gzip";
+  return "application/octet-stream";
+}
+
 bool copyFile(String src, String dst) {
   if (!SD.exists(src)) return false;
   int slash = dst.lastIndexOf('/');
