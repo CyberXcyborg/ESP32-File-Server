@@ -78,6 +78,10 @@ header h1{font-size:18px;color:var(--primary)}
 .drop-zone{border:2px dashed var(--border);border-radius:var(--radius);padding:24px;text-align:center;margin-bottom:10px;transition:all .2s;cursor:pointer;background:var(--card);min-height:80px;display:flex;flex-direction:column;align-items:center;justify-content:center}
 .drop-zone.dragover{border-color:var(--primary);background:#e3f2fd}
 .dark .drop-zone.dragover{background:#1e3a5f}
+.filter-bar{display:flex;gap:6px;padding:6px 0;flex-wrap:wrap}
+.filter-chip{padding:4px 12px;border-radius:20px;font-size:12px;cursor:pointer;border:1px solid var(--border);background:var(--card);color:var(--text2);transition:all .15s;user-select:none}
+.filter-chip:hover{border-color:var(--primary);color:var(--primary)}
+.filter-chip.active{background:var(--primary);color:#fff;border-color:var(--primary)}
 .drop-zone p{color:var(--text2);font-size:13px;margin-top:6px}
 .storage-bar{height:6px;background:var(--border);border-radius:3px;overflow:hidden;margin-top:4px}
 .storage-bar-fill{height:100%;background:var(--primary);border-radius:3px;transition:width .3s}
@@ -183,6 +187,15 @@ kbd{font-family:monospace;font-size:12px}
       <div class="storage-info" id="storageInfo"></div>
     </div>
     <div class="path-nav" id="pathNav"><span class="path-part">Root</span></div>
+    <div class="filter-bar" id="filterBar">
+      <span class="filter-chip active" onclick="setTypeFilter('all',this)">📁 All</span>
+      <span class="filter-chip" onclick="setTypeFilter('images',this)">🖼️ Images</span>
+      <span class="filter-chip" onclick="setTypeFilter('video',this)">🎬 Video</span>
+      <span class="filter-chip" onclick="setTypeFilter('audio',this)">🎵 Audio</span>
+      <span class="filter-chip" onclick="setTypeFilter('docs',this)">📄 Docs</span>
+      <span class="filter-chip" onclick="setTypeFilter('code',this)">💻 Code</span>
+      <span class="filter-chip" onclick="setTypeFilter('archives',this)">📦 Archives</span>
+    </div>
     <div id="fileCountBadge" style="font-size:11px;color:var(--text2);padding:4px 0"></div>
     <div id="infoPanel" class="info-panel">
       <h3>📄 <span id="infoName"></span></h3>
@@ -559,10 +572,33 @@ function loadFiles(path){
     .catch(()=>{document.getElementById('fileContainer').innerHTML='<div class="empty-msg">Error loading files</div>';});
 }
 
+let typeFilter='all';
+function setTypeFilter(type,el){
+  typeFilter=type;
+  document.querySelectorAll('.filter-chip').forEach(c=>c.classList.remove('active'));
+  if(el)el.classList.add('active');
+  renderFiles();
+}
 function renderFiles(){
   let f=[...files];
   const q=document.getElementById('searchInput').value.toLowerCase();
   if(q)f=f.filter(x=>x.name.toLowerCase().includes(q));
+  // Apply type filter
+  if(typeFilter!=='all'){
+    f=f.filter(file=>{
+      if(file.type==='dir')return true;
+      const ext=(file.name.split('.').pop()||'').toLowerCase();
+      switch(typeFilter){
+        case'images':return['jpg','jpeg','png','gif','bmp','svg','webp'].includes(ext);
+        case'video':return['mp4','avi','mov','mkv','webm'].includes(ext);
+        case'audio':return['mp3','wav','ogg','flac','aac'].includes(ext);
+        case'docs':return['pdf','doc','docx','txt','md','rtf'].includes(ext);
+        case'code':return['c','cpp','h','py','js','html','css','json','xml'].includes(ext);
+        case'archives':return['zip','rar','7z','tar','gz'].includes(ext);
+        default:return true;
+      }
+    });
+  }
   f.sort((a,b)=>{
     if(a.type==='dir'&&b.type!=='dir')return -1;
     if(a.type!=='dir'&&b.type==='dir')return 1;
