@@ -1340,6 +1340,127 @@ void handleFindDuplicates() {
 }
 
 // ============== STORAGE ANALYTICS ==============
+// ============== RECENT FILES ==============
+void handleRecentFiles() {
+  String u, lvl;
+  if (!isAuthenticated(webServer, u, lvl)) { sendError(401,"Not authenticated"); return; }
+  if (!sdOK) { sendError(503,"SD card not available"); return; }
+  int maxCount = webServer.hasArg("limit") ? webServer.arg("limit").toInt() : 20;
+  if (maxCount > 100) maxCount = 100;
+  // Collect files with modification time
+  struct FInfo { String path; unsigned long mtime; uint64_t size; };
+  FInfo *files = new FInfo[200];
+  int fileCount = 0;
+  // Recursive scan limited to 200 files for memory safety
+  std::function<void(String)> scanDir = [&](String path) {
+    File dir = SD.open(path);
+    if (!dir || !dir.isDirectory()) return;
+    File file;
+    while (file = dir.openNextFile()) {
+      if (fileCount < 200) {
+        if (!file.isDirectory()) {
+          files[fileCount].path = String(file.name());
+          files[fileCount].mtime = file.fileTime();
+          files[fileCount].size = file.size();
+          fileCount++;
+        } else {
+          String fn = String(file.name());
+          if (!fn.startsWith("/.")) scanDir(fn);
+        }
+      }
+      file.close();
+    }
+    dir.close();
+  };
+  scanDir("/");
+  // Simple bubble sort by mtime descending
+  for (int i = 0; i < fileCount - 1; i++) {
+    for (int j = 0; j < fileCount - i - 1; j++) {
+      if (files[j].mtime < files[j+1].mtime) {
+        FInfo tmp = files[j]; files[j] = files[j+1]; files[j+1] = tmp;
+      }
+    }
+  }
+  DynamicJsonDocument doc(8192);
+  JsonArray arr = doc.createNestedArray("recent");
+  int count = fileCount < maxCount ? fileCount : maxCount;
+  for (int i = 0; i < count; i++) {
+    JsonObject f = arr.createNestedObject();
+    String name = files[i].path;
+    int sl = name.lastIndexOf('/');
+    f["name"] = (sl >= 0) ? name.substring(sl+1) : name;
+    f["path"] = files[i].path;
+    f["size"] = (uint64_t)files[i].size;
+    f["sizeFormatted"] = getFileSize((uint64_t)files[i].size);
+    f["modified"] = files[i].mtime;
+    f["icon"] = getFileIcon(name);
+  }
+  doc["total"] = fileCount;
+  String out; serializeJson(doc, out);
+  webServer.send(200, "application/json", out);
+  delete[] files;
+}
+
+// ============== FILE PREVIEW ==============
+void handleFilePreview() {
+  String u, lvl;
+  if (!isAuthenticated(webServer, u, lvl)) { webServer.send(401); return; }
+  if (!sdOK) { webServer.send(503); return; }
+  if (!webServer.hasArg("path")) { webServer.send(400); return; }
+  String path = sanitizePath(webServer.arg("path"));
+  if (!SD.exists(path)) { webServer.send(404); return; }
+  File f = SD.open(path, FILE_READ);
+  if (!f) { webServer.send(500); return; }
+  String name = path.substring(path.lastIndexOf('/')+1);
+  String ext = name.substring(name.lastIndexOf('.')+1);
+  ext.toLowerCase();
+  // Only allow preview for safe text types
+  if (ext != "txt" && ext != "md" && ext != "csv" && ext != "log" && ext != "json" && 
+      ext != "xml" && ext != "html" && ext != "htm" && ext != "css" && ext != "js" &&
+      ext != "ini" && ext != "cfg" && ext != "conf" && ext != "sh" && ext != "py" &&
+      ext != "c" && ext != "cpp" && ext != "h") {
+    webServer.send(403, "application/json", "{\"error\":\"Preview not allowed for this type\"}");
+    f.close();
+    return;
+  }
+  // Limit preview to 64KB
+  size_t maxBytes = 65536;
+  size_t fileSize = f.size();
+  size_t toRead = fileSize < maxBytes ? fileSize : maxBytes;
+  String content = "";
+  content.reserve(toRead);
+  uint8_t buf[512];
+  size_t read = 0;
+  while (read < toRead && f.available()) {
+    size_t chunk = toRead - read;
+    if (chunk > 512) chunk = 512;
+    int n = f.read(buf, chunk);
+    if (n <= 0) break;
+    // Sanitize non-printable chars for JSON safety
+    for (int i = 0; i < n; i++) {
+      char c = buf[i];
+      if (c >= 32 && c < 127) content += c;
+      else if (c == '\n') content += '\n';
+      else if (c == '\t') content += '\t';
+      else if (c == '\r') content += '\r';
+      else content += '.';
+    }
+    read += n;
+  }
+  f.close();
+  DynamicJsonDocument doc(65536 + 512);
+  doc["name"] = name;
+  doc["path"] = path;
+  doc["size"] = (uint64_t)fileSize;
+  doc["sizeFormatted"] = getFileSize((uint64_t)fileSize);
+  doc["truncated"] = fileSize > maxBytes;
+  doc["content"] = content;
+  String out; serializeJson(doc, out);
+  webServer.send(200, "application/json", out);
+  logActivity("preview", path, u);
+}
+
+// ============== STORAGE ANALYTICS ==============
 void handleStorageAnalytics() {
   String u, lvl;
   if (!isAuthenticated(webServer, u, lvl)) { sendError(401,"Not authenticated"); return; }
@@ -1820,6 +1941,8 @@ void setup() {
   webServer.on("/api/analytics",HTTP_GET,handleStorageAnalytics);
   webServer.on("/api/crc",HTTP_GET,handleFileCRC);
   webServer.on("/api/duplicates",HTTP_GET,handleFindDuplicates);
+  webServer.on("/api/recent",HTTP_GET,handleRecentFiles);
+  webServer.on("/api/preview",HTTP_GET,handleFilePreview);
   webServer.on("/api/users",HTTP_GET,handleGetUsers);
   webServer.on("/api/users",HTTP_POST,handleAddUser);
   webServer.on("/api/users/",HTTP_PUT,handleUpdateUser);

@@ -138,6 +138,7 @@ header h1{font-size:18px;color:var(--primary)}
       <div class="search-box">🔍<input type="text" id="searchInput" placeholder="Search..." oninput="filterFiles()"></div>
       <button class="btn btn-ghost btn-sm" id="themeBtn" onclick="showThemeMenu()" title="Change theme">🎨</button>
       <button class="btn btn-ghost btn-sm" id="darkToggle" onclick="toggleDark()">🌙</button>
+      <button class="btn btn-ghost btn-sm" onclick="showRecentFiles()" title="Recent files">🕐</button>
       <a href="/logout" class="btn btn-sm">Logout</a>
     </div>
   </header>
@@ -307,6 +308,15 @@ header h1{font-size:18px;color:var(--primary)}
   <div class="ctx-item" onclick="ctxShare()">🔗 Share</div>
   <div class="ctx-sep"></div>
   <div class="ctx-item" onclick="ctxDelete()">🗑️ Delete</div>
+</div>
+
+<!-- Recent Files Modal -->
+<div class="modal" id="recentModal">
+  <div class="modal-content" style="max-width:600px">
+    <div class="modal-header"><h2 id="recentTitle">🕐 Recent Files</h2><span class="close-modal" onclick="closeModal('recentModal')">&times;</span></div>
+    <div class="modal-body" id="recentList" style="max-height:60vh;overflow-y:auto;padding:0"></div>
+    <div class="modal-footer"><button class="btn btn-ghost" onclick="closeModal('recentModal')">Close</button></div>
+  </div>
 </div>
 
 <!-- Modals -->
@@ -681,8 +691,36 @@ function previewFile(path){
   if(type==='image'){content.innerHTML=`<img src="${path}?token=${token}" alt="preview">`;}
   else if(type==='audio'){content.innerHTML=`<audio controls src="${path}?token=${token}"></audio>`;}
   else if(type==='video'){content.innerHTML=`<video controls preload="metadata" poster="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 200 150'><rect fill='%23000' width='200' height='150'/><text x='100' y='80' fill='%23fff' text-anchor='middle' font-size='40'>🎬</text></svg>" src="/api/video?path=${encodeURIComponent(path)}&token=${token}"></video>`;}
-  else{fetch(path+'?token='+token).then(r=>r.text()).then(t=>{content.innerHTML=`<pre>${t.replace(/</g,'&lt;').replace(/>/g,'&gt;')}</pre>`;}).catch(()=>{content.innerHTML='<p>Cannot preview</p>';});}
+  else{
+    // Use /api/preview for sanitized text content
+    fetch('/api/preview?path='+encodeURIComponent(path)+'&token='+token).then(r=>r.json()).then(d=>{
+      if(d.error){content.innerHTML=`<p style="color:var(--danger)">${d.error}</p>`;}
+      else{
+        const escaped=d.content.replace(/</g,'&lt;').replace(/>/g,'&gt;');
+        content.innerHTML=`<pre style="white-space:pre-wrap;word-break:break-all;font-family:monospace;font-size:13px;max-height:60vh;overflow:auto">${escaped}</pre>`;
+        if(d.truncated){content.innerHTML+=`<p style="color:var(--text2);font-size:12px;margin-top:8px">⚠️ Preview truncated (showing first 64KB)</p>`;}
+      }
+    }).catch(()=>{content.innerHTML='<p>Cannot preview</p>';});
+  }
   openModal('previewModal');
+}
+// ============== RECENT FILES ==============
+function showRecentFiles(){
+  fetch('/api/recent?limit=30&token='+token).then(r=>r.json()).then(d=>{
+    if(!d.recent||d.recent.length===0){showToast('No recent files found','info');return;}
+    const list=d.recent.map(f=>`<div class="file-item" onclick="openRecent('${f.path}')" style="cursor:pointer;display:flex;align-items:center;gap:10px;padding:8px 12px;border-bottom:1px solid var(--border)">
+      <span style="font-size:18px">${f.icon}</span>
+      <div style="flex:1;min-width:0"><div style="font-size:13px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${f.name}</div>
+      <div style="font-size:11px;color:var(--text2)">${f.sizeFormatted} · ${f.path}</div></div></div>`).join('');
+    document.getElementById('recentTitle').textContent='🕐 Recent Files';
+    document.getElementById('recentList').innerHTML=list;
+    openModal('recentModal');
+  }).catch(()=>showToast('Failed to load recent files','error'));
+}
+function openRecent(path){
+  closeModal('recentModal');
+  const dir=path.substring(0,path.lastIndexOf('/'))||'/';
+  loadFiles(dir);
 }
 function downloadFile(path){window.location.href='/api/download?path='+encodeURIComponent(path)+'&token='+token;}
 function shareFile(path){
