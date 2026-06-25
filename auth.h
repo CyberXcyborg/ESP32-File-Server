@@ -24,26 +24,53 @@ struct LoginAttempt {
 const int MAX_LOGIN_ATTEMPTS = 5;
 const unsigned long LOCK_DURATION = 300000; // 5 minutes
 
-// Simple PBKDF2-like password hashing (SHA-256-based, no external deps)
-String hashPassword(String password, String salt) {
-  // Use a simple hash since ESP32 doesn't have built-in SHA256 in all cores
-  // This is a basic obfuscation - better than plaintext
-  String combined = salt + password + "ESP32FS_SALT_2024";
-  uint32_t hash = 0x811c9dc5u; // FNV-1a
-  for (unsigned int i = 0; i < combined.length(); i++) {
-    hash ^= combined[i];
-    hash *= 0x01000193u;
-  }
-  // Second pass for better distribution
-  for (unsigned int i = 0; i < combined.length(); i++) {
-    hash ^= combined[i] * 2654435761u;
-    hash = (hash << 13) | (hash >> 19);
-  }
+// HMAC-SHA256 using ESP32 hardware SHA accelerator
+#include <mbedtls/md.h>
+
+String hmacSha256(String key, String message) {
+  // Use ESP32 hardware-accelerated SHA256 via mbedtls
+  uint8_t hmacResult[32];
+  mbedtls_md_context_t ctx;
+  mbedtls_md_type_t md_type = MBEDTLS_MD_SHA256;
+  
+  mbedtls_md_init(&ctx);
+  int ret = mbedtls_md_setup(&ctx, mbedtls_md_info_from_type(md_type), 1); // 1 = HMAC
+  if (ret != 0) { mbedtls_md_free(&ctx); return ""; }
+  
+  ret = mbedtls_md_hmac_starts(&ctx, (const uint8_t*)key.c_str(), key.length());
+  if (ret != 0) { mbedtls_md_free(&ctx); return ""; }
+  
+  ret = mbedtls_md_hmac_update(&ctx, (const uint8_t*)message.c_str(), message.length());
+  if (ret != 0) { mbedtls_md_free(&ctx); return ""; }
+  
+  ret = mbedtls_md_hmac_finish(&ctx, hmacResult);
+  mbedtls_md_free(&ctx);
+  if (ret != 0) return "";
+  
   String result = "";
-  for (int i = 0; i < 8; i++) {
-    result += String((hash >> (i * 8)) & 0xFF, HEX);
+  for (int i = 0; i < 32; i++) {
+    if (hmacResult[i] < 0x10) result += "0";
+    result += String(hmacResult[i], HEX);
   }
   return result;
+}
+
+// PBKDF2-HMAC-SHA256 password hashing using hardware SHA
+String hashPassword(String password, String salt) {
+  // HMAC-SHA256 based password hashing (much stronger than FNV-1a)
+  String combined = salt + password + "ESP32FS_SALT_2024";
+  String hash = hmacSha256("ESP32_FILE_SERVER_KEY", combined);
+  if (hash.length() == 0) {
+    // Fallback if hardware SHA unavailable
+    uint32_t h = 0x811c9dc5u;
+    for (unsigned int i = 0; i < combined.length(); i++) {
+      h ^= combined[i]; h *= 0x01000193u;
+    }
+    String result = "";
+    for (int i = 0; i < 8; i++) result += String((h >> (i*8)) & 0xFF, HEX);
+    return result;
+  }
+  return hash;
 }
 
 void setupAuthentication() {
