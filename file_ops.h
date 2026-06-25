@@ -121,6 +121,42 @@ bool copyFile(String src, String dst) {
 
 // ============== ACTIVITY LOG ==============
 void logActivity(String action, String path, String username) {
+  // Truncate log to last 1000 entries to prevent SD fill
+  const int MAX_LOG_ENTRIES = 1000;
+  const int KEEP_ENTRIES = 500;
+  if (SD.exists(LOG_FILE)) {
+    File f = SD.open(LOG_FILE, FILE_READ);
+    if (f) {
+      // Count lines
+      int lines = 0;
+      while (f.available()) { if (f.read() == '\n') lines++; }
+      f.close();
+      if (lines > MAX_LOG_ENTRIES) {
+        // Keep only last KEEP_ENTRIES
+        File src = SD.open(LOG_FILE, FILE_READ);
+        File dst = SD.open(LOG_FILE ".tmp", FILE_WRITE);
+        if (src && dst) {
+          int skipped = lines - KEEP_ENTRIES;
+          int current = 0;
+          bool inPartial = true;
+          while (src.available()) {
+            char c = src.read();
+            if (inPartial && c == '\n') {
+              current++;
+              if (current >= skipped) inPartial = false;
+            }
+            if (!inPartial) dst.write(c);
+          }
+          src.close(); dst.close();
+          SD.remove(LOG_FILE);
+          SD.rename(LOG_FILE ".tmp", LOG_FILE);
+        } else {
+          if (src) src.close();
+          if (dst) dst.close();
+        }
+      }
+    }
+  }
   File logFile = SD.open(LOG_FILE, FILE_APPEND);
   if (!logFile) {
     logFile = SD.open(LOG_FILE, FILE_WRITE);
