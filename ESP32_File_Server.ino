@@ -581,6 +581,8 @@ void handleUpload() {
     totalWriteBytes += up.totalSize;
     logActivity("upload", upp+" ("+String(up.totalSize)+"B)", u);
     broadcastChange("upload", upp);
+    // Store CRC32 sidecar for integrity verification
+    storeFileCRC(upp);
     // Broadcast updated storage stats to all clients
     broadcastStatsUpdate();
   }
@@ -1264,6 +1266,16 @@ void handleStats() {
   doc["sd_health_interval"] = healthCheckInterval / 1000;
   String out; serializeJson(doc, out);
   webServer.send(200, "application/json", out);
+}
+
+// ============== STORE CRC AFTER UPLOAD ==============
+void storeFileCRC(String path) {
+  // Compute and save CRC32 to a sidecar file for later integrity verification
+  String crc = getFileCRC32(path);
+  if (crc.length() == 0) return;
+  String crcPath = path + ".crc32";
+  File f = SD.open(crcPath, FILE_WRITE);
+  if (f) { f.print(crc); f.close(); }
 }
 
 // ============== FILE CRC32 INTEGRITY ==============
@@ -1953,7 +1965,7 @@ void setup() {
   webServer.on("/api/move",HTTP_POST,handleMove);
   webServer.on("/api/copy",HTTP_POST,handleCopy);
   webServer.on("/api/upload-auth",HTTP_GET,handleUploadAuth);
-  webServer.on("/api/upload",HTTP_POST,[](){webServer.send(200);},handleUpload);
+  webServer.on("/api/upload",HTTP_POST,[](){if(!checkCsrf(webServer)){webServer.send(403,"text/plain","CSRF invalid");return;}webServer.send(200);},handleUpload);
   webServer.on("/api/share",HTTP_POST,handleCreateShare);
   webServer.on("/api/zip",HTTP_POST,handleZipDownload);
   webServer.on("/api/video",HTTP_GET,handleVideoThumbnail);

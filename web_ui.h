@@ -829,11 +829,11 @@ function uploadSingleFile(item, done) {
     for (let j = 0; j < parts.length - 1; j++) uploadPath += parts[j] + '/';
   }
   fetch('/api/upload-auth', { headers: { 'Authorization': 'Bearer ' + token } }).then(r => r.json()).then(data => {
-  const fd = new FormData();
-  fd.append('file', item.file);
-  fd.append('path', uploadPath);
-  fd.append('csrf', csrfToken); // Include CSRF token for upload
-  const xhr = new XMLHttpRequest();
+    const fd = new FormData();
+    fd.append('file', item.file);
+    fd.append('path', uploadPath);
+    fd.append('csrf', csrfToken); // Include CSRF token for upload
+    const xhr = new XMLHttpRequest();
     xhr.upload.onprogress = e => {
       if (e.lengthComputable) {
         const pct = Math.round(e.loaded / e.total * 100);
