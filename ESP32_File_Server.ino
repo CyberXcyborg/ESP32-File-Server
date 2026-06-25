@@ -133,11 +133,30 @@ void handleReboot() {
 }
 
 // ============== LIST FILES ==============
+// Sanitize path to prevent traversal
+String sanitizePath(String path) {
+  if (path.length() == 0) return "/";
+  // Remove any ".." components
+  while (path.indexOf("..") >= 0) {
+    int pos = path.indexOf("..");
+    int before = path.lastIndexOf('/', pos - 1);
+    if (before < 0) before = 0;
+    int after = path.indexOf('/', pos + 2);
+    if (after < 0) after = path.length();
+    path = path.substring(0, before) + path.substring(after);
+  }
+  // Ensure starts with /
+  if (!path.startsWith("/")) path = "/" + path;
+  // Collapse multiple slashes
+  while (path.indexOf("//") >= 0) path.replace("//", "/");
+  return path;
+}
+
 void handleListFiles() {
   String u, lvl;
   if (!isAuthenticated(webServer, u, lvl)) { webServer.send(401); return; }
   if (!checkSD()) { webServer.send(503, "application/json", "{\"error\":\"SD card not available\"}"); return; }
-  String path = webServer.hasArg("path") ? webServer.arg("path") : "/";
+  String path = sanitizePath(webServer.hasArg("path") ? webServer.arg("path") : "/");
   DynamicJsonDocument doc(16384);
   doc["username"] = u; doc["userLevel"] = lvl;
   JsonObject st = doc.createNestedObject("storage");
@@ -242,6 +261,11 @@ void handleRename() {
   if (!webServer.hasArg("path") || !webServer.hasArg("name")) { sendError(400,"Missing path or name"); return; }
   String path = webServer.arg("path"), newName = webServer.arg("name");
   if (!SD.exists(path)) { sendError(404,"Source file not found"); return; }
+  // Validate new name - prevent path traversal
+  if (newName.indexOf('/') >= 0 || newName.indexOf('\\') >= 0 || newName.length() == 0) {
+    sendError(400,"Invalid file name"); return;
+  }
+  // Create version for files (not directories)
   if (!SD.open(path).isDirectory()) createVersion(path);
   int sl = path.lastIndexOf('/');
   String parent = (sl > 0) ? path.substring(0, sl+1) : "/";
@@ -258,18 +282,8 @@ void handleRename() {
       counter++;
     } while (SD.exists(np) && counter < 1000);
   }
-  if (SD.rename(path, np)) { logActivity("rename", path+" -> "+np, u); webServer.send(200, "application/json", "{\"ok\":true,\"path\":\""+np+"\"}"); }
+  if (SD.rename(path, np)) { logActivity("rename", path+" -> "+np, u); webServer.send(200, "application/json", "{\"ok\":true,\"path\":\""+np+"\"}\"); }
   else sendError(500,"Rename failed");
-}
-  if (!webServer.hasArg("path") || !webServer.hasArg("name")) { webServer.send(400); return; }
-  String path = webServer.arg("path"), newName = webServer.arg("name");
-  if (!SD.exists(path)) { webServer.send(404); return; }
-  if (!SD.open(path).isDirectory()) createVersion(path);
-  int sl = path.lastIndexOf('/');
-  String parent = (sl > 0) ? path.substring(0, sl+1) : "/";
-  String np = parent + newName;
-  if (SD.rename(path, np)) { logActivity("rename", path+" -> "+np, u); webServer.send(200, "text/plain", "OK"); }
-  else webServer.send(500, "text/plain", "Failed");
 }
 
 // ============== MOVE ==============
@@ -309,7 +323,7 @@ void handleUploadAuth() {
   String u, lvl;
   if (!isAuthenticated(webServer, u, lvl)) { webServer.send(401); return; }
   String tok = generateSessionToken();
-  createSession(u+"_upload", lvl);
+  createSession(u, lvl); // use actual username, not u+"_upload"
   webServer.send(200, "application/json", "{\"token\":\""+tok+"\"}");
 }
 
@@ -393,34 +407,7 @@ void handleZipDownload() {
   deserializeJson(doc, webServer.arg("plain"));
   JsonArray paths = doc["paths"];
   if (paths.size() == 0) { webServer.send(400); return; }
-  webServer.setContentLength(CONTENT_LENGTH_UNKNOWN);
-  webServer.send(200, "application/zip", "");
-  uint16_t fc = 0;
-  for (const char* ps : paths) {
-    String p = ps;
-    if (!SD.exists(p)) continue;
-    File f = SD.open(p, FILE_READ);
-    if (!f || f.isDirectory()) { if(f) f.close(); continue; }
-    String name = p.substring(p.lastIndexOf('/')+1);
-    uint32_t sz = f.size();
-    uint32_t crc = 0; uint8_t buf[256];
-    while (f.available()) { int n=f.read(buf,256); for(int i=0;i<n;i++) crc=crc32c(crc,buf[i]); }
-    f.seek(0);
-    uint8_t lh[30] = {0x50,0x4b,0x03,0x04,20,0,20,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0};
-    lh[26]=name.length()&0xFF; lh[27]=(name.length()>>8)&0xFF;
-    webServer.sendContent((char*)lh,30);
-    webServer.sendContent(name);
-    while(f.available()){int n=f.read(buf,256);webServer.sendContent((char*)buf,n);}
-    f.close();
-    uint8_t cdh[46]={0x50,0x4b,0x01,0x02,20,0,20,0,20,0,0,0,0,0,0,0,0,0,0,0,0,0,(uint8_t)(crc&0xFF),(uint8_t)((crc>>8)&0xFF),(uint8_t)((crc>>16)&0xFF),(uint8_t)((crc>>24)&0xFF),(uint8_t)(sz&0xFF),(uint8_t)((sz>>8)&0xFF),(uint8_t)((sz>>16)&0xFF),(uint8_t)((sz>>24)&0xFF),(uint8_t)(sz&0xFF),(uint8_t)((sz>>8)&0xFF),(uint8_t)((sz>>16)&0xFF),(uint8_t)((sz>>24)&0xFF),0,0,0,0,0,0,0,0,0,0,0,0,0,0};
-    cdh[28]=name.length()&0xFF; cdh[29]=(name.length()>>8)&0xFF;
-    webServer.sendContent((char*)cdh,46);
-    webServer.sendContent(name);
-    fc++;
-  }
-  uint8_t eocd[22]={0x50,0x4b,0x05,0x06,0,0,0,0,(uint8_t)(fc&0xFF),(uint8_t)((fc>>8)&0xFF),(uint8_t)(fc&0xFF),(uint8_t)((fc>>8)&0xFF),0,0,0,0,0,0,0,0,0,0};
-  webServer.sendContent((char*)eocd,22);
-  logActivity("zip",String(fc)+" files",u);
+  streamZipFromJsonArray(paths, "zip", u);
 }
 
 // ============== CHANGES ==============
@@ -676,7 +663,7 @@ void handleLogin() {
     String u=webServer.arg("username"),p=webServer.arg("password");String lvl;
     if(authenticateUser(u,p,lvl)){
       String tok=createSession(u,lvl);
-      webServer.sendHeader("Set-Cookie","session_token="+tok+"; Path=/; Max-Age=1800; SameSite=Strict");
+      webServer.sendHeader("Set-Cookie","session_token="+tok+"; Path=/; Max-Age=1800; SameSite=Strict; HttpOnly");
       String r=webServer.hasArg("redirect")?webServer.arg("redirect"):"/";
       webServer.sendHeader("Location",r+"?token="+tok,true);webServer.send(302,"text/plain","");return;
     } else err="Invalid username or password";
@@ -791,7 +778,7 @@ void handleFolderZip() {
   if (!isAuthenticated(webServer, u, lvl)) { webServer.send(401); return; }
   if (!checkSD()) { webServer.send(503); return; }
   if (!webServer.hasArg("path")) { webServer.send(400); return; }
-  String path = webServer.arg("path");
+  String path = sanitizePath(webServer.arg("path"));
   if (!SD.exists(path)) { webServer.send(404); return; }
   File d = SD.open(path);
   if (!d || !d.isDirectory()) { if(d) d.close(); webServer.send(400); return; }
@@ -800,34 +787,12 @@ void handleFolderZip() {
   JsonArray paths = doc.createNestedArray("paths");
   collectFiles(path, paths);
   if (paths.size() == 0) { webServer.send(404, "text/plain", "Folder empty"); return; }
-  webServer.setContentLength(CONTENT_LENGTH_UNKNOWN);
-  webServer.send(200, "application/zip", "");
-  uint16_t fc = 0;
-  for (const char* ps : paths) {
-    String p = ps;
-    if (!SD.exists(p)) continue;
-    File f = SD.open(p, FILE_READ);
-    if (!f || f.isDirectory()) { if(f) f.close(); continue; }
-    String name = p.substring(p.lastIndexOf(/)+1);
-    uint32_t sz = f.size();
-    uint32_t crc = 0; uint8_t buf[256];
-    while (f.available()) { int n=f.read(buf,256); for(int i=0;i<n;i++) crc=crc32c(crc,buf[i]); }
-    f.seek(0);
-    uint8_t lh[30] = {0x50,0x4b,0x03,0x04,20,0,20,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0};
-    lh[26]=name.length()&0xFF; lh[27]=(name.length()>>8)&0xFF;
-    webServer.sendContent((char*)lh,30);
-    webServer.sendContent(name);
-    while(f.available()){int n=f.read(buf,256);webServer.sendContent((char*)buf,n);}
-    f.close();
-    uint8_t cdh[46]={0x50,0x4b,0x01,0x02,20,0,20,0,20,0,0,0,0,0,0,0,0,0,0,0,0,0,(uint8_t)(crc&0xFF),(uint8_t)((crc>>8)&0xFF),(uint8_t)((crc>>16)&0xFF),(uint8_t)((crc>>24)&0xFF),(uint8_t)(sz&0xFF),(uint8_t)((sz>>8)&0xFF),(uint8_t)((sz>>16)&0xFF),(uint8_t)((sz>>24)&0xFF),(uint8_t)(sz&0xFF),(uint8_t)((sz>>8)&0xFF),(uint8_t)((sz>>16)&0xFF),(uint8_t)((sz>>24)&0xFF),0,0,0,0,0,0,0,0,0,0,0,0,0,0};
-    cdh[28]=name.length()&0xFF; cdh[29]=(name.length()>>8)&0xFF;
-    webServer.sendContent((char*)cdh,46);
-    webServer.sendContent(name);
-    fc++;
+  // Normalize paths to absolute
+  for (int i = 0; i < paths.size(); i++) {
+    String p = paths[i].as<String>();
+    if (!p.startsWith("/")) paths[i] = "/" + p;
   }
-  uint8_t eocd[22]={0x50,0x4b,0x05,0x06,0,0,0,0,(uint8_t)(fc&0xFF),(uint8_t)((fc>>8)&0xFF),(uint8_t)(fc&0xFF),(uint8_t)((fc>>8)&0xFF),0,0,0,0,0,0,0,0,0,0};
-  webServer.sendContent((char*)eocd,22);
-  logActivity("folder-zip", path+" ("+String(fc)+" files)", u);
+  streamZipFromJsonArray(paths, "folder-zip: "+path, u);
 }
 
 // ============== AUTO-CLEANUP ==============
