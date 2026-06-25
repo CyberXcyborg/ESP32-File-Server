@@ -300,8 +300,10 @@ void handleDownload() {
   File f = SD.open(path, FILE_READ);
   if (!f) { webServer.send(500); return; }
   String name = path.substring(path.lastIndexOf('/')+1);
+  String ctype = getContentType(name);
   webServer.sendHeader("Content-Disposition", "attachment; filename=\"" + name + "\"");
-  webServer.streamFile(f, "application/octet-stream");
+  webServer.sendHeader("Content-Type", ctype);
+  webServer.streamFile(f, ctype);
   f.close();
   logActivity("download", path, u);
 }
