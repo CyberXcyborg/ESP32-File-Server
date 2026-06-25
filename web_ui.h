@@ -182,6 +182,7 @@ kbd{font-family:monospace;font-size:12px}
       <div class="storage-info" id="storageInfo"></div>
     </div>
     <div class="path-nav" id="pathNav"><span class="path-part">Root</span></div>
+    <div id="fileCountBadge" style="font-size:11px;color:var(--text2);padding:4px 0"></div>
     <div id="infoPanel" class="info-panel">
       <h3>📄 <span id="infoName"></span></h3>
       <div class="info-row"><span class="info-label">Type</span><span id="infoType"></span></div>
@@ -308,6 +309,7 @@ kbd{font-family:monospace;font-size:12px}
   <div class="ctx-item" onclick="ctxMove()">📦 Move</div>
   <div class="ctx-item" onclick="ctxCopy()">📋 Copy</div>
   <div class="ctx-item" onclick="ctxShare()">🔗 Share</div>
+  <div class="ctx-item" onclick="ctxCopyPath()">📋 Copy Path</div>
   <div class="ctx-sep"></div>
   <div class="ctx-item" onclick="ctxDelete()">🗑️ Delete</div>
 </div>
@@ -585,6 +587,7 @@ function renderFiles(){
     </div>`;
   });
   document.getElementById('fileContainer').innerHTML=html;
+  document.getElementById('fileCountBadge').textContent=f.length+' item'+(f.length!==1?'s':'')+(selectedFiles.length>0? ' · '+selectedFiles.length+' selected':'');
   document.querySelectorAll('.file-item').forEach(item=>{
     if(!item.dataset.path)return;
     item.addEventListener('contextmenu',e=>{e.preventDefault();showCtxMenu(e,item);});
@@ -619,6 +622,7 @@ function ctxRename(){showRenameModal(ctxTarget.dataset.path,ctxTarget.dataset.na
 function ctxMove(){showMoveModal(ctxTarget.dataset.path,'move');hideCtxMenu();}
 function ctxCopy(){showMoveModal(ctxTarget.dataset.path,'copy');hideCtxMenu();}
 function ctxShare(){shareFile(ctxTarget.dataset.path);hideCtxMenu();}
+function ctxCopyPath(){navigator.clipboard.writeText(ctxTarget.dataset.path).then(()=>showToast('Path copied!','success')).catch(()=>showToast('Copy failed','error'));hideCtxMenu();}
 function ctxDelete(){deleteItem(ctxTarget.dataset.path,ctxTarget.dataset.name);hideCtxMenu();}
 
 // ============== FILE INFO ==============
