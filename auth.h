@@ -11,6 +11,7 @@ struct Session {
   unsigned long lastActivity;
   bool isActive;
   String userLevel;
+  String csrfToken;  // Per-session CSRF token
 };
 
 Session sessions[MAX_SESSIONS];
@@ -186,6 +187,62 @@ void updateSessionActivity(String token) {
       return;
     }
   }
+}
+
+// Generate a CSRF token tied to the current session
+void generateCsrfForSession(String sessionToken) {
+  const char charset[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+  for (int i = 0; i < MAX_SESSIONS; i++) {
+    if (sessions[i].isActive && sessions[i].token == sessionToken) {
+      // Hash session token + username + salt to derive CSRF token
+      String combined = sessions[i].token + sessions[i].username + "CSRF_ESP32_FILE_SERVER";
+      uint32_t hash1 = 0x811c9dc5u;
+      uint32_t hash2 = 0x01000193u;
+      for (unsigned int j = 0; j < combined.length(); j++) {
+        hash1 ^= combined[j];
+        hash1 *= 0x01000193u;
+        hash2 ^= combined[j] * 2654435761u;
+        hash2 = (hash2 << 13) | (hash2 >> 19);
+      }
+      // Build 16-char CSRF token from hash
+      sessions[i].csrfToken = "";
+      for (int k = 0; k < 4; k++) {
+        uint32_t chunk = (hash1 ^ (k * 0x9E3779B9u)) + hash2;
+        for (int m = 0; m < 4; m++) {
+          sessions[i].csrfToken += charset[(chunk >> (m * 6)) & 0x3F];
+        }
+      }
+      return;
+    }
+  }
+}
+
+// Validate a CSRF token for the current session
+bool validateCsrfToken(String sessionToken, String submittedToken) {
+  for (int i = 0; i < MAX_SESSIONS; i++) {
+    if (sessions[i].isActive && sessions[i].token == sessionToken) {
+      return sessions[i].csrfToken.equals(submittedToken);
+    }
+  }
+  return false;
+}
+
+// Quick CSRF check for WebServer requests — extracts session from cookie, validates csrf arg
+// Allows requests without csrf arg (backward compat for legacy clients)
+bool checkCsrf(WebServer &server) {
+  String sessionTok = "";
+  String csrf = server.hasArg("csrf") ? server.arg("csrf") : "";
+  if (csrf.length() == 0) return true; // no token = legacy, allow
+  if (server.hasHeader("Cookie")) {
+    String cookies = server.header("Cookie");
+    int pos = cookies.indexOf("session_token=");
+    if (pos != -1) {
+      pos += 14;
+      int end = cookies.indexOf(";", pos);
+      sessionTok = (end != -1) ? cookies.substring(pos, end) : cookies.substring(pos);
+    }
+  }
+  return validateCsrfToken(sessionTok, csrf);
 }
 
 #endif

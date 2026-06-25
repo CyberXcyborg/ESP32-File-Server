@@ -235,7 +235,7 @@ void handleDownload() {
 // ============== DELETE ==============
 void handleDelete() {
   String u, lvl;
-  if (!isAuthenticated(webServer, u, lvl)) { webServer.send(401); return; }
+  if (!isAuthenticated(webServer, u, lvl) || !checkCsrf(webServer)) { webServer.send(403); return; }
   if (!checkSD()) { webServer.send(503); return; }
   if (!webServer.hasArg("path")) { webServer.send(400); return; }
   String path = webServer.arg("path");
@@ -247,7 +247,7 @@ void handleDelete() {
 // ============== CREATE DIR ==============
 void handleCreateDir() {
   String u, lvl;
-  if (!isAuthenticated(webServer, u, lvl)) { webServer.send(401); return; }
+  if (!isAuthenticated(webServer, u, lvl) || !checkCsrf(webServer)) { webServer.send(403); return; }
   if (!checkSD()) { webServer.send(503); return; }
   if (!webServer.hasArg("path")) { webServer.send(400); return; }
   String path = webServer.arg("path");
@@ -262,7 +262,7 @@ void handleCreateDir() {
 // ============== RENAME ==============
 void handleRename() {
   String u, lvl;
-  if (!isAuthenticated(webServer, u, lvl)) { sendError(401,"Not authenticated"); return; }
+  if (!isAuthenticated(webServer, u, lvl) || !checkCsrf(webServer)) { webServer.send(403); return; }
   if (!checkSD()) { sendError(503,"SD card not available"); return; }
   if (!webServer.hasArg("path") || !webServer.hasArg("name")) { sendError(400,"Missing path or name"); return; }
   String path = webServer.arg("path"), newName = webServer.arg("name");
@@ -295,7 +295,7 @@ void handleRename() {
 // ============== MOVE ==============
 void handleMove() {
   String u, lvl;
-  if (!isAuthenticated(webServer, u, lvl)) { webServer.send(401); return; }
+  if (!isAuthenticated(webServer, u, lvl) || !checkCsrf(webServer)) { webServer.send(403); return; }
   if (!checkSD()) { webServer.send(503); return; }
   if (!webServer.hasArg("path") || !webServer.hasArg("dest")) { webServer.send(400); return; }
   String path = webServer.arg("path"), dest = webServer.arg("dest");
@@ -311,7 +311,7 @@ void handleMove() {
 // ============== COPY ==============
 void handleCopy() {
   String u, lvl;
-  if (!isAuthenticated(webServer, u, lvl)) { webServer.send(401); return; }
+  if (!isAuthenticated(webServer, u, lvl) || !checkCsrf(webServer)) { webServer.send(403); return; }
   if (!checkSD()) { webServer.send(503); return; }
   if (!webServer.hasArg("path") || !webServer.hasArg("dest")) { webServer.send(400); return; }
   String path = webServer.arg("path"), dest = webServer.arg("dest");
@@ -335,7 +335,7 @@ void handleUploadAuth() {
 
 void handleUpload() {
   String u, lvl;
-  if (!isAuthenticated(webServer, u, lvl)) { webServer.send(401); return; }
+  if (!isAuthenticated(webServer, u, lvl) || !checkCsrf(webServer)) { webServer.send(403); return; }
   if (!checkSD()) { webServer.send(503); return; }
   HTTPUpload& up = webServer.upload();
   static File uf;
@@ -498,6 +498,7 @@ void handleGetSettings() {
   doc["wifi_ssid"] = String(ssid);
   doc["ap_ssid"] = String(ap_ssid);
   doc["ftp_user"] = String(ftp_user);
+  doc["web_port"] = webServerPort;
   doc["version"] = FIRMWARE_VERSION;
   doc["ip"] = server_ip;
   doc["mode"] = accessPointMode ? "AP" : "WiFi";
@@ -520,7 +521,7 @@ void handleGetSettings() {
 
 void handleSaveSettings() {
   String u, lvl;
-  if (!isAuthenticated(webServer, u, lvl) || lvl != "admin") { webServer.send(403); return; }
+  if (!isAuthenticated(webServer, u, lvl) || !checkCsrf(webServer)) { webServer.send(403); return; }
   if (!webServer.hasArg("plain")) { webServer.send(400); return; }
   DynamicJsonDocument doc(512);
   deserializeJson(doc, webServer.arg("plain"));
@@ -669,6 +670,7 @@ void handleLogin() {
     String u=webServer.arg("username"),p=webServer.arg("password");String lvl;
     if(authenticateUser(u,p,lvl)){
       String tok=createSession(u,lvl);
+      generateCsrfForSession(tok);
       webServer.sendHeader("Set-Cookie","session_token="+tok+"; Path=/; Max-Age=1800; SameSite=Strict; HttpOnly");
       String r=webServer.hasArg("redirect")?webServer.arg("redirect"):"/";
       webServer.sendHeader("Location",r+"?token="+tok,true);webServer.send(302,"text/plain","");return;

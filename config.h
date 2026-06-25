@@ -6,6 +6,7 @@ const char* password = "TEST";
 const char* ap_ssid = "ESP32-FileServer";
 const char* ap_password = "fileserver123";
 const uint16_t webServerPort = 80;
+const uint16_t DEFAULT_WEB_PORT = 80;
 const char* ftp_user = "esp32";
 const char* ftp_password = "esp32";
 
