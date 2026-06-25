@@ -75,6 +75,11 @@ uint32_t sectorErrors = 0;
 uint32_t healthCheckInterval = 600000UL; // 10 minutes
 uint32_t totalWriteOps = 0; // Track total write operations for wear estimation
 uint32_t totalWriteBytes = 0; // Total bytes written (wear leveling hint)
+// Predictive failure detection
+uint32_t consecutiveErrors = 0; // Count of sequential check failures
+uint32_t totalErrors = 0; // Lifetime error counter
+unsigned long firstErrorTime = 0; // When errors started
+uint8_t failureRisk = 0; // 0-100% estimated failure risk
 struct HealthLog {
   unsigned long timestamp;
   bool ok;
@@ -215,10 +220,20 @@ void checkSD() {
     healthHistory[healthIndex % 48] = {(unsigned long)(millis() / 1000), ok, (uint32_t)(free / 1024), sectorErrors};
     healthIndex++;
     if (!ok) {
-      sdOK = false;
-      Serial.println("SD health check FAILED");
+      consecutiveErrors++;
+      totalErrors++;
+      if (firstErrorTime == 0) firstErrorTime = millis();
+      // Risk increases with consecutive errors and total error history
+      failureRisk = min(100, (consecutiveErrors * 15) + min(40, totalErrors * 2));
+      sdOK = (consecutiveErrors < 3); // Only mark failed after 3 consecutive misses
+      Serial.println("SD health check FAILED (risk: " + String(failureRisk) + "%)");
     } else {
       sdOK = true;
+      if (consecutiveErrors > 0) consecutiveErrors = 0; // Reset on success
+      // Decay risk slowly on successful checks
+      if (failureRisk > 0 && (millis() - lastHealthCheck > healthCheckInterval * 2)) {
+        failureRisk = max(0, (int)failureRisk - 5);
+      }
     }
   }
 }
@@ -1566,6 +1581,11 @@ void handleSdHealth() {
   doc["total_write_ops"] = totalWriteOps;
   doc["total_write_mb"] = (uint32_t)(totalWriteBytes / 1048576UL);
   doc["wear_percent"] = totalWriteOps > 0 ? min(100, (int)(totalWriteOps / 10000UL)) : 0; // Rough estimate: 10K ops = 1% wear
+  // Predictive failure detection
+  doc["failure_risk"] = failureRisk;
+  doc["consecutive_errors"] = consecutiveErrors;
+  doc["total_errors"] = totalErrors;
+  doc["health_trend"] = consecutiveErrors > 0 ? "degrading" : (failureRisk > 50 ? "warning" : "healthy");
   JsonArray arr = doc.createNestedArray("history");
   for (int i = 0; i < 48 && i < healthIndex; i++) {
     int idx = (healthIndex - 1 - i + 48) % 48;
