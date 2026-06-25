@@ -298,6 +298,7 @@ header h1{font-size:18px;color:var(--primary)}
   <div class="ctx-item" onclick="ctxOpen()">📂 Open</div>
   <div class="ctx-item" onclick="ctxPreview()">👁️ Preview</div>
   <div class="ctx-item" onclick="ctxInfo()">ℹ️ Info</div>
+  <div class="ctx-item" onclick="ctxCRC()">🔢 CRC32</div>
   <div class="ctx-item" onclick="ctxDownload()">⬇️ Download</div>
   <div class="ctx-sep"></div>
   <div class="ctx-item" onclick="ctxRename()">✏️ Rename</div>
@@ -554,6 +555,16 @@ function hideCtxMenu(){document.getElementById('ctxMenu').style.display='none';}
 function ctxOpen(){if(ctxTarget.dataset.type==='dir')loadFiles(ctxTarget.dataset.path);else previewFile(ctxTarget.dataset.path);hideCtxMenu();}
 function ctxPreview(){previewFile(ctxTarget.dataset.path);hideCtxMenu();}
 function ctxInfo(){showFileInfo(ctxTarget.dataset.path);hideCtxMenu();}
+function ctxCRC(){
+  const path=ctxTarget.dataset.path;
+  showToast('Computing CRC32...','info');
+  fetch('/api/crc?path='+encodeURIComponent(path),{headers:{'Authorization':'Bearer '+token}})
+    .then(r=>r.json()).then(d=>{
+      if(d.crc32) showToast('CRC32: '+d.crc32+' | Size: '+(d.size||0)+'B'+(d.stored_crc32?' | '+(d.match?'✅ matches stored':'❌ MISMATCH')':''),'success',8000);
+      else showToast('CRC computation failed','error');
+    }).catch(()=>showToast('Error computing CRC','error'));
+  hideCtxMenu();
+}
 function ctxDownload(){downloadFile(ctxTarget.dataset.path);hideCtxMenu();}
 function ctxRename(){showRenameModal(ctxTarget.dataset.path,ctxTarget.dataset.name);hideCtxMenu();}
 function ctxMove(){showMoveModal(ctxTarget.dataset.path,'move');hideCtxMenu();}
