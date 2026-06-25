@@ -665,6 +665,28 @@ void handleOtaStatus() {
   webServer.send(200, "application/json", out);
 }
 
+// ============== CSRF TOKEN ENDPOINT ==============
+void handleCsrfToken() {
+  String u, lvl;
+  if (!isAuthenticated(webServer, u, lvl)) { webServer.send(401); return; }
+  // Extract session token to find CSRF
+  String tok;
+  if (webServer.hasHeader("Authorization")) {
+    String auth = webServer.header("Authorization");
+    if (auth.startsWith("Bearer ")) tok = auth.substring(7);
+  }
+  if (tok.isEmpty() && webServer.hasHeader("Cookie")) {
+    String cookies = webServer.header("Cookie");
+    int pos = cookies.indexOf("session_token=");
+    if (pos != -1) { pos += 14; int end = cookies.indexOf(";", pos); tok = (end != -1) ? cookies.substring(pos, end) : cookies.substring(pos); }
+  }
+  String csrf = "";
+  for (int i = 0; i < MAX_SESSIONS; i++) {
+    if (sessions[i].isActive && sessions[i].token == tok) { csrf = sessions[i].csrfToken; break; }
+  }
+  webServer.send(200, "application/json", "{\\"csrf\\":\\""+csrf+"\\"}");
+}
+
 // ============== SETTINGS ==============
 void handleGetSettings() {
   String u, lvl;
@@ -1492,6 +1514,7 @@ void setup() {
   webServer.on("/api/log",HTTP_GET,handleGetLog);
   webServer.on("/api/settings",HTTP_GET,handleGetSettings);
   webServer.on("/api/settings",HTTP_POST,handleSaveSettings);
+  webServer.on("/api/csrf",HTTP_GET,handleCsrfToken);
   webServer.on("/api/ota-status",HTTP_GET,handleOtaStatus);
   webServer.on("/api/ota-upload",HTTP_POST,[](){webServer.send(200);},handleOtaUpload);
   webServer.on("/api/reboot",HTTP_POST,handleReboot);

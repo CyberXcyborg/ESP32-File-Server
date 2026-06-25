@@ -372,12 +372,19 @@ header h1{font-size:18px;color:var(--primary)}
 <div class="toast" id="toast"></div>
 
 <script>
-let currentPath='/',files=[],selectedFiles=[],userLevel='user',sortBy='name',sortAsc=true,trashFiles=[],users=[],ctxTarget=null;
+let currentPath='/',files=[],selectedFiles=[],userLevel='user',sortBy='name',sortAsc=true,trashFiles=[],users=[],ctxTarget=null,csrfToken='';
 const token=getToken();
+
+// Fetch CSRF token for this session
+function fetchCsrf(){
+  fetch('/api/csrf',{headers:{'Authorization':'Bearer '+token}})
+    .then(r=>r.json()).then(d=>{if(d.csrf)csrfToken=d.csrf;}).catch(()=>{});
+}
 
 document.addEventListener('DOMContentLoaded',()=>{
   loadTheme();
   initWebSocket();
+  fetchCsrf();
   loadFiles('/');
   const dz=document.getElementById('dropZone');
   dz.addEventListener('dragover',e=>{e.preventDefault();dz.classList.add('dragover');});
@@ -578,19 +585,19 @@ function uploadFiles(fileList,i){
 function createFolder(){
   const name=document.getElementById('folderName').value.trim();
   if(!name){showToast('Enter a folder name','error');return;}
-  fetch('/api/create-dir',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded','Authorization':'Bearer '+token},body:'path='+encodeURIComponent(currentPath+name)})
-    .then(r=>{if(!r.ok)throw new Error();return r.text();})
+  fetch('/api/create-dir',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded','Authorization':'Bearer '+token},body:'path='+encodeURIComponent(currentPath+name)+'&csrf='+encodeURIComponent(csrfToken)})
+    .then(r=>{if(r.status===403){throw new Error('CSRF invalid');}if(!r.ok)throw new Error();return r.text();})
     .then(()=>{showToast('Folder created','success');closeModal('folderModal');loadFiles(currentPath);})
-    .catch(()=>showToast('Failed to create folder','error'));
+    .catch(e=>showToast(e.message==='CSRF invalid'?'Security token expired, refresh':'Failed','error'));
 }
 function showRenameModal(path,name){document.getElementById('renamePath').value=path;document.getElementById('renameInput').value=name;openModal('renameModal');document.getElementById('renameInput').focus();document.getElementById('renameInput').select();}
 function doRename(){
   const path=document.getElementById('renamePath').value;const name=document.getElementById('renameInput').value.trim();
   if(!name){showToast('Enter a name','error');return;}
-  fetch('/api/rename',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded','Authorization':'Bearer '+token},body:'path='+encodeURIComponent(path)+'&name='+encodeURIComponent(name)})
-    .then(r=>{if(!r.ok)throw new Error();return r.text();})
+  fetch('/api/rename',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded','Authorization':'Bearer '+token},body:'path='+encodeURIComponent(path)+'&name='+encodeURIComponent(name)+'&csrf='+encodeURIComponent(csrfToken)})
+    .then(r=>{if(r.status===403){throw new Error('CSRF invalid');}if(!r.ok)throw new Error();return r.text();})
     .then(()=>{showToast('Renamed','success');closeModal('renameModal');loadFiles(currentPath);})
-    .catch(()=>showToast('Failed to rename','error'));
+    .catch(e=>showToast(e.message==='CSRF invalid'?'Security token expired, refresh':'Failed','error'));
 }
 
 // ============== MOVE/COPY ==============
@@ -621,14 +628,13 @@ function selectFolder(el,path){
 function doMoveCopy(){
   const src=document.getElementById('moveSrcPath').value;
   const mode=document.getElementById('moveMode').value;
-  // Get selected destination
   const sel=document.querySelector('.folder-tree-item.selected');
   const dest=sel?sel.dataset.path:'/';
   const endpoint=mode==='move'?'/api/move':'/api/copy';
-  fetch(endpoint,{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded','Authorization':'Bearer '+token},body:'path='+encodeURIComponent(src)+'&dest='+encodeURIComponent(dest)})
-    .then(r=>{if(!r.ok)throw new Error();return r.text();})
+  fetch(endpoint,{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded','Authorization':'Bearer '+token},body:'path='+encodeURIComponent(src)+'&dest='+encodeURIComponent(dest)+'&csrf='+encodeURIComponent(csrfToken)})
+    .then(r=>{if(r.status===403){throw new Error('CSRF invalid');}if(!r.ok)throw new Error();return r.text();})
     .then(()=>{showToast(mode==='move'?'Moved':'Copied','success');closeModal('moveModal');loadFiles(currentPath);})
-    .catch(()=>showToast('Failed to '+mode,'error'));
+    .catch(e=>showToast(e.message==='CSRF invalid'?'Security token expired, refresh':'Failed to '+mode,'error'));}
 }
 
 function previewFile(path){
@@ -646,9 +652,9 @@ function previewFile(path){
 }
 function downloadFile(path){window.location.href='/api/download?path='+encodeURIComponent(path)+'&token='+token;}
 function shareFile(path){
-  fetch('/api/share',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded','Authorization':'Bearer '+token},body:'path='+encodeURIComponent(path)})
+  fetch('/api/share',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded','Authorization':'Bearer '+token},body:'path='+encodeURIComponent(path)+'&csrf='+encodeURIComponent(csrfToken)})
     .then(r=>r.json()).then(data=>{document.getElementById('shareUrl').value=data.url;openModal('shareModal');})
-    .catch(()=>showToast('Failed to create share link','error'));
+    .catch(()=>showToast('Failed to create share link','error'));}
 }
 function copyShareUrl(){const input=document.getElementById('shareUrl');input.select();navigator.clipboard.writeText(input.value);showToast('Link copied!','success');}
 function deleteItem(path,name){
@@ -758,7 +764,7 @@ function saveSettings(){
     ftp_pass:document.getElementById('setFtpPass').value,
     web_port:parseInt(document.getElementById('setWebPort').value)||80
   };
-  fetch('/api/settings',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+token},body:JSON.stringify(body)})
+  fetch('/api/settings',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+token,'X-CSRF-Token':csrfToken},body:JSON.stringify(body)})
     .then(r=>r.json()).then(data=>{
       if(data.reboot){showToast(data.msg,'info');setTimeout(()=>location.reload(),3000);}
       else showToast(data.msg||'Settings saved','success');
