@@ -142,6 +142,8 @@ String createSession(String username, String userLevel) {
   sessions[oldestIndex].lastActivity = currentTime;
   sessions[oldestIndex].isActive = true;
   sessions[oldestIndex].userLevel = userLevel;
+  // Auto-generate CSRF token on session creation
+  generateCsrfForSession(token);
   return token;
 }
 
@@ -254,13 +256,21 @@ bool validateCsrfToken(String sessionToken, String submittedToken) {
   return false;
 }
 
-// Quick CSRF check for WebServer requests — extracts session from cookie, validates csrf arg
-// Allows requests without csrf arg (backward compat for legacy clients)
+// CSRF check for WebServer requests — extracts session from cookie/header, validates csrf arg or header
+// CSRF token can be submitted via POST arg "csrf" or header "X-CSRF-Token"
 bool checkCsrf(WebServer &server) {
   String sessionTok = "";
   String csrf = server.hasArg("csrf") ? server.arg("csrf") : "";
-  if (csrf.length() == 0) return true; // no token = legacy, allow
-  if (server.hasHeader("Cookie")) {
+  if (csrf.length() == 0 && server.hasHeader("X-CSRF-Token")) {
+    csrf = server.header("X-CSRF-Token");
+  }
+  if (csrf.length() == 0) return false; // No CSRF token = reject (mandatory since v5.1)
+  // Extract session from Authorization header or Cookie
+  if (server.hasHeader("Authorization")) {
+    String auth = server.header("Authorization");
+    if (auth.startsWith("Bearer ")) sessionTok = auth.substring(7);
+  }
+  if (sessionTok.length() == 0 && server.hasHeader("Cookie")) {
     String cookies = server.header("Cookie");
     int pos = cookies.indexOf("session_token=");
     if (pos != -1) {
