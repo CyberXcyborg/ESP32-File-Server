@@ -25,6 +25,43 @@ WebServer webServer(webServerPort);
 WebSocketsServer webSocket(81); // WebSocket on port 81
 FtpServer ftpSrv;
 
+// ============== API RATE LIMITER ==============
+// Sliding window rate limiter per IP: max 30 requests per 10 seconds
+struct RateLimit {
+  IPAddress ip;
+  unsigned long windowStart;
+  int count;
+};
+#define MAX_RATE_ENTRIES 20
+#define RATE_WINDOW_MS 10000UL
+#define RATE_MAX_REQUESTS 30
+RateLimit rateLimits[MAX_RATE_ENTRIES];
+int rateLimitCount = 0;
+
+bool checkRateLimit(IPAddress ip) {
+  unsigned long now = millis();
+  // Find or create entry
+  for (int i = 0; i < rateLimitCount; i++) {
+    if (rateLimits[i].ip == ip) {
+      if (now - rateLimits[i].windowStart > RATE_WINDOW_MS) {
+        rateLimits[i].windowStart = now;
+        rateLimits[i].count = 1;
+        return true;
+      }
+      rateLimits[i].count++;
+      return rateLimits[i].count <= RATE_MAX_REQUESTS;
+    }
+  }
+  // New entry
+  if (rateLimitCount < MAX_RATE_ENTRIES) {
+    rateLimits[rateLimitCount].ip = ip;
+    rateLimits[rateLimitCount].windowStart = now;
+    rateLimits[rateLimitCount].count = 1;
+    rateLimitCount++;
+  }
+  return true;
+}
+
 bool wifiConnected = false;
 bool accessPointMode = false;
 String server_ip = "";
@@ -170,6 +207,15 @@ void checkSD() {
 void sendError(int code, String msg) {
   String json = "{"error":""+msg+"","code":"+String(code)+"}";
   webServer.send(code, "application/json", json);
+}
+
+// Rate-limited request wrapper
+bool isRateLimited() {
+  if (!checkRateLimit(webServer.client().remoteIP())) {
+    webServer.send(429, "application/json", "{\"error\":\"Too many requests\",\"retry\":10}");
+    return true;
+  }
+  return false;
 }
 
 // ============== SERVER INFO ==============
@@ -506,6 +552,7 @@ void handleCreateShare() {
 }
 
 void handleSharedFile() {
+  if(isRateLimited()) return;
   String tok = webServer.pathArg(0);
   String path;
   if (!getSharePath(tok, path)) { webServer.send(404, "text/plain", "Invalid link"); return; }
@@ -870,6 +917,7 @@ void handleUserManagementPage() {
 
 // ============== LOGIN/LOGOUT ==============
 void handleLogin() {
+  if(isRateLimited()) return;
   String err="";
   if(webServer.method()==HTTP_POST){
     String u=webServer.arg("username"),p=webServer.arg("password");
@@ -917,9 +965,12 @@ void handleLogout() {
 void handleRoot() {
   String u,lvl;
   if(!isAuthenticated(webServer,u,lvl)){webServer.sendHeader("Location","/login");webServer.send(302);return;}
+  if(isRateLimited()) return;
+  webServer.sendHeader("Cache-Control","no-cache");
   webServer.send(200,"text/html",String(index_html));
 }
 void handleManifest() {
+  webServer.sendHeader("Cache-Control","public, max-age=86400");
   webServer.send(200,"application/manifest+json","{\"name\":\"ESP32 File Server\",\"short_name\":\"ESP32-FS\",\"start_url\":\"/\",\"display\":\"standalone\",\"background_color\":\"#0984e3\",\"theme_color\":\"#0984e3\",\"icons\":[]}");
 }
 
