@@ -381,6 +381,19 @@ void handleDownload() {
   if (!f) { webServer.send(500); return; }
   String name = path.substring(path.lastIndexOf('/')+1);
   String ctype = getContentType(name);
+  // ETag based on file size + modification time for caching
+  unsigned long fsize = f.size();
+  unsigned long fmtime = f.fileTime();
+  String etag = "\"" + String(fsize) + "-" + String(fmtime) + "\"";
+  webServer.sendHeader("ETag", etag);
+  webServer.sendHeader("Cache-Control", "public, max-age=300");
+  // If client sends matching If-None-Match, return 304
+  if (webServer.hasHeader("If-None-Match") && webServer.header("If-None-Match") == etag) {
+    f.close();
+    webServer.send(304, "text/plain", "Not Modified");
+    logActivity("download-304", path, u);
+    return;
+  }
   webServer.sendHeader("Content-Disposition", "attachment; filename=\"" + name + "\"");
   webServer.sendHeader("Content-Type", ctype);
   webServer.streamFile(f, ctype);
