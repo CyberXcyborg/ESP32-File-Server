@@ -462,6 +462,7 @@ function showThemeMenu(){
   m.style.left=Math.min(r.left,window.innerWidth-180)+'px';
   m.style.top=r.bottom+4+'px';
 }
+function getStorageColor(pct){return pct>90?'danger':pct>75?'warning':'ok';}
 function hideThemeMenu(){document.getElementById('themeMenu').style.display='none';}
 function toggleDark(){
   const isDark=document.body.classList.toggle('dark');
@@ -480,6 +481,14 @@ function initWebSocket(){
     try{
       const d=JSON.parse(e.data);
       if(d.event&&d.event!=='pong'&&d.event!=='connected'){
+        // Update storage bar on stats updates
+        if(d.event==='stats-update'&&d.sd_free!==undefined){
+          const pct=Math.min(100,Math.round((d.sd_used/d.sd_total)*100));
+          const bar=document.getElementById('storageBar');
+          if(bar){bar.style.width=pct+'%';bar.className='storage-bar-fill '+getStorageColor(pct);}
+          const lbl=document.getElementById('storageLabel');
+          if(lbl)lbl.textContent=d.sd_free+' KB free';
+        }
         // Auto-refresh on file changes from other sessions
         if(['upload','delete','rename','mkdir','move'].includes(d.event)){
           if(d.path&&d.path.startsWith(currentPath))refreshFiles();

@@ -96,6 +96,20 @@ void broadcastChange(String action, String path) {
   webSocket.broadcastTXT(msg);
 }
 
+// ============== BROADCAST STATS UPDATE ==============
+void broadcastStatsUpdate() {
+  DynamicJsonDocument doc(256);
+  doc["event"] = "stats-update";
+  doc["sd_free"] = (uint32_t)((SD.totalBytes() - SD.usedBytes()) / 1024);
+  doc["sd_used"] = (uint32_t)(SD.usedBytes() / 1024);
+  doc["sd_total"] = (uint32_t)(SD.totalBytes() / 1024);
+  doc["write_ops"] = totalWriteOps;
+  doc["write_mb"] = (uint32_t)(totalWriteBytes / 1048576UL);
+  String msg;
+  serializeJson(doc, msg);
+  webSocket.broadcastTXT(msg);
+}
+
 void onWebSocketEvent(uint8_t num, WStype_t type, uint8_t * payload, size_t length) {
   switch(type) {
     case WStype_DISCONNECTED:
@@ -539,6 +553,8 @@ void handleUpload() {
     totalWriteBytes += up.totalSize;
     logActivity("upload", upp+" ("+String(up.totalSize)+"B)", u);
     broadcastChange("upload", upp);
+    // Broadcast updated storage stats to all clients
+    broadcastStatsUpdate();
   }
 }
 
