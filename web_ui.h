@@ -447,7 +447,7 @@ document.addEventListener('DOMContentLoaded',()=>{
   const dz=document.getElementById('dropZone');
   dz.addEventListener('dragover',e=>{e.preventDefault();dz.classList.add('dragover');});
   dz.addEventListener('dragleave',()=>dz.classList.remove('dragover'));
-  dz.addEventListener('drop',e=>{e.preventDefault();dz.classList.remove('dragover');handleFiles(e.dataTransfer.files);});
+  dz.addEventListener('drop',handleDrop);
   window.onclick=e=>{if(e.target.classList.contains('modal'))e.target.style.display='none';hideCtxMenu();hideThemeMenu();};
   document.getElementById('folderName').addEventListener('keydown',e=>{if(e.key==='Enter')createFolder();});
   // Keyboard shortcuts
@@ -642,32 +642,184 @@ function hideInfoPanel(){document.getElementById('infoPanel').classList.remove('
 // ============== UPLOAD ==============
 function showUploadModal(){document.getElementById('uploadList').innerHTML='';document.getElementById('uploadProgress').style.display='none';document.getElementById('uploadProgressFill').style.width='0%';openModal('uploadModal');}
 function showNewFolderModal(){document.getElementById('folderName').value='';openModal('folderModal');document.getElementById('folderName').focus();}
+// ============== RECURSIVE FOLDER UPLOAD ==============
+// Uses webkitGetAsEntry + createReader for true recursive folder upload
+// Falls back to flat file list if API unsupported
+let uploadQueue = [];
+let uploadCompleted = 0;
+let uploadFailed = 0;
+let uploadTotal = 0;
+let uploadConcurrency = 3;
+let activeUploads = 0;
+
+function handleDrop(e) {
+  e.preventDefault();
+  e.currentTarget.classList.remove('dragover');
+  const items = e.dataTransfer.items;
+  if (items && items.length > 0 && items[0].webkitGetAsEntry) {
+    // True recursive folder upload
+    const entries = [];
+    for (let i = 0; i < items.length; i++) {
+      const entry = items[i].webkitGetAsEntry();
+      if (entry) entries.push(entry);
+    }
+    collectEntries(entries, '');
+  } else {
+    handleFiles(e.dataTransfer.files);
+  }
+}
+
+function collectEntries(entries, prefix) {
+  const list = document.getElementById('uploadList');
+  list.innerHTML = '';
+  uploadQueue = [];
+  uploadCompleted = 0;
+  uploadFailed = 0;
+  const pending = entries.length;
+  let resolved = 0;
+  entries.forEach(entry => {
+    scanEntry(entry, prefix, () => {
+      resolved++;
+      if (resolved >= pending) {
+        startUploadQueue();
+      }
+    });
+  });
+  if (entries.length === 0) {
+    startUploadQueue();
+  }
+}
+
+function scanEntry(entry, prefix, done) {
+  if (entry.isFile) {
+    entry.file(file => {
+      const path = prefix + file.name;
+      uploadQueue.push({ file, path });
+      const id = 'ul-' + path.replace(/[^a-zA-Z0-9]/g, '_');
+      const list = document.getElementById('uploadList');
+      list.innerHTML += `<div style="display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--border);font-size:12px"><span>${path}</span><span id="${id}">⏳</span></div>`;
+      done();
+    }, () => { done(); });
+  } else if (entry.isDirectory) {
+    const dirReader = entry.createReader();
+    const subPrefix = prefix + entry.name + '/';
+    const readAll = () => {
+      dirReader.readEntries(results => {
+        if (results.length === 0) {
+          done();
+          return;
+        }
+        let subDone = 0;
+        results.forEach(child => {
+          scanEntry(child, subPrefix, () => {
+            subDone++;
+            if (subDone >= results.length) {
+              readAll(); // Continue reading (some dirs may have >100 entries)
+            }
+          });
+        });
+      }, () => { done(); });
+    };
+    readAll();
+  } else {
+    done();
+  }
+}
+
 function handleFiles(fileList){
   const list=document.getElementById('uploadList');list.innerHTML='';
+  uploadQueue = [];
+  uploadCompleted = 0;
+  uploadFailed = 0;
   Array.from(fileList).forEach(f=>{
     const name=f.webkitRelativePath||f.name;
-    list.innerHTML+=`<div style="display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--border);font-size:12px"><span>${name}</span><span id="ul-${name.replace(/[^a-zA-Z0-9]/g,'_')}">⏳</span></div>`;
+    uploadQueue.push({ file: f, path: name });
+    const id='ul-'+name.replace(/[^a-zA-Z0-9]/g,'_');
+    list.innerHTML+=`<div style="display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--border);font-size:12px"><span>${name}</span><span id="${id}">⏳</span></div>`;
   });
-  uploadFiles(Array.from(fileList),0);
+  startUploadQueue();
 }
-function uploadFiles(fileList,i){
-  if(i>=fileList.length){showToast('All files uploaded!','success');setTimeout(()=>{closeModal('uploadModal');loadFiles(currentPath);},1500);return;}
-  const file=fileList[i];const name=file.webkitRelativePath||file.name;const id='ul-'+name.replace(/[^a-zA-Z0-9]/g,'_');
-  // Create subdirectories if needed
-  const parts=name.split('/');let uploadPath=currentPath;
-  if(!uploadPath.endsWith('/'))uploadPath+='/';
-  if(parts.length>1){
-    for(let j=0;j<parts.length-1;j++)uploadPath+=parts[j]+'/';
+
+function startUploadQueue() {
+  uploadTotal = uploadQueue.length;
+  uploadCompleted = 0;
+  uploadFailed = 0;
+  if (uploadTotal === 0) { showToast('Nothing to upload','info'); return; }
+  document.getElementById('uploadProgress').style.display='block';
+  activeUploads = 0;
+  // Start initial batch
+  for (let i = 0; i < Math.min(uploadConcurrency, uploadQueue.length); i++) {
+    processNextUpload();
   }
-  fetch('/api/upload-auth',{headers:{'Authorization':'Bearer '+token}}).then(r=>r.json()).then(data=>{
-    const fd=new FormData();fd.append('file',file);fd.append('path',uploadPath);
-    const xhr=new XMLHttpRequest();
-    document.getElementById('uploadProgress').style.display='block';
-    xhr.upload.onprogress=e=>{if(e.lengthComputable)document.getElementById('uploadProgressFill').style.width=(e.loaded/e.total*100)+'%';};
-    xhr.onload=()=>{document.getElementById(id).textContent=xhr.status===200?'✅':'❌';uploadFiles(fileList,i+1);};
-    xhr.onerror=()=>{document.getElementById(id).textContent='❌';uploadFiles(fileList,i+1);};
-    xhr.open('POST','/api/upload?token='+data.token);xhr.send(fd);
-  }).catch(()=>{document.getElementById(id).textContent='❌';uploadFiles(fileList,i+1);});
+}
+
+function processNextUpload() {
+  const idx = uploadCompleted + uploadFailed + activeUploads;
+  if (idx >= uploadTotal) return; // All dispatched
+  if (activeUploads >= uploadConcurrency) return; // At concurrency limit
+  const item = uploadQueue[idx];
+  activeUploads++;
+  uploadSingleFile(item, () => {
+    activeUploads--;
+    // Update overall progress
+    const pct = Math.round((uploadCompleted + uploadFailed) / uploadTotal * 100);
+    document.getElementById('uploadProgressFill').style.width = pct + '%';
+    if (uploadCompleted + uploadFailed >= uploadTotal) {
+      // All done
+      setTimeout(() => {
+        showToast(`Upload complete: ${uploadCompleted} ok, ${uploadFailed} failed`, uploadFailed === 0 ? 'success' : 'info');
+        closeModal('uploadModal');
+        loadFiles(currentPath);
+      }, 500);
+    } else {
+      processNextUpload();
+    }
+  });
+}
+
+function uploadSingleFile(item, done) {
+  const name = item.path;
+  const id = 'ul-' + name.replace(/[^a-zA-Z0-9]/g, '_');
+  // Create subdirectories if needed
+  const parts = name.split('/');
+  let uploadPath = currentPath;
+  if (!uploadPath.endsWith('/')) uploadPath += '/';
+  if (parts.length > 1) {
+    for (let j = 0; j < parts.length - 1; j++) uploadPath += parts[j] + '/';
+  }
+  fetch('/api/upload-auth', { headers: { 'Authorization': 'Bearer ' + token } }).then(r => r.json()).then(data => {
+    const fd = new FormData();
+    fd.append('file', item.file);
+    fd.append('path', uploadPath);
+    const xhr = new XMLHttpRequest();
+    xhr.upload.onprogress = e => {
+      if (e.lengthComputable) {
+        const pct = Math.round(e.loaded / e.total * 100);
+        const el = document.getElementById(id);
+        if (el) el.textContent = pct + '%';
+      }
+    };
+    xhr.onload = () => {
+      const el = document.getElementById(id);
+      if (el) el.textContent = xhr.status === 200 ? '✅' : '❌';
+      if (xhr.status === 200) uploadCompleted++;
+      else uploadFailed++;
+      done();
+    };
+    xhr.onerror = () => {
+      const el = document.getElementById(id);
+      if (el) el.textContent = '❌';
+      uploadFailed++;
+      done();
+    };
+    xhr.open('POST', '/api/upload?token=' + data.token);
+    xhr.send(fd);
+  }).catch(() => {
+    const el = document.getElementById(id);
+    if (el) el.textContent = '❌';
+    uploadFailed++;
+    done();
+  });
 }
 function createFolder(){
   const name=document.getElementById('folderName').value.trim();
