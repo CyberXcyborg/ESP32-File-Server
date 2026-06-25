@@ -533,6 +533,12 @@ function closeModal(id){document.getElementById(id).style.display='none';}
 function showShortcuts(){openModal('shortcutsModal');}
 
 // ============== FILES ==============
+function downloadZip(){
+  // Download current folder as ZIP via /api/folder-zip
+  fetch('/api/folder-zip',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded','Authorization':'Bearer '+token},body:'path='+encodeURIComponent(currentPath)+'&csrf='+encodeURIComponent(csrfToken)})
+    .then(r=>{if(!r.ok)throw new Error();return r.blob();})
+    .then(blob=>{const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='folder.zip';a.click();})
+    .catch(()=>showToast('Failed to create ZIP','error'));}
 function loadFiles(path){
   selectedFiles=[];updateSelBtn();hideInfoPanel();
   fetch('/api/list?path='+encodeURIComponent(path),{headers:{'Authorization':'Bearer '+token}})
