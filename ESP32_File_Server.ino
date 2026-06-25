@@ -605,9 +605,17 @@ void handleSaveSettings() {
   String ws=doc["wifi_ssid"]|String(ssid), wp=doc["wifi_pass"]|String(password);
   String as_=doc["ap_ssid"]|String(ap_ssid), ap=doc["ap_pass"]|String(ap_password);
   String fu=doc["ftp_user"]|String(ftp_user), fp=doc["ftp_pass"]|String(ftp_password);
+  uint16_t newPort = doc["web_port"] | webServerPort;
+  if (newPort < 80 || newPort > 65535) newPort = 80; // Validate
   if (saveSettings(ws,wp,as_,ap,fu,fp)) {
     logActivity("settings","updated",u);
-    webServer.send(200,"application/json","{\"ok\":true,\"msg\":\"Saved. Reboot for WiFi.\"}");
+    if (newPort != webServerPort) {
+      webServer.send(200,"application/json","{\"ok\":true,\"msg\":\"Saved. Rebooting for port change.\",\"reboot\":true}");
+      delay(1500);
+      ESP.restart();
+    } else {
+      webServer.send(200,"application/json","{\"ok\":true,\"msg\":\"Saved.\"}");
+    }
   } else webServer.send(500,"text/plain","Failed");
 }
 

@@ -249,6 +249,12 @@ header h1{font-size:18px;color:var(--primary)}
       <div class="info-row"><span class="info-label">Uptime</span><span id="sysUptime"></span></div>
       <div class="info-row"><span class="info-label">Free Memory</span><span id="sysHeap"></span></div>
     </div>
+    <div class="settings-section">
+      <h3>🌐 Server Settings</h3>
+      <div class="settings-grid">
+        <div class="form-group"><label>Web Server Port</label><input type="number" id="setWebPort" min="80" max="65535" value="80"></div>
+      </div>
+    </div>
     <div style="margin-top:12px">
       <button class="btn" onclick="saveSettings()">💾 Save Settings</button>
       <button class="btn btn-ghost" onclick="loadSettings()">🔄 Refresh</button>
@@ -733,6 +739,7 @@ function loadSettings(){
       document.getElementById('setWifiSsid').value=data.saved_wifi_ssid||data.wifi_ssid||'';
       document.getElementById('setApSsid').value=data.saved_ap_ssid||data.ap_ssid||'';
       document.getElementById('setFtpUser').value=data.ftp_user||'';
+      document.getElementById('setWebPort').value=data.web_port||80;
       document.getElementById('sysVersion').textContent=data.version||'';
       document.getElementById('sysIp').textContent=data.ip||'';
       document.getElementById('sysMode').textContent=data.mode||'';
@@ -748,10 +755,14 @@ function saveSettings(){
     ap_ssid:document.getElementById('setApSsid').value,
     ap_pass:document.getElementById('setApPass').value,
     ftp_user:document.getElementById('setFtpUser').value,
-    ftp_pass:document.getElementById('setFtpPass').value
+    ftp_pass:document.getElementById('setFtpPass').value,
+    web_port:parseInt(document.getElementById('setWebPort').value)||80
   };
   fetch('/api/settings',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+token},body:JSON.stringify(body)})
-    .then(r=>r.json()).then(data=>{showToast(data.msg||'Settings saved','success');})
+    .then(r=>r.json()).then(data=>{
+      if(data.reboot){showToast(data.msg,'info');setTimeout(()=>location.reload(),3000);}
+      else showToast(data.msg||'Settings saved','success');
+    })
     .catch(()=>showToast('Failed to save','error'));
 }
 

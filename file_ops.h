@@ -240,8 +240,11 @@ void loadSettings() {
   if (!f) return;
   DynamicJsonDocument doc(512);
   deserializeJson(doc, f); f.close();
-  // Note: we can't change const char* at runtime, but we store for info
-  // Settings are applied on next boot
+  // Apply web port if saved and valid
+  uint16_t savedPort = doc["web_port"] | 0;
+  if (savedPort >= 80 && savedPort <= 65535) {
+    webServerPort = savedPort;
+  }
 }
 
 bool saveSettings(String wifiSsid, String wifiPass, String apSsid, String apPass, String ftpUser, String ftpPass) {
@@ -252,6 +255,7 @@ bool saveSettings(String wifiSsid, String wifiPass, String apSsid, String apPass
   doc["ap_pass"] = apPass;
   doc["ftp_user"] = ftpUser;
   doc["ftp_pass"] = ftpPass;
+  doc["web_port"] = webServerPort;
   File f = SD.open(SETTINGS_FILE, FILE_WRITE);
   if (!f) return false;
   serializeJson(doc, f); f.close();
