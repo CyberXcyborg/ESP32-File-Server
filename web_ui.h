@@ -170,6 +170,7 @@ kbd{font-family:monospace;font-size:12px}
       <button class="btn" onclick="showUploadModal()">⬆️ Upload</button>
       <button class="btn" onclick="showNewFolderModal()">📁 New Folder</button>
       <button class="btn" onclick="refreshFiles()">🔄 Refresh</button>
+      <button class="btn" onclick="toggleSelectAll()" id="selectAllBtn">☑️ Select All</button>
       <button class="btn" onclick="downloadZip()">📦 Download ZIP</button>
       <button class="btn btn-danger" id="delSelBtn" style="display:none" onclick="deleteSelected()">🗑️ Delete Selected</button>
       <select class="btn btn-ghost" id="sortSelect" onchange="sortFiles()" style="padding:8px 12px">
@@ -597,7 +598,11 @@ function filterFiles(){renderFiles();}
 function setSort(s){if(sortBy===s)sortAsc=!sortAsc;else{sortBy=s;sortAsc=true;}renderFiles();}
 function sortFiles(){const v=document.getElementById('sortSelect').value;const[p,d]=v.split('-');sortBy=p;sortAsc=d==='asc';renderFiles();}
 function toggleSel(item){const path=item.dataset.path;if(selectedFiles.includes(path)){selectedFiles=selectedFiles.filter(f=>f!==path);item.classList.remove('selected');}else{selectedFiles.push(path);item.classList.add('selected');}updateSelBtn();}
-function updateSelBtn(){const b=document.getElementById('delSelBtn');if(selectedFiles.length>0){b.style.display='';b.textContent='🗑️ Delete ('+selectedFiles.length+')';}else b.style.display='none';}
+function updateSelBtn(){const b=document.getElementById('delSelBtn');if(selectedFiles.length>0){b.style.display='';b.textContent='🗑️ Delete ('+selectedFiles.length+')';}else b.style.display='none';const sa=document.getElementById('selectAllBtn');if(sa)sa.textContent=selectedFiles.length===files.length&&files.length>0?'☐ Deselect All':'☑️ Select All';}
+function toggleSelectAll(){
+  if(selectedFiles.length===files.length&&files.length>0){selectedFiles=[];}else{selectedFiles=files.map(f=>f.path);}
+  updateSelBtn();renderFiles();
+}
 function renderPathNav(path){const parts=path.split('/').filter(p=>p);let html='<span class="path-part" onclick="loadFiles(\'/\')">Root</span>',build='/';parts.forEach(p=>{build+=p+'/';html+=`<span class="separator">/</span><span class="path-part" onclick="loadFiles('${build}')">${p}</span>`;});document.getElementById('pathNav').innerHTML=html;}
 function formatSize(b){if(b<1024)return b+' B';if(b<1048576)return(b/1024).toFixed(1)+' KB';if(b<1073741824)return(b/1048576).toFixed(1)+' MB';return(b/1073741824).toFixed(1)+' GB';}
 
