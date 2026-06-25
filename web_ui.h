@@ -15,6 +15,10 @@ const char index_html[] PROGMEM = R"rawliteral(
 <style>
 :root{--bg:#f5f6fa;--card:#fff;--text:#2d3436;--text2:#636e72;--primary:#0984e3;--primary-dark:#0652DD;--danger:#d63031;--success:#00b894;--border:#dfe6e9;--shadow:0 2px 10px rgba(0,0,0,0.08);--radius:8px}
 .dark{--bg:#1a1a2e;--card:#16213e;--text:#e0e0e0;--text2:#a0a0a0;--primary:#74b9ff;--primary-dark:#0984e3;--danger:#ff7675;--success:#55efc4;--border:#2d3748;--shadow:0 2px 10px rgba(0,0,0,0.3)}
+.green{--bg:#e8f5e9;--card:#fff;--text:#1b5e20;--text2:#4caf50;--primary:#2e7d32;--primary-dark:#1b5e20;--danger:#c62828;--success:#43a047;--border:#c8e6c9;--shadow:0 2px 10px rgba(46,125,50,0.1);--radius:8px}
+.purple{--bg:#f3e5f5;--card:#fff;--text:#4a148c;--text2:#7b1fa2;--primary:#6a1b9a;--primary-dark:#4a148c;--danger:#d32f2f;--success:#7b1fa2;--border:#e1bee7;--shadow:0 2px 10px rgba(106,27,154,0.1);--radius:8px}
+.warm{--bg:#fff8e1;--card:#fff;--text:#5d4037;--text2:#8d6e63;--primary:#e65100;--primary-dark:#bf360c;--danger:#d32f2f;--success:#558b2f;--border:#ffe0b2;--shadow:0 2px 10px rgba(230,81,0,0.08);--radius:8px}
+.midnight{--bg:#0d1117;--card:#161b22;--text:#c9d1d9;--text2:#8b949e;--primary:#58a6ff;--primary-dark:#1f6feb;--danger:#f85149;--success:#3fb950;--border:#30363d;--shadow:0 2px 10px rgba(0,0,0,0.4);--radius:8px}
 *{margin:0;padding:0;box-sizing:border-box;font-family:'Segoe UI',system-ui,sans-serif;-webkit-tap-highlight-color:transparent}
 body{background:var(--bg);color:var(--text);transition:background .3s,color .3s;line-height:1.5;overflow-x:hidden}
 .container{max-width:1200px;margin:0 auto;padding:12px}
@@ -132,10 +136,21 @@ header h1{font-size:18px;color:var(--primary)}
     <div class="header-right">
       <span id="userDisplay"></span>
       <div class="search-box">🔍<input type="text" id="searchInput" placeholder="Search..." oninput="filterFiles()"></div>
+      <button class="btn btn-ghost btn-sm" id="themeBtn" onclick="showThemeMenu()" title="Change theme">🎨</button>
       <button class="btn btn-ghost btn-sm" id="darkToggle" onclick="toggleDark()">🌙</button>
       <a href="/logout" class="btn btn-sm">Logout</a>
     </div>
   </header>
+
+  <!-- Theme Menu -->
+  <div class="ctx-menu" id="themeMenu" style="min-width:160px">
+    <div class="ctx-item" onclick="setTheme('')">☀️ Default</div>
+    <div class="ctx-item" onclick="setTheme('dark')">🌙 Dark</div>
+    <div class="ctx-item" onclick="setTheme('green')">🌿 Green</div>
+    <div class="ctx-item" onclick="setTheme('purple')">💜 Purple</div>
+    <div class="ctx-item" onclick="setTheme('warm')">🔥 Warm</div>
+    <div class="ctx-item" onclick="setTheme('midnight')">🌌 Midnight</div>
+  </div>
 
   <div class="nav-tabs">
     <button class="nav-tab active" onclick="switchView('files',this)">📂 Files</button>
@@ -355,17 +370,18 @@ let currentPath='/',files=[],selectedFiles=[],userLevel='user',sortBy='name',sor
 const token=getToken();
 
 document.addEventListener('DOMContentLoaded',()=>{
-  if(localStorage.getItem('dark')==='1'){document.body.classList.add('dark');document.getElementById('darkToggle').textContent='☀️';}
+  loadTheme();
+  initWebSocket();
   loadFiles('/');
   const dz=document.getElementById('dropZone');
   dz.addEventListener('dragover',e=>{e.preventDefault();dz.classList.add('dragover');});
   dz.addEventListener('dragleave',()=>dz.classList.remove('dragover'));
   dz.addEventListener('drop',e=>{e.preventDefault();dz.classList.remove('dragover');handleFiles(e.dataTransfer.files);});
-  window.onclick=e=>{if(e.target.classList.contains('modal'))e.target.style.display='none';hideCtxMenu();};
+  window.onclick=e=>{if(e.target.classList.contains('modal'))e.target.style.display='none';hideCtxMenu();hideThemeMenu();};
   document.getElementById('folderName').addEventListener('keydown',e=>{if(e.key==='Enter')createFolder();});
   // Keyboard shortcuts
   document.addEventListener('keydown',e=>{
-    if(e.key==='Escape'){document.querySelectorAll('.modal').forEach(m=>m.style.display='none');hideCtxMenu();selectedFiles=[];updateSelBtn();renderFiles();}
+    if(e.key==='Escape'){document.querySelectorAll('.modal').forEach(m=>m.style.display='none');hideCtxMenu();hideThemeMenu();selectedFiles=[];updateSelBtn();renderFiles();}
     if(e.key==='Delete'&&selectedFiles.length>0&&document.activeElement.tagName!=='INPUT'){e.preventDefault();deleteSelected();}
     if(e.key==='F2'&&selectedFiles.length===1){e.preventDefault();const f=files.find(x=>x.path===selectedFiles[0]);if(f)showRenameModal(f.path,f.name);}
     if(e.ctrlKey&&e.key==='a'&&document.activeElement.tagName!=='INPUT'){e.preventDefault();selectedFiles=files.map(f=>f.path);updateSelBtn();renderFiles();}
@@ -379,7 +395,52 @@ function getToken(){
   for(let x of c){const[n,v]=x.trim().split('=');if(n==='session_token')return v;}
   return '';
 }
-function toggleDark(){document.body.classList.toggle('dark');const d=document.body.classList.contains('dark');localStorage.setItem('dark',d?'1':'0');document.getElementById('darkToggle').textContent=d?'☀️':'🌙';}
+// ============== THEME SYSTEM ==============
+function setTheme(name){
+  document.body.className=name;
+  localStorage.setItem('theme',name);
+  hideThemeMenu();
+  hideCtxMenu();
+}
+function loadTheme(){
+  const t=localStorage.getItem('theme')||'';
+  document.body.className=t;
+  if(t==='dark')document.getElementById('darkToggle').textContent='☀️';
+}
+function showThemeMenu(){
+  const m=document.getElementById('themeMenu');
+  const btn=document.getElementById('themeBtn');
+  const r=btn.getBoundingClientRect();
+  m.style.display='block';
+  m.style.left=Math.min(r.left,window.innerWidth-180)+'px';
+  m.style.top=r.bottom+4+'px';
+}
+function hideThemeMenu(){document.getElementById('themeMenu').style.display='none';}
+function toggleDark(){
+  const isDark=document.body.classList.toggle('dark');
+  localStorage.setItem('theme',isDark?'dark':'');
+  document.getElementById('darkToggle').textContent=isDark?'☀️':'🌙';
+}
+// ============== WEBSOCKET ==============
+let wsConnected=false;
+function initWebSocket(){
+  const proto=location.protocol==='https:'?'wss':'ws';
+  const ws=new WebSocket(proto+'://'+location.hostname+':81/');
+  ws.onopen=()=>{wsConnected=true;console.log('WS connected');};
+  ws.onclose=()=>{wsConnected=false;setTimeout(initWebSocket,3000);};
+  ws.onerror=()=>{ws.close();};
+  ws.onmessage=(e)=>{
+    try{
+      const d=JSON.parse(e.data);
+      if(d.event&&d.event!=='pong'&&d.event!=='connected'){
+        // Auto-refresh on file changes from other sessions
+        if(['upload','delete','rename','mkdir','move'].includes(d.event)){
+          if(d.path&&d.path.startsWith(currentPath))refreshFiles();
+        }
+      }
+    }catch(err){}
+  };
+}
 function switchView(v,btn){
   document.querySelectorAll('.nav-tab').forEach(t=>t.classList.remove('active'));
   document.querySelectorAll('.view').forEach(t=>t.classList.remove('active'));
