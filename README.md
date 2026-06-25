@@ -1,7 +1,7 @@
 # ESP32 File Server
 
 ![License](https://img.shields.io/github/license/CyberXcyborg/ESP32-File-Server)
-![Version](https://img.shields.io/badge/version-3.3.0-blue)
+![Version](https://img.shields.io/badge/version-4.9.0-blue)
 
 Turn your ESP32 into a powerful file server with a modern web interface.
 
@@ -23,17 +23,24 @@ Turn your ESP32 into a powerful file server with a modern web interface.
 - **WiFi auto-reconnect** — reconnects automatically if connection drops
 - **Remote reboot** — reboot device from web UI
 - **Health check** — public endpoint for monitoring
-- **SD card monitoring** — auto-detect failure, attempt reconnect
-- **Settings page** — change WiFi, AP, FTP settings from web UI
+- **SD card monitoring** — periodic health checks with history
+- **Settings page** — change WiFi, AP, FTP, port settings from web UI
 - **Activity log** — track all operations with timestamp and user
-- **Trash system** — soft delete with restore
-- **Multi-user** — admin/user roles
+- **Trash system** — soft delete with restore and auto-cleanup
+- **Multi-user** — admin/user roles with session management
 - **PWA support** — install as app on phone
-- **Dark mode** — toggle with localStorage
+- **6 themes** — dark, green, purple, warm, midnight + default
 - **FTP server** — standard FTP access
 - **WiFi + AP mode** — connect to network or create hotspot
 - **Responsive UI** — works on desktop, tablet, phone
 - **Fully offline** — no internet/cloud required
+- **WebSocket live updates** — real-time file change notifications
+- **HMAC-SHA256 auth** — hardware-accelerated password hashing
+- **CSRF protection** — token-based form security
+- **Gzip downloads** — compressed transfer for large text files
+- **Video streaming** — range-request support for inline playback
+- **File locking** — prevent concurrent write corruption
+- **Configurable port** — web server port override (default 80)
 
 ## Default Credentials
 
@@ -58,7 +65,9 @@ Turn your ESP32 into a powerful file server with a modern web interface.
 | GET | /health | Health check (public) |
 | GET | /api/list?path=/ | List files |
 | GET | /api/info?path=/file | File info |
-| GET | /api/download?path=/file | Download file |
+|| GET | /api/download?path=/file | Download file (auto content-type) |
+| GET | /api/download-gzip?path=/file | Download with gzip (text >10KB) |
+| GET | /api/video?path=/file | Stream video (range-request support) |
 | DELETE | /api/delete?path=/file | Move to trash |
 | POST | /api/create-dir?path=/dir | Create directory |
 | POST | /api/rename?path=/old&name=new | Rename |
