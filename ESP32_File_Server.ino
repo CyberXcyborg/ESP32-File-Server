@@ -880,6 +880,11 @@ void handleAddUser() {
   DynamicJsonDocument doc(256);deserializeJson(doc,webServer.arg("plain"));
   String nu=doc["username"]|"",np=doc["password"]|"",nl=doc["userLevel"]|"user";
   if(nu.length()==0||np.length()==0){sendError(400,"Bad request");return;}
+  // Password strength: min 6 chars, must contain letter and digit
+  if(np.length()<6){sendError(400,"Password too short (min 6)");return;}
+  bool hasLetter=false,hasDigit=false;
+  for(unsigned int i=0;i<np.length();i++){if(isalpha(np[i]))hasLetter=true;if(isdigit(np[i]))hasDigit=true;}
+  if(!hasLetter||!hasDigit){sendError(400,"Password must contain letters and digits");return;}
   File f=SD.open(USERS_FILE);String c="{\"users\":[]}";if(f){c="";while(f.available())c+=(char)f.read();f.close();}
   DynamicJsonDocument ex(1024);deserializeJson(ex,c);
   JsonObject u2=ex["users"].createNestedObject();u2["username"]=nu;u2["password"]=np;u2["userLevel"]=nl;
@@ -894,7 +899,16 @@ void handleUpdateUser() {
   DynamicJsonDocument doc(256);deserializeJson(doc,webServer.arg("plain"));
   File f=SD.open(USERS_FILE);String c="{\"users\":[]}";if(f){c="";while(f.available())c+=(char)f.read();f.close();}
   DynamicJsonDocument ex(1024);deserializeJson(ex,c);
-  for(JsonObject u:ex["users"]){if(String(u["username"]|"").equals(path)){if(doc["password"]&&strlen(doc["password"])>0)u["password"]=doc["password"];u["userLevel"]=doc["userLevel"]|u["userLevel"];break;}}
+  for(JsonObject u:ex["users"]){if(String(u["username"]|"").equals(path)){
+    if(doc["password"]&&strlen(doc["password"])>0){
+      String np=doc["password"];
+      if(np.length()<6){sendError(400,"Password too short (min 6)");return;}
+      bool hasLetter=false,hasDigit=false;
+      for(unsigned int i=0;i<np.length();i++){if(isalpha(np[i]))hasLetter=true;if(isdigit(np[i]))hasDigit=true;}
+      if(!hasLetter||!hasDigit){sendError(400,"Password must contain letters and digits");return;}
+      u["password"]=np;
+    }
+    u["userLevel"]=doc["userLevel"]|u["userLevel"];break;}}
   f=SD.open(USERS_FILE,FILE_WRITE);if(!f){webServer.send(500);return;}
   serializeJson(ex,f);f.close();webServer.send(200,"text/plain","OK");
 }
