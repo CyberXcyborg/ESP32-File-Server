@@ -765,6 +765,7 @@ void handleGetSettings() {
       if(s["wifi_ssid"]) doc["saved_wifi_ssid"]=s["wifi_ssid"].as<String>();
       if(s["ap_ssid"]) doc["saved_ap_ssid"]=s["ap_ssid"].as<String>();
     }
+    }
   }
   String out; serializeJson(doc, out);
   webServer.send(200, "application/json", out);
