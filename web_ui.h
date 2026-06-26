@@ -894,10 +894,19 @@ function showMoveModal(path,mode){
 function buildFolderTree(){
   const tree=document.getElementById('folderTree');
   tree.innerHTML='<div class="folder-tree-item selected" data-path="/" onclick="selectFolder(this,\'/\')">📁 / (Root)</div>';
-  // Add current subdirectories
-  files.filter(f=>f.type==='dir').forEach(f=>{
-    tree.innerHTML+=`<div class="folder-tree-item" data-path="${f.path}" onclick="selectFolder(this,'${f.path}')">📁 ${f.name}</div>`;
-  });
+  // Recursively scan directories
+  function scanDir(path, depth) {
+    if (depth > 4) return; // Limit depth to avoid SD timeout
+    fetch('/api/list?path='+encodeURIComponent(path),{headers:{'Authorization':'Bearer '+token}})
+      .then(r=>r.json()).then(data=>{
+        (data.files||[]).filter(f=>f.type==='dir').forEach(f=>{
+          const indent='&nbsp;&nbsp;'.repeat(depth);
+          tree.innerHTML+=`<div class="folder-tree-item" data-path="${f.path}" onclick="selectFolder(this,'${f.path}')">${indent}📁 ${f.name}</div>`;
+          scanDir(f.path, depth+1);
+        });
+      }).catch(()=>{});
+  }
+  scanDir(currentPath, 1);
 }
 
 function selectFolder(el,path){

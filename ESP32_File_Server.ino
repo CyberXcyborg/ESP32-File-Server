@@ -545,8 +545,18 @@ void handleCopy() {
 void handleUploadAuth() {
   String u, lvl;
   if (!isAuthenticated(webServer, u, lvl)) { webServer.send(401); return; }
-  String tok = generateSessionToken();
-  createSession(u, lvl); // use actual username, not u+"_upload"
+  // Reuse existing session token for upload (no separate token needed)
+  String tok;
+  if (webServer.hasHeader("Authorization")) {
+    String auth = webServer.header("Authorization");
+    if (auth.startsWith("Bearer ")) tok = auth.substring(7);
+  }
+  if (tok.isEmpty() && webServer.hasHeader("Cookie")) {
+    String cookies = webServer.header("Cookie");
+    int pos = cookies.indexOf("session_token=");
+    if (pos != -1) { pos += 14; int end = cookies.indexOf(";", pos); tok = (end != -1) ? cookies.substring(pos, end) : cookies.substring(pos); }
+  }
+  if (tok.isEmpty()) tok = generateSessionToken(); // Fallback: generate new
   webServer.send(200, "application/json", "{\"token\":\""+tok+"\"}");
 }
 
