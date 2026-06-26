@@ -227,6 +227,7 @@ kbd{font-family:monospace;font-size:12px}
   <div id="trashView" class="view">
     <div class="controls">
       <button class="btn btn-danger" onclick="emptyTrash()">❌ Empty Trash</button>
+      <button class="btn" id="restoreSelBtn" style="display:none" onclick="restoreSelected()">♻️ Restore Selected</button>
       <button class="btn" onclick="loadTrash()">🔄 Refresh</button>
     </div>
     <div class="file-list">
@@ -1073,18 +1074,51 @@ function moveSelected(){
 function refreshFiles(){loadFiles(currentPath);}
 
 // ============== TRASH ==============
+let trashSelectedFiles = [];
 function loadTrash(){
   fetch('/api/trash',{headers:{'Authorization':'Bearer '+token}})
     .then(r=>r.json()).then(data=>{
       trashFiles=data.files||[];
+      trashSelectedFiles=[];
       if(!trashFiles.length){document.getElementById('trashContainer').innerHTML='<div class="empty-msg">🗑️ Trash is empty</div>';return;}
       let html='';
       trashFiles.forEach(f=>{
-        html+=`<div class="file-item"><div class="file-icon">${f.type==='dir'?'📁':'📄'}</div><div class="file-name">${f.name}</div><div class="file-size">${f.type==='dir'?'':formatSize(f.size)}</div><div class="file-actions" style="justify-content:flex-end"><span class="file-action" onclick="restoreItem('${f.path}')">♻️</span><span class="file-action" onclick="permanentDelete('${f.path}','${f.name}')">❌</span></div></div>`;
+        const sel=trashSelectedFiles.includes(f.path);
+        html+=`<div class="file-item${sel?' selected':''}" data-path="${f.path}">
+          <div class="file-icon">${f.type==='dir'?'📁':'📄'}</div>
+          <div class="file-name">${f.name}</div>
+          <div class="file-size">${f.type==='dir'?'':formatSize(f.size)}</div>
+          <div class="file-actions" style="justify-content:flex-end">
+            <span class="file-action" onclick="restoreItem('${f.path}')">♻️</span>
+            <span class="file-action" onclick="toggleTrashSelect(this.closest('.file-item'))" title="Select">☑️</span>
+            <span class="file-action" onclick="permanentDelete('${f.path}','${f.name}')">❌</span>
+          </div>
+        </div>`;
       });
       document.getElementById('trashContainer').innerHTML=html;
+      updateRestoreBtn();
     })
     .catch(()=>{document.getElementById('trashContainer').innerHTML='<div class="empty-msg">Error loading trash</div>';});
+}
+function toggleTrashSelect(el){
+  const path=el.dataset.path;
+  if(trashSelectedFiles.includes(path)){trashSelectedFiles=trashSelectedFiles.filter(f=>f!==path);el.classList.remove('selected');}
+  else{trashSelectedFiles.push(path);el.classList.add('selected');}
+  updateRestoreBtn();
+}
+function updateRestoreBtn(){
+  const b=document.getElementById('restoreSelBtn');
+  if(b)b.style.display=trashSelectedFiles.length>0?'':'none';
+}
+function restoreSelected(){
+  if(!trashSelectedFiles.length)return;
+  fetch('/api/batch-restore',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+token,'X-CSRF-Token':csrfToken},body:JSON.stringify({paths:trashSelectedFiles})})
+    .then(r=>r.json()).then(d=>{
+      if(d.ok>0)showToast('Restored '+d.ok+' item(s)','success');
+      if(d.fail>0)showToast(d.fail+' failed','error');
+      loadTrash();
+    })
+    .catch(()=>showToast('Restore failed','error'));
 }
 function restoreItem(path){
   fetch('/api/restore?path='+encodeURIComponent(path),{headers:{'Authorization':'Bearer '+token}})

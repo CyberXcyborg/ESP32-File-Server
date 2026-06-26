@@ -1142,6 +1142,35 @@ void handleEmptyTrash() {
   logActivity("empty-trash","all",u);broadcastChange("empty-trash","/");webServer.send(200,"text/plain","OK");
 }
 
+// ============== BATCH RESTORE FROM TRASH ==============
+// Restore multiple items from trash in one request
+void handleBatchRestore() {
+  String u, lvl;
+  if (!isAuthenticated(webServer, u, lvl) || !checkCsrf(webServer)) { webServer.send(403); return; }
+  if (!sdOK) { webServer.send(503); return; }
+  if (!webServer.hasArg("plain")) { sendError(400, "Need JSON body"); return; }
+  DynamicJsonDocument doc(4096);
+  if (deserializeJson(doc, webServer.arg("plain"))) { sendError(400, "Invalid JSON"); return; }
+  JsonArray paths = doc["paths"];
+  if (paths.isNull() || paths.size() == 0) { sendError(400, "No paths"); return; }
+  int ok = 0, fail = 0;
+  for (JsonVariant p : paths) {
+    String trashPath = p.as<String>();
+    if (restoreFromTrash(trashPath)) {
+      ok++;
+      logActivity("restore", trashPath, u);
+      broadcastChange("restore", trashPath);
+    } else {
+      fail++;
+    }
+  }
+  DynamicJsonDocument out(256);
+  out["ok"] = ok;
+  out["fail"] = fail;
+  String s; serializeJson(out, s);
+  webServer.send(200, "application/json", s);
+}
+
 // ============== USERS ==============
 void handleGetUsers() {
   String u,lvl;
@@ -2789,6 +2818,7 @@ void setup() {
   webServer.on("/api/dir-info",HTTP_GET,handleDirInfo);
   webServer.on("/api/trash",HTTP_GET,handleTrashList);
   webServer.on("/api/restore",HTTP_GET,handleRestore);
+  webServer.on("/api/batch-restore",HTTP_POST,handleBatchRestore);
   webServer.on("/api/empty-trash",HTTP_GET,handleEmptyTrash);
   webServer.on("/api/log",HTTP_GET,handleGetLog);
   webServer.on("/api/settings",HTTP_GET,handleGetSettings);
