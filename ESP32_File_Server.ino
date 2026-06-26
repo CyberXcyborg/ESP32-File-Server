@@ -1924,6 +1924,92 @@ void handleDetectType() {
   webServer.send(200, "application/json", out);
 }
 
+// ============== FILE PREVIEW WITH LINE NUMBERS ==============
+// Returns file content with HTML line numbers for code viewing
+void handleFilePreviewCode() {
+  String u, lvl;
+  if (!isAuthenticated(webServer, u, lvl)) { webServer.send(401); return; }
+  if (!sdOK) { webServer.send(503); return; }
+  if (!webServer.hasArg("path")) { webServer.send(400); return; }
+  String path = sanitizePath(webServer.arg("path"));
+  if (!SD.exists(path)) { webServer.send(404); return; }
+  File f = SD.open(path, FILE_READ);
+  if (!f) { webServer.send(500); return; }
+  String name = path.substring(path.lastIndexOf('/')+1);
+  String ext = name.substring(name.lastIndexOf('.')+1);
+  ext.toLowerCase();
+  // Code file extensions that get line numbers
+  if (ext != "txt" && ext != "md" && ext != "csv" && ext != "log" && ext != "json" && 
+      ext != "xml" && ext != "html" && ext != "htm" && ext != "css" && ext != "js" &&
+      ext != "ini" && ext != "cfg" && ext != "conf" && ext != "sh" && ext != "py" &&
+      ext != "c" && ext != "cpp" && ext != "h" && ext != "hpp" && ext != "java" &&
+      ext != "php" && ext != "rs" && ext != "go" && ext != "ts" && ext != "sql" &&
+      ext != "yaml" && ext != "yml" && ext != "toml") {
+    webServer.send(403, "application/json", "{\"error\":\"Preview not allowed for this type\"}");
+    f.close();
+    return;
+  }
+  // Limit preview to 64KB
+  size_t maxBytes = 65536;
+  size_t fileSize = f.size();
+  size_t toRead = fileSize < maxBytes ? fileSize : maxBytes;
+  String content = "";
+  content.reserve(toRead);
+  uint8_t buf[512];
+  size_t read = 0;
+  while (read < toRead && f.available()) {
+    size_t chunk = toRead - read;
+    if (chunk > 512) chunk = 512;
+    int n = f.read(buf, chunk);
+    if (n <= 0) break;
+    for (int i = 0; i < n; i++) {
+      char c = buf[i];
+      if (c >= 32 && c < 127) content += c;
+      else if (c == '\n') content += '\n';
+      else if (c == '\t') content += '\t';
+      else if (c == '\r') content += '\r';
+      else content += '.';
+    }
+    read += n;
+  }
+  f.close();
+  // Build line-numbered HTML
+  int lineCount = 1;
+  for (int i = 0; i < content.length(); i++) {
+    if (content[i] == '\n') lineCount++;
+  }
+  String html = "<div style='font-family:monospace;font-size:12px;background:var(--bg);border-radius:6px;overflow:auto;max-height:60vh'>";
+  html += "<table style='border-collapse:collapse;width:100%'><tbody>";
+  int lineNum = 1;
+  int start = 0;
+  for (int i = 0; i <= content.length(); i++) {
+    if (i == content.length() || content[i] == '\n') {
+      String lineContent = content.substring(start, i);
+      // HTML escape
+      lineContent.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;");
+      html += "<tr><td style='padding:0 8px;text-align:right;color:var(--text2);user-select:none;border-right:1px solid var(--border);min-width:40px'>" + String(lineNum) + "</td>";
+      html += "<td style='padding:0 8px;white-space:pre'>" + lineContent + "</td></tr>";
+      lineNum++;
+      start = i + 1;
+    }
+  }
+  html += "</tbody></table></div>";
+  if (fileSize > maxBytes) {
+    html += "<p style='color:var(--text2);font-size:12px;margin-top:8px'>⚠️ Preview truncated (showing first 64KB)</p>";
+  }
+  DynamicJsonDocument doc(65536 + 1024);
+  doc["name"] = name;
+  doc["path"] = path;
+  doc["size"] = (uint64_t)fileSize;
+  doc["sizeFormatted"] = getFileSize((uint64_t)fileSize);
+  doc["truncated"] = fileSize > maxBytes;
+  doc["lineCount"] = lineNum - 1;
+  doc["html"] = html;
+  String out; serializeJson(doc, out);
+  webServer.send(200, "application/json", out);
+  logActivity("preview-code", path, u);
+}
+
 void handleFilePreview() {
   String u, lvl;
   if (!isAuthenticated(webServer, u, lvl)) { webServer.send(401); return; }
@@ -2476,6 +2562,7 @@ void setup() {
   webServer.on("/api/duplicates",HTTP_GET,handleFindDuplicates);
   webServer.on("/api/recent",HTTP_GET,handleRecentFiles);
   webServer.on("/api/preview",HTTP_GET,handleFilePreview);
+  webServer.on("/api/preview-code",HTTP_GET,handleFilePreviewCode);
   webServer.on("/api/md-preview",HTTP_GET,handleMarkdownPreview);
   webServer.on("/api/users",HTTP_GET,handleGetUsers);
   webServer.on("/api/users",HTTP_POST,handleAddUser);
