@@ -394,6 +394,63 @@ void releaseFileLock(String path) {
   if (SD.exists(lockPath)) SD.remove(lockPath);
 }
 
+// ============== MAGIC BYTE FILE TYPE DETECTION ==============
+// Detect file type by content (first bytes) for more reliable identification
+String detectFileTypeByContent(String path) {
+  File f = SD.open(path, FILE_READ);
+  if (!f || f.size() < 4) { if (f) f.close(); return "unknown"; }
+  uint8_t header[16];
+  int n = f.read(header, 16);
+  f.close();
+  if (n < 4) return "unknown";
+  
+  // Images
+  if (header[0] == 0xFF && header[1] == 0xD8 && header[2] == 0xFF) return "image/jpeg";
+  if (header[0] == 0x89 && header[1] == 0x50 && header[2] == 0x4E && header[3] == 0x47) return "image/png";
+  if (header[0] == 0x47 && header[1] == 0x49 && header[2] == 0x46 && header[3] == 0x38) return "image/gif";
+  if (header[0] == 0x42 && header[1] == 0x4D) return "image/bmp";
+  if (n >= 12 && header[0] == 0x52 && header[1] == 0x49 && header[2] == 0x46 && header[3] == 0x46 &&
+      header[8] == 0x57 && header[9] == 0x45 && header[10] == 0x42 && header[11] == 0x50) return "image/webp";
+  
+  // Video
+  if (n >= 12 && header[4] == 0x66 && header[5] == 0x74 && header[6] == 0x79 && header[7] == 0x70) {
+    if (header[8] == 0x6D && header[9] == 0x70 && header[10] == 0x34) return "video/mp4";
+    if (header[8] == 0x61 && header[9] == 0x76 && header[10] == 0x69) return "video/avi";
+    if (header[8] == 0x4D && header[9] == 0x34 && header[10] == 0x56) return "video/mp4";
+  }
+  if (header[0] == 0x1A && header[1] == 0x45 && header[2] == 0xDF && header[3] == 0xA3) return "video/webm";
+  
+  // Audio
+  if (header[0] == 0x49 && header[1] == 0x44 && header[2] == 0x33) return "audio/mpeg";
+  if (n >= 12 && header[0] == 0x52 && header[1] == 0x49 && header[2] == 0x46 && header[3] == 0x46 &&
+      header[8] == 0x57 && header[9] == 0x41 && header[10] == 0x56 && header[11] == 0x45) return "audio/wav";
+  if (header[0] == 0x4F && header[1] == 0x67 && header[2] == 0x67 && header[3] == 0x53) return "audio/ogg";
+  
+  // Archives
+  if (header[0] == 0x50 && header[1] == 0x4B && header[2] == 0x03 && header[3] == 0x04) return "application/zip";
+  if (header[0] == 0x1F && header[1] == 0x8B) return "application/gzip";
+  if (header[0] == 0x52 && header[1] == 0x61 && header[2] == 0x72 && header[3] == 0x21) return "application/rar";
+  if (header[0] == 0x37 && header[1] == 0x7A && header[2] == 0xBC && header[3] == 0xAF) return "application/7z";
+  
+  // PDF
+  if (header[0] == 0x25 && header[1] == 0x50 && header[2] == 0x44 && header[3] == 0x46) return "application/pdf";
+  
+  // Executables
+  if (header[0] == 0x4D && header[1] == 0x5A) return "application/x-exe";  // PE/EXE
+  if (header[0] == 0x7F && header[1] == 0x45 && header[2] == 0x4C && header[3] == 0x46) return "application/x-elf"; // ELF
+  
+  // Text-based detection (check if all bytes are printable/whitespace)
+  bool isText = true;
+  for (int i = 0; i < n && i < 512; i++) {
+    if (header[i] < 32 && header[i] != '\n' && header[i] != '\r' && header[i] != '\t') {
+      isText = false; break;
+    }
+  }
+  if (isText) return "text/plain";
+  
+  return "application/octet-stream";
+}
+
 // ============== ICONS & HELPERS ==============
 String getFileIcon(String fileName) {
   String ext = fileName.substring(fileName.lastIndexOf('.') + 1);
