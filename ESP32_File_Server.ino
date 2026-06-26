@@ -451,7 +451,11 @@ void handleDelete() {
   if (!webServer.hasArg("path")) { webServer.send(400); return; }
   String path = webServer.arg("path");
   if (!SD.exists(path)) { webServer.send(404); return; }
-  if (moveToTrash(path)) { logActivity("delete", path, u); broadcastChange("delete", path); webServer.send(200, "text/plain", "Moved to trash"); }
+  // Acquire lock to prevent concurrent deletion corruption
+  if (!acquireFileLock(path, 2000)) { webServer.send(423, "text/plain", "File is locked"); return; }
+  bool ok = moveToTrash(path);
+  releaseFileLock(path);
+  if (ok) { logActivity("delete", path, u); broadcastChange("delete", path); webServer.send(200, "text/plain", "Moved to trash"); }
   else webServer.send(500, "text/plain", "Failed");
 }
 
@@ -652,6 +656,18 @@ void handleVideoThumbnail() {
   if (!f) { webServer.send(500); return; }
   String name = path.substring(path.lastIndexOf('/')+1);
   String ctype = getContentType(name);
+  // ETag for caching based on file size + modification time
+  unsigned long fsize = f.size();
+  unsigned long fmtime = f.fileTime();
+  String etag = "\"" + String(fsize) + "-" + String(fmtime) + "\"";
+  webServer.sendHeader("ETag", etag);
+  webServer.sendHeader("Cache-Control", "public, max-age=3600");
+  // If client sends matching If-None-Match, return 304
+  if (webServer.hasHeader("If-None-Match") && webServer.header("If-None-Match") == etag) {
+    f.close();
+    webServer.send(304, "text/plain", "Not Modified");
+    return;
+  }
   // Support range requests for video streaming
   if (webServer.hasHeader("Range")) {
     // Parse range header for partial content
@@ -1167,6 +1183,46 @@ void handleDirInfo() {
   doc["folders"] = countDirsInDir(path);
   doc["size"] = getDirSize(path);
   doc["sizeFormatted"] = getFileSize(getDirSize(path));
+  String out; serializeJson(doc, out);
+  webServer.send(200, "application/json", out);
+}
+
+// ============== SPACE USAGE BREAKDOWN ==============
+// Returns per-subfolder disk usage for analytics dashboard
+void handleSpaceUsage() {
+  String u, lvl;
+  if (!isAuthenticated(webServer, u, lvl)) { webServer.send(401); return; }
+  if (!sdOK) { webServer.send(503); return; }
+  String path = webServer.hasArg("path") ? webServer.arg("path") : "/";
+  DynamicJsonDocument doc(2048);
+  doc["total"] = (uint32_t)(SD.totalBytes() / 1024);
+  doc["used"] = (uint32_t)(SD.usedBytes() / 1024);
+  doc["free"] = (uint32_t)((SD.totalBytes() - SD.usedBytes()) / 1024);
+  JsonArray arr = doc.createNestedArray("breakdown");
+  File dir = SD.open(path);
+  if (!dir || !dir.isDirectory()) { webServer.send(400, "text/plain", "Invalid dir"); return; }
+  File file;
+  while (file = dir.openNextFile()) {
+    String fn = String(file.name());
+    int sl = fn.lastIndexOf('/');
+    String name = (sl >= 0) ? fn.substring(sl+1) : fn;
+    if (file.isDirectory()) {
+      uint64_t sz = getDirSize(fn);
+      JsonObject entry = arr.createNestedObject();
+      entry["name"] = name;
+      entry["size_kb"] = (uint32_t)(sz / 1024);
+      entry["size_fmt"] = getFileSize(sz);
+      entry["is_dir"] = true;
+    } else {
+      JsonObject entry = arr.createNestedObject();
+      entry["name"] = name;
+      entry["size_kb"] = (uint32_t)(file.size() / 1024);
+      entry["size_fmt"] = getFileSize(file.size());
+      entry["is_dir"] = false;
+    }
+    file.close();
+  }
+  dir.close();
   String out; serializeJson(doc, out);
   webServer.send(200, "application/json", out);
 }
@@ -1990,6 +2046,7 @@ void setup() {
   webServer.on("/api/stats",HTTP_GET,handleStats);
   webServer.on("/api/list-filtered",HTTP_GET,handleListFilesFiltered);
   webServer.on("/api/storage",HTTP_GET,handleStorageBreakdown);
+  webServer.on("/api/space-usage",HTTP_GET,handleSpaceUsage);
   webServer.on("/api/favorites",HTTP_GET,handleGetFavorites);
   webServer.on("/api/favorites/toggle",HTTP_POST,handleToggleFavorite);
   webServer.on("/api/sessions",HTTP_GET,handleListSessions);
