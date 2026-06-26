@@ -186,6 +186,7 @@ kbd{font-family:monospace;font-size:12px}
       <button class="btn btn-danger" id="delSelBtn" style="display:none" onclick="deleteSelected()">🗑️ Delete Selected</button>
       <button class="btn" id="copySelBtn" style="display:none" onclick="copySelected()">📋 Copy Selected</button>
       <button class="btn" id="moveSelBtn" style="display:none" onclick="moveSelected()">📦 Move Selected</button>
+      <button class="btn" id="downloadSelBtn" style="display:none" onclick="downloadSelected()">⬇️ Download Selected</button>
       <select class="btn btn-ghost" id="sortSelect" onchange="sortFiles()" style="padding:8px 12px">
         <option value="name-asc">Name ↑</option>
         <option value="name-desc">Name ↓</option>
@@ -592,6 +593,13 @@ function downloadZip(){
     .then(r=>{if(!r.ok)throw new Error();return r.blob();})
     .then(blob=>{const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='folder.zip';a.click();})
     .catch(()=>showToast('Failed to create ZIP','error'));}
+function downloadSelected(){
+  if(selectedFiles.length===0)return;
+  showToast('Creating ZIP...','info');
+  fetch('/api/batch-download',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded','Authorization':'Bearer '+token},body:'plain='+encodeURIComponent(JSON.stringify({paths:selectedFiles}))+'&csrf='+encodeURIComponent(csrfToken)})
+    .then(r=>{if(!r.ok)throw new Error();return r.blob();})
+    .then(blob=>{const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='selected-files.zip';a.click();})
+    .catch(()=>showToast('Failed to create ZIP','error'));}
 function loadFiles(path){
   selectedFiles=[];updateSelBtn();hideInfoPanel();
   document.getElementById('fileContainer').innerHTML='<div class="loading-spinner"></div>';
@@ -686,7 +694,7 @@ function filterFiles(){renderFiles();}
 function setSort(s){if(sortBy===s)sortAsc=!sortAsc;else{sortBy=s;sortAsc=true;}renderFiles();}
 function sortFiles(){const v=document.getElementById('sortSelect').value;const[p,d]=v.split('-');sortBy=p;sortAsc=d==='asc';loadFiles(currentPath);}
 function toggleSel(item){const path=item.dataset.path;if(selectedFiles.includes(path)){selectedFiles=selectedFiles.filter(f=>f!==path);item.classList.remove('selected');}else{selectedFiles.push(path);item.classList.add('selected');}updateSelBtn();}
-function updateSelBtn(){const b=document.getElementById('delSelBtn');const c=document.getElementById('copySelBtn');const m=document.getElementById('moveSelBtn');if(selectedFiles.length>0){b.style.display='';b.textContent='🗑️ Delete ('+selectedFiles.length+')';if(c)c.style.display='';if(m)m.style.display='';}else{b.style.display='none';if(c)c.style.display='none';if(m)m.style.display='none';}const sa=document.getElementById('selectAllBtn');if(sa)sa.textContent=selectedFiles.length===files.length&&files.length>0?'☐ Deselect All':'☑️ Select All';}
+function updateSelBtn(){const b=document.getElementById('delSelBtn');const c=document.getElementById('copySelBtn');const m=document.getElementById('moveSelBtn');const d=document.getElementById('downloadSelBtn');if(selectedFiles.length>0){b.style.display='';b.textContent='🗑️ Delete ('+selectedFiles.length+')';if(c)c.style.display='';if(m)m.style.display='';if(d)d.style.display='';}else{b.style.display='none';if(c)c.style.display='none';if(m)m.style.display='none';if(d)d.style.display='none';}const sa=document.getElementById('selectAllBtn');if(sa)sa.textContent=selectedFiles.length===files.length&&files.length>0?'☐ Deselect All':'☑️ Select All';}
 function toggleSelectAll(){
   if(selectedFiles.length===files.length&&files.length>0){selectedFiles=[];}else{selectedFiles=files.map(f=>f.path);}
   updateSelBtn();renderFiles();
