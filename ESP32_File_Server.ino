@@ -2418,6 +2418,7 @@ void handleListFilesFiltered() {
 void handleStorageBreakdown() {
   String u, lvl;
   if (!isAuthenticated(webServer, u, lvl)) { sendError(401,"Not authenticated"); return; }
+  if (isRateLimited()) return;
   if (!sdOK) { sendError(503,"SD card not available"); return; }
   DynamicJsonDocument doc(1024);
   doc["total"] = SD.totalBytes();
@@ -2541,7 +2542,7 @@ void handleKillSession() {
 // ============== ERROR STATS ==============
 void handleErrorLogs() {
   String u, lvl;
-  if (!isAuthenticated(webServer, u, lvl)) { sendError(401,"Not authenticated"); return; }
+  if (!isAuthenticated(webServer, u, lvl) || lvl != "admin") { sendError(403,"Admin only"); return; }
   String since = webServer.hasArg("since") ? webServer.arg("since") : "10";
   int sinceCount = since.toInt();
   DynamicJsonDocument doc(4096);
