@@ -521,7 +521,7 @@ void handleMove() {
   File dd = SD.open(dest);
   if (dd && dd.isDirectory()) { String n = path.substring(path.lastIndexOf('/')+1); dp = dest + (dest.endsWith("/")?"":"/") + n; dd.close(); }
   else dp = dest;
-  if (moveFile(path, dp)) { logActivity("move", path+" -> "+dp, u); webServer.send(200, "text/plain", "OK"); }
+  if (moveFile(path, dp)) { logActivity("move", path+" -> "+dp, u); broadcastChange("move", dp); webServer.send(200, "text/plain", "OK"); }
   else webServer.send(500, "text/plain", "Failed");
 }
 
@@ -537,7 +537,7 @@ void handleCopy() {
   File dd = SD.open(dest);
   if (dd && dd.isDirectory()) { String n = path.substring(path.lastIndexOf('/')+1); dp = dest + (dest.endsWith("/")?"":"/") + n; dd.close(); }
   else dp = dest;
-  if (copyFile(path, dp)) { logActivity("copy", path+" -> "+dp, u); webServer.send(200, "text/plain", "OK"); }
+  if (copyFile(path, dp)) { logActivity("copy", path+" -> "+dp, u); broadcastChange("copy", dp); webServer.send(200, "text/plain", "OK"); }
   else webServer.send(500, "text/plain", "Failed");
 }
 
@@ -800,7 +800,11 @@ void handleCsrfToken() {
   for (int i = 0; i < MAX_SESSIONS; i++) {
     if (sessions[i].isActive && sessions[i].token == tok) { csrf = sessions[i].csrfToken; break; }
   }
-  webServer.send(200, "application/json", "{\\"csrf\\":\\""+csrf+"\\"}");
+  DynamicJsonDocument doc(128);
+  doc["csrf"] = csrf;
+  String out;
+  serializeJson(doc, out);
+  webServer.send(200, "application/json", out);
 }
 
 // ============== SETTINGS ==============
@@ -921,7 +925,11 @@ void handleRestore() {
   if(!isAuthenticated(webServer,u,lvl)){webServer.send(401);return;}
   if(!webServer.hasArg("path")){sendError(400,"Bad request");return;}
   String path=webServer.arg("path");
-  if(restoreFromTrash(path)){logActivity("restore",path,u);webServer.send(200,"text/plain","Restored");}
+  if(restoreFromTrash(path)){
+    logActivity("restore",path,u);
+    broadcastChange("restore", path);
+    webServer.send(200,"text/plain","Restored");
+  }
   else webServer.send(500,"text/plain","Failed");
 }
 void handleEmptyTrash() {
@@ -929,7 +937,7 @@ void handleEmptyTrash() {
   if(!isAuthenticated(webServer,u,lvl)){webServer.send(401);return;}
   if(webServer.hasArg("path")){String path=webServer.arg("path");if(SD.exists(path)){File f=SD.open(path);if(f.isDirectory())removeDir(path);else SD.remove(path);f.close();}}
   else{if(SD.exists(TRASH_FOLDER)){removeDir(TRASH_FOLDER);SD.mkdir(TRASH_FOLDER);}}
-  logActivity("empty-trash","all",u);webServer.send(200,"text/plain","OK");
+  logActivity("empty-trash","all",u);broadcastChange("empty-trash","/");webServer.send(200,"text/plain","OK");
 }
 
 // ============== USERS ==============
@@ -1095,7 +1103,7 @@ void handleBatchMove() {
     File dd = SD.open(dest);
     if (dd && dd.isDirectory()) { String n = p.substring(p.lastIndexOf('/')+1); dp = dest + (dest.endsWith("/")?"":"/") + n; dd.close(); }
     else dp = dest;
-    if (moveFile(p, dp)) { ok++; logActivity("batch-move", p+" -> "+dp, u); }
+    if (moveFile(p, dp)) { ok++; logActivity("batch-move", p+" -> "+dp, u); broadcastChange("move", dp); }
     else fail++;
   }
   webServer.send(200, "application/json", "{\"ok\":"+String(ok)+",\"fail\":"+String(fail)+"}");

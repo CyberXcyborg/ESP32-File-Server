@@ -529,7 +529,7 @@ function initWebSocket(){
           if(lbl)lbl.textContent=d.sd_free+' KB free';
         }
         // Auto-refresh on file changes from other sessions
-        if(['upload','delete','rename','mkdir','move'].includes(d.event)){
+        if(['upload','delete','rename','mkdir','move','copy','restore','empty-trash'].includes(d.event)){
           if(d.path&&d.path.startsWith(currentPath))refreshFiles();
         }
       }
