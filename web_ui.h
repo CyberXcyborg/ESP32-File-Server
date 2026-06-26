@@ -479,6 +479,7 @@ document.addEventListener('DOMContentLoaded',()=>{
   initWebSocket();
   fetchCsrf();
   loadFiles('/');
+  initFavorites();
   const dz=document.getElementById('dropZone');
   dz.addEventListener('dragover',e=>{e.preventDefault();dz.classList.add('dragover');});
   dz.addEventListener('dragleave',()=>dz.classList.remove('dragover'));
@@ -656,6 +657,7 @@ function renderFiles(){
       <div class="file-name" onclick="${file.type==='dir'?`loadFiles('${file.path}')`:`previewFile('${file.path}')`}">${file.name}</div>
       <div class="file-size">${file.type==='dir'?'':formatSize(file.size)}</div>
       <div class="file-actions">
+        <span class="file-action" onclick="toggleFavorite('${file.path}',event)" title="Favorite" id="fav-${file.path.replace(/[^a-zA-Z0-9]/g,'_')}">☆</span>
         <span class="file-action" onclick="showRenameModal('${file.path}','${file.name}')" title="Rename (F2)">✏️</span>
         ${file.type!=='dir'?`<span class="file-action" onclick="downloadFile('${file.path}')" title="Download">⬇️</span>`:''}
         <span class="file-action" onclick="deleteItem('${file.path}','${file.name}')" title="Delete (Del)">🗑️</span>
@@ -1035,6 +1037,26 @@ function openRecent(path){
   loadFiles(dir);
 }
 function downloadFile(path){window.location.href='/api/download?path='+encodeURIComponent(path)+'&token='+token;}
+// ============== FAVORITES ==============
+let favorites = JSON.parse(localStorage.getItem('favorites') || '[]');
+function toggleFavorite(path, e){
+  e.stopPropagation();
+  const idx = favorites.indexOf(path);
+  if(idx >= 0){ favorites.splice(idx,1); }
+  else{ favorites.push(path); }
+  localStorage.setItem('favorites', JSON.stringify(favorites));
+  // Update star icon
+  const el = document.getElementById('fav-' + path.replace(/[^a-zA-Z0-9]/g,'_'));
+  if(el) el.textContent = idx >= 0 ? '☆' : '⭐';
+  // Sync to server
+  fetch('/api/favorites/toggle',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded','Authorization':'Bearer '+token},body:'path='+encodeURIComponent(path)+'&csrf='+encodeURIComponent(csrfToken)}).catch(()=>{});
+}
+function initFavorites(){
+  favorites.forEach(p=>{
+    const el = document.getElementById('fav-' + p.replace(/[^a-zA-Z0-9]/g,'_'));
+    if(el) el.textContent = '⭐';
+  });
+}
 function shareFile(path){
   fetch('/api/share',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded','Authorization':'Bearer '+token},body:'path='+encodeURIComponent(path)+'&csrf='+encodeURIComponent(csrfToken)})
     .then(r=>r.json()).then(data=>{document.getElementById('shareUrl').value=data.url;document.getElementById('shareExpiry').textContent=data.expires||'24h';openModal('shareModal');})
