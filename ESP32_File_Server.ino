@@ -807,6 +807,126 @@ uint32_t crc32c(uint32_t crc, uint8_t val) {
   return crc;
 }
 
+// Stream a ZIP archive from a JSON array of file paths
+// Uses miniz to compress files on-the-fly and stream to client
+void streamZipFromJsonArray(JsonArray &paths, String label, String &username) {
+  if (paths.size() == 0) return;
+  // Parse paths into a local array
+  String filePaths[100];
+  int fileCount = min((int)paths.size(), 100);
+  for (int i = 0; i < fileCount; i++) {
+    filePaths[i] = paths[i].as<String>();
+    if (!filePaths[i].startsWith("/")) filePaths[i] = "/" + filePaths[i];
+  }
+  // Build ZIP using miniz
+  webServer.setContentLength(CONTENT_LENGTH_UNKNOWN);
+  webServer.send(200, "application/zip", "");
+  tdefl_compressor comp;
+  tdefl_status status = tdefl_init(&comp, NULL, NULL, TDEFL_DEFAULT_MAX_PROBES);
+  if (status != TDEFL_STATUS_OKAY) { webServer.sendContent(""); return; }
+  // Write ZIP end-of-central-directory record placeholder
+  // We'll use a simple approach: write each file as a stored (uncompressed) entry
+  struct ZipEntry {
+    String name;
+    uint32_t crc;
+    uint32_t size;
+  };
+  ZipEntry entries[100];
+  // Compute CRC and sizes first
+  for (int i = 0; i < fileCount; i++) {
+    entries[i].name = filePaths[i].substring(1); // Remove leading /
+    File f = SD.open(filePaths[i], FILE_READ);
+    if (!f) { fileCount--; i--; continue; }
+    entries[i].size = f.size();
+    uint32_t crc = 0xFFFFFFFF;
+    uint8_t buf[256];
+    while (f.available()) {
+      int n = f.read(buf, 256);
+      for (int j = 0; j < n; j++) {
+        crc ^= buf[j];
+        for (int k = 0; k < 8; k++) crc = (crc >> 1) ^ (0xEDB88320 & (-(crc & 1)));
+      }
+    }
+    entries[i].crc = crc ^ 0xFFFFFFFF;
+    f.close();
+  }
+  // Write local file headers + data
+  uint32_t centralDirOffset = 0;
+  for (int i = 0; i < fileCount; i++) {
+    // Local file header (stored, no compression for speed)
+    uint8_t lh[30];
+    memset(lh, 0, 30);
+    lh[0] = 0x50; lh[1] = 0x4B; lh[2] = 0x03; lh[3] = 0x04; // Signature
+    lh[4] = 20; lh[5] = 0; // Version needed
+    lh[6] = 0; lh[7] = 0; // Flags (none)
+    lh[8] = 0; lh[9] = 0; // Compression (stored)
+    // Mod time/date (zero)
+    uint32_t sz = entries[i].size;
+    uint16_t nameLen = entries[i].name.length();
+    lh[26] = nameLen & 0xFF; lh[27] = (nameLen >> 8) & 0xFF;
+    lh[28] = 0; lh[29] = 0; // Extra field length
+    // Send local header
+    webServer.sendContent((const char*)lh, 30);
+    // Send filename
+    webServer.sendContent(entries[i].name.c_str(), nameLen);
+    centralDirOffset += 30 + nameLen;
+    // Send file data (stored)
+    File f = SD.open(filePaths[i], FILE_READ);
+    if (f) {
+      uint8_t buf[512];
+      while (f.available()) {
+        int n = f.read(buf, 512);
+        webServer.sendContent((const char*)buf, n);
+      }
+      f.close();
+      centralDirOffset += sz;
+    }
+  }
+  // Write central directory
+  uint32_t cdSize = 0;
+  for (int i = 0; i < fileCount; i++) {
+    uint8_t ch[46];
+    memset(ch, 0, 46);
+    ch[0] = 0x50; ch[1] = 0x4B; ch[2] = 0x01; ch[3] = 0x02; // Signature
+    ch[4] = 20; ch[5] = 0; // Version made by
+    ch[6] = 20; ch[7] = 0; // Version needed
+    ch[8] = 0; ch[9] = 0; // Flags
+    ch[10] = 0; ch[11] = 0; // Compression (stored)
+    uint16_t nameLen = entries[i].name.length();
+    ch[28] = nameLen & 0xFF; ch[29] = (nameLen >> 8) & 0xFF;
+    ch[30] = 0; ch[31] = 0; // Extra field
+    ch[32] = 0; ch[33] = 0; // Comment
+    ch[34] = 0; ch[35] = 0; // Disk number
+    ch[36] = 0; ch[37] = 0; // Internal attrs
+    ch[38] = 0; ch[39] = 0; ch[40] = 0; ch[41] = 0; // External attrs
+    uint32_t localHdrOffset = 0;
+    for (int j = 0; j < i; j++) {
+      localHdrOffset += 30 + entries[j].name.length() + entries[j].size;
+    }
+    ch[42] = localHdrOffset & 0xFF; ch[43] = (localHdrOffset >> 8) & 0xFF;
+    ch[44] = (localHdrOffset >> 16) & 0xFF; ch[45] = (localHdrOffset >> 24) & 0xFF;
+    webServer.sendContent((const char*)ch, 46);
+    webServer.sendContent(entries[i].name.c_str(), nameLen);
+    cdSize += 46 + nameLen;
+  }
+  // End of central directory
+  uint8_t eocd[22];
+  memset(eocd, 0, 22);
+  eocd[0] = 0x50; eocd[1] = 0x4B; eocd[2] = 0x05; eocd[3] = 0x06;
+  eocd[4] = 0; eocd[5] = 0; // Disk number
+  eocd[6] = 0; eocd[7] = 0; // CD disk
+  eocd[8] = fileCount & 0xFF; eocd[9] = (fileCount >> 8) & 0xFF;
+  eocd[10] = fileCount & 0xFF; eocd[11] = (fileCount >> 8) & 0xFF;
+  eocd[12] = cdSize & 0xFF; eocd[13] = (cdSize >> 8) & 0xFF;
+  eocd[14] = (cdSize >> 16) & 0xFF; eocd[15] = (cdSize >> 24) & 0xFF;
+  eocd[16] = centralDirOffset & 0xFF; eocd[17] = (centralDirOffset >> 8) & 0xFF;
+  eocd[18] = (centralDirOffset >> 16) & 0xFF; eocd[19] = (centralDirOffset >> 24) & 0xFF;
+  eocd[20] = 0; eocd[21] = 0; // Comment length
+  webServer.sendContent((const char*)eocd, 22);
+  webServer.sendContent("");
+  logActivity("zip", label + " (" + String(fileCount) + " files)", username);
+}
+
 void handleZipDownload() {
   String u, lvl;
   if (!isAuthenticated(webServer, u, lvl)) { webServer.send(401); return; }
@@ -817,6 +937,22 @@ void handleZipDownload() {
   JsonArray paths = doc["paths"];
   if (paths.size() == 0) { webServer.send(400); return; }
   streamZipFromJsonArray(paths, "zip", u);
+}
+
+// ============== BATCH DOWNLOAD SELECTED ==============
+// Accepts JSON {paths: [...]} and streams a ZIP of those files
+void handleBatchDownload() {
+  String u, lvl;
+  if (!isAuthenticated(webServer, u, lvl)) { webServer.send(401); return; }
+  if (!checkCsrf(webServer)) { webServer.send(403); return; }
+  if (!sdOK) { webServer.send(503); return; }
+  if (!webServer.hasArg("plain")) { webServer.send(400); return; }
+  DynamicJsonDocument doc(4096);
+  if (deserializeJson(doc, webServer.arg("plain"))) { webServer.send(400); return; }
+  JsonArray paths = doc["paths"];
+  if (paths.size() == 0) { webServer.send(400, "text/plain", "No files selected"); return; }
+  if (paths.size() > 100) { webServer.send(400, "text/plain", "Max 100 files"); return; }
+  streamZipFromJsonArray(paths, "batch-download", u);
 }
 
 // ============== VIDEO THUMBNAIL / STREAM ==============
@@ -2807,6 +2943,7 @@ void setup() {
   webServer.on("/api/upload",HTTP_POST,[](){if(!checkCsrf(webServer)){webServer.send(403,"text/plain","CSRF invalid");return;}webServer.send(200);},handleUpload);
   webServer.on("/api/share",HTTP_POST,handleCreateShare);
   webServer.on("/api/zip",HTTP_POST,handleZipDownload);
+  webServer.on("/api/batch-download",HTTP_POST,handleBatchDownload);
   webServer.on("/api/video",HTTP_GET,handleVideoThumbnail);
   webServer.on("/api/batch-delete",HTTP_POST,handleBatchDelete);
   webServer.on("/api/batch-move",HTTP_POST,handleBatchMove);
