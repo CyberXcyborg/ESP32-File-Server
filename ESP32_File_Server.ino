@@ -238,7 +238,15 @@ void checkSD() {
   }
 }
 
+void sendSecurityHeaders() {
+  webServer.sendHeader("X-Content-Type-Options", "nosniff");
+  webServer.sendHeader("X-Frame-Options", "DENY");
+  webServer.sendHeader("X-XSS-Protection", "1; mode=block");
+  webServer.sendHeader("Referrer-Policy", "no-referrer");
+}
+
 void sendError(int code, String msg) {
+  sendSecurityHeaders();
   String json = "{"error":""+msg+"","code":"+String(code)+"}";
   webServer.send(code, "application/json", json);
 }
@@ -2090,6 +2098,12 @@ void setup() {
   webServer.on("/api/users/",HTTP_PUT,handleUpdateUser);
   webServer.on("/api/users/",HTTP_DELETE,handleDeleteUser);
 
+  // Add security headers to all responses
+  webServer.onNotFound([](){
+    webServer.sendHeader("X-Content-Type-Options", "nosniff");
+    webServer.sendHeader("X-Frame-Options", "DENY");
+    webServer.send(404, "text/plain", "Not Found");
+  });
   webServer.begin();
   Serial.println("HTTP on "+String(webServerPort));
   webSocket.begin();
