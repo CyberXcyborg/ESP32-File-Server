@@ -277,6 +277,7 @@ void handleServerInfo() {
 // ============== HEALTH CHECK ==============
 void handleHealth() {
   // Public endpoint, no auth needed
+  sendSecurityHeaders();
   DynamicJsonDocument doc(256);
   doc["status"] = "ok";
   doc["version"] = FIRMWARE_VERSION;
@@ -579,10 +580,10 @@ void handleRename() {
   String np = parent + newName;
   // Auto-rename if target exists
   if (SD.exists(np)) {
-    int dot = newName.lastIndexOf('.');
-    String base, ext;
-    if () { base = newName.substring(0, dot); ext = newName.substring(dot); }
-    else { base = newName; ext = ""; }
+  int dot = newName.lastIndexOf('.');
+  String base, ext;
+  if (dot > 0) { base = newName.substring(0, dot); ext = newName.substring(dot); }
+  else { base = newName; ext = ""; }
     int counter = 1;
     do {
       np = parent + base + "_" + String(counter) + ext;
@@ -689,6 +690,7 @@ void handleUpload() {
     storeFileCRC(upp);
     // Broadcast updated storage stats to all clients
     broadcastStatsUpdate();
+    webServer.send(200, "application/json", "{\"ok\":true,\"path\":\""+upp+"\"}");
   }
 }
 
@@ -710,6 +712,7 @@ void handleCreateShare() {
 
 void handleSharedFile() {
   if(isRateLimited()) return;
+  sendSecurityHeaders();
   String tok = webServer.pathArg(0);
   String path;
   if (!getSharePath(tok, path)) { webServer.send(404, "text/plain", "Invalid link"); return; }
