@@ -1323,6 +1323,9 @@ void handleStats() {
   // Add SD health stats
   doc["sd_sector_errors"] = sectorErrors;
   doc["sd_health_interval"] = healthCheckInterval / 1000;
+  doc["sd_wear_pct"] = totalWriteOps > 0 ? min(100, (int)(totalWriteOps / 10000UL)) : 0;
+  doc["sd_write_mb"] = (uint32_t)(totalWriteBytes / 1048576UL);
+  doc["sd_failure_risk"] = failureRisk;
   String out; serializeJson(doc, out);
   webServer.send(200, "application/json", out);
 }
