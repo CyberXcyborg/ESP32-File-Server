@@ -227,6 +227,12 @@ void checkSD() {
       failureRisk = min(100, (consecutiveErrors * 15) + min(40, totalErrors * 2));
       sdOK = (consecutiveErrors < 3); // Only mark failed after 3 consecutive misses
       Serial.println("SD health check FAILED (risk: " + String(failureRisk) + "%)");
+      // Critical: if risk hits 100%, log and attempt graceful restart
+      if (failureRisk >= 100) {
+        Serial.println("CRITICAL: SD card failure imminent, rebooting...");
+        delay(1000);
+        ESP.restart();
+      }
     } else {
       sdOK = true;
       if (consecutiveErrors > 0) consecutiveErrors = 0; // Reset on success
@@ -1214,6 +1220,11 @@ void handleManifest() {
 void handleRobotsTxt() {
   webServer.send(200, "text/plain", "User-agent: *\nDisallow: /\n");
 }
+void handleFavicon() {
+  // Inline 1x1 transparent PNG to avoid 404
+  webServer.sendHeader("Cache-Control", "public, max-age=86400");
+  webServer.send(200, "image/x-icon", "");
+}
 
 // ============== BATCH OPERATIONS ==============
 void handleBatchDelete() {
@@ -2171,6 +2182,7 @@ void setup() {
   webServer.on("/ota",handleOtaPage);
   webServer.on("/manifest.json",handleManifest);
   webServer.on("/robots.txt",handleRobotsTxt);
+  webServer.on("/favicon.ico",handleFavicon);
   webServer.on("/setup",handleSetupPage);
   webServer.on("/api/complete-setup",HTTP_POST,handleCompleteSetup);
   webServer.on("/s/",HTTP_GET,handleSharedFile);
