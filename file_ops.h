@@ -100,14 +100,62 @@ bool moveFile(String src, String dst) {
 }
 
 // ============== GZIP COMPRESSION ==============
-// Compress file data using simple deflate (miniz or manual RLE for ESP32)
-// For large files we use chunked transfer with compression hint
+// True gzip compression using miniz (tdefl) for ESP32
+// Compresses text-based files on-the-fly during download
+#include <miniz.h>
+#include <miniz_zip.h>
+
 bool shouldCompress(String fileName) {
   String ext = fileName.substring(fileName.lastIndexOf('.') + 1);
   ext.toLowerCase();
   // Compress text-based files > 10KB for download
   return ext=="txt"||ext=="html"||ext=="htm"||ext=="css"||ext=="js"||ext=="json"||ext=="xml"||
-         ext=="md"||ext=="csv"||ext=="log"||ext=="svg"||ext=="ini"||ext=="cfg";
+         ext=="md"||ext=="csv"||ext=="log"||ext=="svg"||ext=="ini"||ext=="cfg"||
+         ext=="sh"||ext=="py"||ext=="c"||ext=="cpp"||ext=="h"||ext=="php";
+}
+
+// Compress data buffer into gzip format using miniz deflate
+// Returns compressed size (0 on failure)
+size_t gzipCompress(const uint8_t *src, size_t srcLen, uint8_t *dst, size_t dstCapacity) {
+  // tdefl compression with gzip headers
+  tdefl_compressor comp;
+  size_t compLen = 0;
+  
+  // Initialize compressor with default compression level
+  tdefl_status status = tdefl_init(&comp, NULL, NULL, TDEFL_DEFAULT_MAX_PROBES);
+  if (status != TDEFL_STATUS_OKAY) return 0;
+  
+  // Write gzip header manually (10 bytes)
+  if (dstCapacity < 18) return 18; // Need at least header + trailer
+  dst[0] = 0x1F; dst[1] = 0x8B; // Magic
+  dst[2] = 8; // Deflate method
+  dst[3] = 0; // Flags
+  dst[4] = dst[5] = dst[6] = dst[7] = 0; // MTIME = 0
+  dst[8] = 0; // XFL
+  dst[9] = 255; // OS (unknown)
+  compLen = 10;
+  
+  // Compress data
+  size_t inBytes = srcLen;
+  const uint8_t *inBuf = src;
+  size_t outCapacity = dstCapacity - compLen - 8; // Reserve 8 for trailer
+  
+  status = tdefl_compress(&comp, inBuf, &inBytes, dst + compLen, &outCapacity, TDEFL_FINISH);
+  if (status != TDEFL_STATUS_DONE) return 0;
+  compLen += outCapacity;
+  
+  // Write gzip trailer (CRC32 + original size)
+  uint32_t crc = mz_crc32(MZ_CRC32_INIT, src, srcLen);
+  dst[compLen++] = (uint8_t)(crc & 0xFF);
+  dst[compLen++] = (uint8_t)((crc >> 8) & 0xFF);
+  dst[compLen++] = (uint8_t)((crc >> 16) & 0xFF);
+  dst[compLen++] = (uint8_t)((crc >> 24) & 0xFF);
+  dst[compLen++] = (uint8_t)(srcLen & 0xFF);
+  dst[compLen++] = (uint8_t)((srcLen >> 8) & 0xFF);
+  dst[compLen++] = (uint8_t)((srcLen >> 16) & 0xFF);
+  dst[compLen++] = (uint8_t)((srcLen >> 24) & 0xFF);
+  
+  return compLen;
 }
 
 String getContentType(String fileName) {
