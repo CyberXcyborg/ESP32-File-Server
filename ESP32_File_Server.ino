@@ -1746,6 +1746,144 @@ void handleRecentFiles() {
   delete[] files;
 }
 
+// ============== SIMPLE MARKDOWN TO HTML ==============
+// Minimal markdown rendering for .md preview (headers, bold, italic, code, links, lists)
+String simpleMarkdown(String md) {
+  String html = "";
+  html.reserve(md.length() + 256);
+  bool inCodeBlock = false;
+  bool inList = false;
+  int len = md.length();
+  for (int i = 0; i < len; i++) {
+    // Code block ```
+    if (md[i] == '`' && i+2 < len && md[i+1] == '`' && md[i+2] == '`') {
+      if (inCodeBlock) { html += "</code></pre>"; inCodeBlock = false; }
+      else { html += "<pre><code>"; inCodeBlock = true; }
+      i += 2;
+      continue;
+    }
+    if (inCodeBlock) {
+      if (md[i] == '<') html += "&lt;";
+      else if (md[i] == '>') html += "&gt;";
+      else html += md[i];
+      continue;
+    }
+    // Skip list markers
+    if (md[i] == '-' || md[i] == '*') {
+      if (i == 0 || md[i-1] == '\n') {
+        if (!inList) { html += "<ul>"; inList = true; }
+        html += "<li>";
+        i++; // skip space
+        continue;
+      }
+    }
+    if (inList && md[i] == '\n') {
+      // Check if next line is also a list item
+      if (i+1 < len && md[i+1] != '-' && md[i+1] != '*') {
+        html += "</ul>"; inList = false;
+      }
+    }
+    // Bold **text**
+    if (md[i] == '*' && i+1 < len && md[i+1] == '*') {
+      html += "<strong>";
+      i += 2;
+      while (i+1 < len && !(md[i] == '*' && md[i+1] == '*')) html += md[i++];
+      html += "</strong>";
+      i++; // skip closing *
+      continue;
+    }
+    // Italic *text*
+    if (md[i] == '*') {
+      html += "<em>";
+      i++;
+      while (i < len && md[i] != '*') html += md[i++];
+      html += "</em>";
+      continue;
+    }
+    // Inline code
+    if (md[i] == '`') {
+      html += "<code>";
+      i++;
+      while (i < len && md[i] != '`') {
+        if (md[i] == '<') html += "&lt;";
+        else if (md[i] == '>') html += "&gt;";
+        else html += md[i++];
+      }
+      html += "</code>";
+      continue;
+    }
+    // Links [text](url)
+    if (md[i] == '[') {
+      int close = md.indexOf(']', i);
+      if (close > 0 && close+1 < len && md[close+1] == '(') {
+        int paren = md.indexOf(')', close+2);
+        if (paren > 0) {
+          String text = md.substring(i+1, close);
+          String url = md.substring(close+2, paren);
+          html += "<a href=\"" + url + "\" target=\"_blank\">" + text + "</a>";
+          i = paren;
+          continue;
+        }
+      }
+    }
+    // Escape HTML
+    if (md[i] == '<') html += "&lt;";
+    else if (md[i] == '>') html += "&gt;";
+    else html += md[i];
+  }
+  if (inList) html += "</ul>";
+  if (inCodeBlock) html += "</code></pre>";
+  return html;
+}
+
+// ============== MARKDOWN PREVIEW ENDPOINT ==============
+void handleMarkdownPreview() {
+  String u, lvl;
+  if (!isAuthenticated(webServer, u, lvl)) { webServer.send(401); return; }
+  if (!sdOK) { webServer.send(503); return; }
+  if (!webServer.hasArg("path")) { webServer.send(400); return; }
+  String path = sanitizePath(webServer.arg("path"));
+  if (!SD.exists(path)) { webServer.send(404); return; }
+  File f = SD.open(path, FILE_READ);
+  if (!f) { webServer.send(500); return; }
+  String name = path.substring(path.lastIndexOf('/')+1);
+  String ext = name.substring(name.lastIndexOf('.')+1);
+  ext.toLowerCase();
+  if (ext != "md") { f.close(); webServer.send(400, "text/plain", "Not a markdown file"); return; }
+  // Limit to 64KB
+  size_t toRead = f.size() < 65536 ? f.size() : 65536;
+  String content = "";
+  content.reserve(toRead);
+  uint8_t buf[512];
+  size_t read = 0;
+  while (read < toRead && f.available()) {
+    size_t chunk = toRead - read;
+    if (chunk > 512) chunk = 512;
+    int n = f.read(buf, chunk);
+    if (n <= 0) break;
+    for (int i = 0; i < n; i++) {
+      char c = buf[i];
+      if (c >= 32 && c < 127) content += c;
+      else if (c == '\n') content += '\n';
+      else if (c == '\t') content += '\t';
+      else if (c == '\r') content += '\r';
+      else content += '.';
+    }
+    read += n;
+  }
+  f.close();
+  String html = simpleMarkdown(content);
+  String out = "<!DOCTYPE html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'>";
+  out += "<style>body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;max-width:800px;margin:20px auto;padding:0 16px;line-height:1.6;color:#333}";
+  out += "pre{background:#f4f4f4;padding:12px;border-radius:6px;overflow-x:auto}code{background:#f0f0f0;padding:2px 6px;border-radius:3px;font-size:0.9em}";
+  out += "a{color:#0984e3;text-decoration:none}a:hover{text-decoration:underline}";
+  out += "h1,h2,h3{color:#2d3436}ul{padding-left:24px}</style></head><body>";
+  out += html;
+  out += "</body></html>";
+  webServer.send(200, "text/html", out);
+  logActivity("md-preview", path, u);
+}
+
 // ============== FILE PREVIEW ==============
 void handleFilePreview() {
   String u, lvl;
@@ -2297,6 +2435,7 @@ void setup() {
   webServer.on("/api/duplicates",HTTP_GET,handleFindDuplicates);
   webServer.on("/api/recent",HTTP_GET,handleRecentFiles);
   webServer.on("/api/preview",HTTP_GET,handleFilePreview);
+  webServer.on("/api/md-preview",HTTP_GET,handleMarkdownPreview);
   webServer.on("/api/users",HTTP_GET,handleGetUsers);
   webServer.on("/api/users",HTTP_POST,handleAddUser);
   webServer.on("/api/users/",HTTP_PUT,handleUpdateUser);

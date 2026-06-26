@@ -942,15 +942,22 @@ function previewFile(path){
   else if(type==='audio'){content.innerHTML=`<audio controls src="${path}?token=${token}"></audio>`;}
   else if(type==='video'){content.innerHTML=`<video controls preload="metadata" poster="/api/video?path=${encodeURIComponent(path)}&thumb=1&token=${token}" src="/api/video?path=${encodeURIComponent(path)}&token=${token}"></video>`;}
   else{
-    // Use /api/preview for sanitized text content
-    fetch('/api/preview?path='+encodeURIComponent(path)+'&token='+token).then(r=>r.json()).then(d=>{
-      if(d.error){content.innerHTML=`<p style="color:var(--danger)">${d.error}</p>`;}
-      else{
-        const escaped=d.content.replace(/</g,'&lt;').replace(/>/g,'&gt;');
-        content.innerHTML=`<pre style="white-space:pre-wrap;word-break:break-all;font-family:monospace;font-size:13px;max-height:60vh;overflow:auto">${escaped}</pre>`;
-        if(d.truncated){content.innerHTML+=`<p style="color:var(--text2);font-size:12px;margin-top:8px">⚠️ Preview truncated (showing first 64KB)</p>`;}
-      }
-    }).catch(()=>{content.innerHTML='<p>Cannot preview</p>';});
+    // Use markdown preview for .md files, /api/preview for other text
+    if(ext==='md'){
+      fetch('/api/md-preview?path='+encodeURIComponent(path)+'&token='+token).then(r=>r.text()).then(html=>{
+        content.innerHTML=`<div style="padding:10px;max-height:60vh;overflow:auto">${html}</div>`;
+      }).catch(()=>{content.innerHTML='<p>Cannot preview</p>';});
+    } else {
+      // Use /api/preview for sanitized text content
+      fetch('/api/preview?path='+encodeURIComponent(path)+'&token='+token).then(r=>r.json()).then(d=>{
+        if(d.error){content.innerHTML=`<p style="color:var(--danger)">${d.error}</p>`;}
+        else{
+          const escaped=d.content.replace(/</g,'&lt;').replace(/>/g,'&gt;');
+          content.innerHTML=`<pre style="white-space:pre-wrap;word-break:break-all;font-family:monospace;font-size:13px;max-height:60vh;overflow:auto">${escaped}</pre>`;
+          if(d.truncated){content.innerHTML+=`<p style="color:var(--text2);font-size:12px;margin-top:8px">⚠️ Preview truncated (showing first 64KB)</p>`;}
+        }
+      }).catch(()=>{content.innerHTML='<p>Cannot preview</p>';});
+    }
   }
   openModal('previewModal');
 }
