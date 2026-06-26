@@ -2957,7 +2957,7 @@ void setup() {
   webServer.on("/api/info",HTTP_GET,handleFileInfo);
   webServer.on("/api/download",HTTP_GET,handleDownload);
   webServer.on("/api/download-gzip",HTTP_GET,handleDownloadGzip);
-  webServer.on("/api/delete",HTTP_DELETE,handleDelete);
+  webServer.on("/api/delete",HTTP_POST,handleDelete);
   webServer.on("/api/create-dir",HTTP_POST,handleCreateDir);
   webServer.on("/api/create-file",HTTP_POST,handleCreateFile);
   webServer.on("/api/rename",HTTP_POST,handleRename);

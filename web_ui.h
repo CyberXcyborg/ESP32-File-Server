@@ -1078,24 +1078,25 @@ function shareViaEmail(){
   window.open('mailto:?subject='+encodeURIComponent(subject)+'&body='+encodeURIComponent(body));
 }
 function deleteItem(path,name){
-  document.getElementById('confirmMsg').textContent=`Move "${name}" to trash?`;
-  document.getElementById('confirmBtn').onclick=()=>{
-    fetch('/api/delete?path='+encodeURIComponent(path),{method:'DELETE',headers:{'Authorization':'Bearer '+token}})
-      .then(r=>{if(!r.ok)throw new Error();return r.text();})
-      .then(()=>{showToast('Moved to trash','success');closeModal('confirmModal');loadFiles(currentPath);})
-      .catch(()=>{showToast('Failed','error');closeModal('confirmModal');});
-  };
-  openModal('confirmModal');
-}
-function deleteSelected(){
-  if(!selectedFiles.length)return;
-  document.getElementById('confirmMsg').textContent=`Move ${selectedFiles.length} items to trash?`;
-  document.getElementById('confirmBtn').onclick=()=>{
-    Promise.all(selectedFiles.map(p=>fetch('/api/delete?path='+encodeURIComponent(p),{method:'DELETE',headers:{'Authorization':'Bearer '+token}})))
-      .then(()=>{showToast('Moved to trash','success');closeModal('confirmModal');loadFiles(currentPath);})
-      .catch(()=>{showToast('Some failed','error');closeModal('confirmModal');loadFiles(currentPath);});
-  };
-  openModal('confirmModal');
+  function deleteItem(path,name){
+    document.getElementById('confirmMsg').textContent=`Move "${name}" to trash?`;
+    document.getElementById('confirmBtn').onclick=()=>{
+      fetch('/api/delete',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded','Authorization':'Bearer '+token},body:'path='+encodeURIComponent(path)+'&csrf='+encodeURIComponent(csrfToken)})
+        .then(r=>{if(!r.ok)throw new Error();return r.text();})
+        .then(()=>{showToast('Moved to trash','success');closeModal('confirmModal');loadFiles(currentPath);})
+        .catch(()=>{showToast('Failed','error');closeModal('confirmModal');});};
+    openModal('confirmModal');
+  }
+  function deleteSelected(){
+    if(!selectedFiles.length)return;
+    document.getElementById('confirmMsg').textContent=`Move ${selectedFiles.length} items to trash?`;
+    document.getElementById('confirmBtn').onclick=()=>{
+      fetch('/api/batch-delete',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded','Authorization':'Bearer '+token},body:'plain='+encodeURIComponent(JSON.stringify({paths:selectedFiles}))+'&csrf='+encodeURIComponent(csrfToken)})
+        .then(r=>{if(!r.ok)throw new Error();return r.text();})
+        .then(()=>{selectedFiles=[];updateSelBtn();showToast('Moved to trash','success');closeModal('confirmModal');loadFiles(currentPath);})
+        .catch(()=>{showToast('Some failed','error');closeModal('confirmModal');loadFiles(currentPath);});};
+    openModal('confirmModal');
+  }
 }
 function copySelected(){
   if(!selectedFiles.length)return;
