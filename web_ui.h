@@ -1136,6 +1136,19 @@ function loadAnalytics(){
       const wf=document.getElementById('wearFill');
       if(wf){wf.style.width=wear+'%';wf.style.background=wear>50?'#d63031':wear>20?'#fdcb6e':'#00b894';}
     }).catch(()=>{document.getElementById('analyticsHealth').innerHTML='<p style="color:var(--danger)">Error loading</p>';});
+  // Load space usage breakdown
+  fetch('/api/space-usage?path=/'+encodeURIComponent(currentPath),{headers:{'Authorization':'Bearer '+token}})
+    .then(r=>r.json()).then(data=>{
+      if(data.breakdown && data.breakdown.length>0){
+        let html='<div class="info-row" style="font-weight:600;margin-bottom:6px"><span>Disk Usage by Item</span><span>Size</span></div>';
+        data.breakdown.slice(0,10).forEach(e=>{
+          const icon=e.is_dir?'📁':'📄';
+          html+=`<div class="info-row"><span>${icon} ${e.name}</span><span>${e.size_fmt}</span></div>`;
+        });
+        const el=document.getElementById('dupResults');
+        if(el) el.innerHTML=html;
+      }
+    }).catch(()=>{});
   // Load file type distribution bars
   fetch('/api/list',{headers:{'Authorization':'Bearer '+token}})
     .then(r=>r.json()).then(data=>{
