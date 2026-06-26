@@ -444,6 +444,8 @@ kbd{font-family:monospace;font-size:12px}
         <div style="padding:8px;background:var(--bg);border-radius:6px"><kbd style="background:var(--card);padding:2px 8px;border-radius:4px;border:1px solid var(--border">F5</kbd> Refresh</div>
         <div style="padding:8px;background:var(--bg);border-radius:6px"><kbd style="background:var(--card);padding:2px 8px;border-radius:4px;border:1px solid var(--border)">?</kbd> This help</div>
         <div style="padding:8px;background:var(--bg);border-radius:6px"><kbd style="background:var(--card);padding:2px 8px;border-radius:4px;border:1px solid var(--border)">←</kbd> Go back</div>
+        <div style="padding:8px;background:var(--bg);border-radius:6px"><kbd style="background:var(--card);padding:2px 8px;border-radius:4px;border:1px solid var(--border)">Ctrl+K</kbd> Search</div>
+        <div style="padding:8px;background:var(--bg);border-radius:6px"><kbd style="background:var(--card);padding:2px 8px;border-radius:4px;border:1px solid var(--border)">F2</kbd> Rename</div>
       </div>
     </div>
   </div>
@@ -479,6 +481,7 @@ document.addEventListener('DOMContentLoaded',()=>{
     if(e.key==='Delete'&&selectedFiles.length>0&&document.activeElement.tagName!=='INPUT'){e.preventDefault();deleteSelected();}
     if(e.key==='F2'&&selectedFiles.length===1){e.preventDefault();const f=files.find(x=>x.path===selectedFiles[0]);if(f)showRenameModal(f.path,f.name);}
     if(e.ctrlKey&&e.key==='a'&&document.activeElement.tagName!=='INPUT'){e.preventDefault();selectedFiles=files.map(f=>f.path);updateSelBtn();renderFiles();}
+    if(e.ctrlKey&&e.key==='k'&&document.activeElement.tagName!=='INPUT'){e.preventDefault();document.getElementById('searchInput').focus();document.getElementById('searchInput').select();}
     if(e.key==='?'&&document.activeElement.tagName!=='INPUT'){e.preventDefault();showShortcuts();}
   });
 });
