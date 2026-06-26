@@ -335,6 +335,8 @@ void handleListFiles() {
   if (!isAuthenticated(webServer, u, lvl)) { webServer.send(401); return; }
   if (!sdOK) { webServer.send(503, "application/json", "{\"error\":\"SD card not available\"}"); return; }
   String path = sanitizePath(webServer.hasArg("path") ? webServer.arg("path") : "/");
+  String sortBy = webServer.hasArg("sort") ? webServer.arg("sort") : "name"; // name, size, date
+  String sortOrder = webServer.hasArg("order") ? webServer.arg("order") : "asc"; // asc, desc
   DynamicJsonDocument doc(16384);
   doc["username"] = u; doc["userLevel"] = lvl;
   JsonObject st = doc.createNestedObject("storage");
@@ -343,25 +345,59 @@ void handleListFiles() {
   JsonArray arr = doc.createNestedArray("files");
   File dir = SD.open(path);
   if (!dir || !dir.isDirectory()) { webServer.send(400); return; }
+  // Collect files into temp array for sorting
+  struct FileEntry { String name; String path; bool isDir; uint64_t size; unsigned long mtime; };
+  FileEntry entries[200];
+  int count = 0;
   int fc = 0, dc = 0;
   File file;
-  while (file = dir.openNextFile()) {
+  while (file = dir.openNextFile() && count < 200) {
     String fn = String(file.name());
     int sl = fn.lastIndexOf('/');
     String name = (sl >= 0) ? fn.substring(sl+1) : fn;
     bool isD = file.isDirectory();
     if (isD) dc++; else fc++;
-    JsonObject f = arr.createNestedObject();
-    f["name"] = name;
-    f["path"] = path + (path.endsWith("/")?"":"/") + name + (isD?"/":"");
-    f["type"] = isD ? "dir" : "file";
-    f["size"] = isD ? 0 : file.size();
-    f["icon"] = isD ? "📁" : getFileIcon(name);
-    f["previewable"] = isPreviewable(name);
+    entries[count].name = name;
+    entries[count].path = path + (path.endsWith("/")?"":"/") + name + (isD?"/":"");
+    entries[count].isDir = isD;
+    entries[count].size = isD ? 0 : file.size();
+    entries[count].mtime = file.fileTime();
+    count++;
     file.close();
   }
   dir.close();
+  // Sort entries (dirs first, then by criteria)
+  for (int i = 0; i < count - 1; i++) {
+    for (int j = 0; j < count - i - 1; j++) {
+      bool swap = false;
+      // Directories always first
+      if (!entries[j].isDir && entries[j+1].isDir) swap = true;
+      else if (entries[j].isDir == entries[j+1].isDir) {
+        if (sortBy == "size") {
+          swap = (sortOrder == "asc") ? (entries[j].size > entries[j+1].size) : (entries[j].size < entries[j+1].size);
+        } else if (sortBy == "date") {
+          swap = (sortOrder == "asc") ? (entries[j].mtime > entries[j+1].mtime) : (entries[j].mtime < entries[j+1].mtime);
+        } else {
+          // name sort (case-insensitive)
+          String a = entries[j].name; a.toLowerCase();
+          String b = entries[j+1].name; b.toLowerCase();
+          swap = (sortOrder == "asc") ? (a > b) : (a < b);
+        }
+      }
+      if (swap) { FileEntry tmp = entries[j]; entries[j] = entries[j+1]; entries[j+1] = tmp; }
+    }
+  }
+  for (int i = 0; i < count; i++) {
+    JsonObject f = arr.createNestedObject();
+    f["name"] = entries[i].name;
+    f["path"] = entries[i].path;
+    f["type"] = entries[i].isDir ? "dir" : "file";
+    f["size"] = entries[i].isDir ? 0 : (uint64_t)entries[i].size;
+    f["icon"] = entries[i].isDir ? "📁" : getFileIcon(entries[i].name);
+    f["previewable"] = isPreviewable(entries[i].name);
+  }
   doc["fileCount"] = fc; doc["dirCount"] = dc;
+  doc["sortBy"] = sortBy; doc["sortOrder"] = sortOrder;
   String out; serializeJson(doc, out);
   webServer.send(200, "application/json", out);
 }
@@ -1264,6 +1300,29 @@ void handleBatchMove() {
     if (dd && dd.isDirectory()) { String n = p.substring(p.lastIndexOf('/')+1); dp = dest + (dest.endsWith("/")?"":"/") + n; dd.close(); }
     else dp = dest;
     if (moveFile(p, dp)) { ok++; logActivity("batch-move", p+" -> "+dp, u); broadcastChange("move", dp); }
+    else fail++;
+  }
+  webServer.send(200, "application/json", "{\"ok\":"+String(ok)+",\"fail\":"+String(fail)+"}");
+}
+
+// ============== BATCH COPY ==============
+void handleBatchCopy() {
+  String u, lvl;
+  if (!isAuthenticated(webServer, u, lvl)) { webServer.send(401); return; }
+  if (!webServer.hasArg("plain")) { webServer.send(400); return; }
+  DynamicJsonDocument doc(4096);
+  deserializeJson(doc, webServer.arg("plain"));
+  JsonArray paths = doc["paths"];
+  String dest = doc["dest"] | "/";
+  int ok = 0, fail = 0;
+  for (const char* ps : paths) {
+    String p = ps;
+    if (!SD.exists(p)) { fail++; continue; }
+    String dp;
+    File dd = SD.open(dest);
+    if (dd && dd.isDirectory()) { String n = p.substring(p.lastIndexOf('/')+1); dp = dest + (dest.endsWith("/")?"":"/") + n; dd.close(); }
+    else dp = dest;
+    if (copyFile(p, dp)) { ok++; logActivity("batch-copy", p+" -> "+dp, u); broadcastChange("copy", dp); }
     else fail++;
   }
   webServer.send(200, "application/json", "{\"ok\":"+String(ok)+",\"fail\":"+String(fail)+"}");
@@ -2203,6 +2262,7 @@ void setup() {
   webServer.on("/api/video",HTTP_GET,handleVideoThumbnail);
   webServer.on("/api/batch-delete",HTTP_POST,handleBatchDelete);
   webServer.on("/api/batch-move",HTTP_POST,handleBatchMove);
+  webServer.on("/api/batch-copy",HTTP_POST,handleBatchCopy);
   webServer.on("/api/search",HTTP_GET,handleSearch);
   webServer.on("/api/changes",HTTP_GET,handleChanges);
   webServer.on("/api/folder-zip",HTTP_POST,handleFolderZip);

@@ -177,6 +177,8 @@ kbd{font-family:monospace;font-size:12px}
       <button class="btn" onclick="toggleSelectAll()" id="selectAllBtn">☑️ Select All</button>
       <button class="btn" onclick="downloadZip()">📦 Download ZIP</button>
       <button class="btn btn-danger" id="delSelBtn" style="display:none" onclick="deleteSelected()">🗑️ Delete Selected</button>
+      <button class="btn" id="copySelBtn" style="display:none" onclick="copySelected()">📋 Copy Selected</button>
+      <button class="btn" id="moveSelBtn" style="display:none" onclick="moveSelected()">📦 Move Selected</button>
       <select class="btn btn-ghost" id="sortSelect" onchange="sortFiles()" style="padding:8px 12px">
         <option value="name-asc">Name ↑</option>
         <option value="name-desc">Name ↓</option>
@@ -557,7 +559,9 @@ function downloadZip(){
     .catch(()=>showToast('Failed to create ZIP','error'));}
 function loadFiles(path){
   selectedFiles=[];updateSelBtn();hideInfoPanel();
-  fetch('/api/list?path='+encodeURIComponent(path),{headers:{'Authorization':'Bearer '+token}})
+  const sortSelect=document.getElementById('sortSelect');
+  const [sortBy,sortDir]=sortSelect.value.split('-');
+  fetch('/api/list?path='+encodeURIComponent(path)+'&sort='+sortBy+'&order='+sortDir,{headers:{'Authorization':'Bearer '+token}})
     .then(r=>{if(r.status===401){window.location.href='/login';throw new Error();}return r.json();})
     .then(data=>{
       files=data.files||[];currentPath=path;userLevel=data.userLevel||'user';
@@ -632,9 +636,9 @@ function renderFiles(){
 }
 function filterFiles(){renderFiles();}
 function setSort(s){if(sortBy===s)sortAsc=!sortAsc;else{sortBy=s;sortAsc=true;}renderFiles();}
-function sortFiles(){const v=document.getElementById('sortSelect').value;const[p,d]=v.split('-');sortBy=p;sortAsc=d==='asc';renderFiles();}
+function sortFiles(){const v=document.getElementById('sortSelect').value;const[p,d]=v.split('-');sortBy=p;sortAsc=d==='asc';loadFiles(currentPath);}
 function toggleSel(item){const path=item.dataset.path;if(selectedFiles.includes(path)){selectedFiles=selectedFiles.filter(f=>f!==path);item.classList.remove('selected');}else{selectedFiles.push(path);item.classList.add('selected');}updateSelBtn();}
-function updateSelBtn(){const b=document.getElementById('delSelBtn');if(selectedFiles.length>0){b.style.display='';b.textContent='🗑️ Delete ('+selectedFiles.length+')';}else b.style.display='none';const sa=document.getElementById('selectAllBtn');if(sa)sa.textContent=selectedFiles.length===files.length&&files.length>0?'☐ Deselect All':'☑️ Select All';}
+function updateSelBtn(){const b=document.getElementById('delSelBtn');const c=document.getElementById('copySelBtn');const m=document.getElementById('moveSelBtn');if(selectedFiles.length>0){b.style.display='';b.textContent='🗑️ Delete ('+selectedFiles.length+')';if(c)c.style.display='';if(m)m.style.display='';}else{b.style.display='none';if(c)c.style.display='none';if(m)m.style.display='none';}const sa=document.getElementById('selectAllBtn');if(sa)sa.textContent=selectedFiles.length===files.length&&files.length>0?'☐ Deselect All':'☑️ Select All';}
 function toggleSelectAll(){
   if(selectedFiles.length===files.length&&files.length>0){selectedFiles=[];}else{selectedFiles=files.map(f=>f.path);}
   updateSelBtn();renderFiles();
@@ -994,6 +998,31 @@ function deleteSelected(){
       .catch(()=>{showToast('Some failed','error');closeModal('confirmModal');loadFiles(currentPath);});
   };
   openModal('confirmModal');
+}
+function copySelected(){
+  if(!selectedFiles.length)return;
+  // Prompt user for destination
+  const dest=prompt('Copy to path (e.g. /backup/):',currentPath);
+  if(!dest)return;
+  fetch('/api/batch-copy',{method:'POST',headers:{'Authorization':'Bearer '+token,'Content-Type':'application/json'},body:JSON.stringify({paths:selectedFiles,dest:dest})})
+    .then(r=>r.json()).then(data=>{
+      if(data.ok>0)showToast('Copied '+data.ok+' item(s)','success');
+      if(data.fail>0)showToast(data.fail+' failed','error');
+      loadFiles(currentPath);
+    })
+    .catch(()=>showToast('Copy failed','error'));
+}
+function moveSelected(){
+  if(!selectedFiles.length)return;
+  const dest=prompt('Move to path (e.g. /backup/):',currentPath);
+  if(!dest)return;
+  fetch('/api/batch-move',{method:'POST',headers:{'Authorization':'Bearer '+token,'Content-Type':'application/json'},body:JSON.stringify({paths:selectedFiles,dest:dest})})
+    .then(r=>r.json()).then(data=>{
+      if(data.ok>0)showToast('Moved '+data.ok+' item(s)','success');
+      if(data.fail>0)showToast(data.fail+' failed','error');
+      loadFiles(currentPath);
+    })
+    .catch(()=>showToast('Move failed','error'));
 }
 function refreshFiles(){loadFiles(currentPath);}
 
