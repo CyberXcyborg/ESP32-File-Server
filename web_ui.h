@@ -143,7 +143,7 @@ kbd{font-family:monospace;font-size:12px}
 <body>
 <div class="container">
   <header>
-    <h1>📁 ESP32 File Server <small style="font-size:11px;color:var(--text2)">v5.7</small></h1>
+    <h1>📁 ESP32 File Server <small style="font-size:11px;color:var(--text2)">v6.1</small></h1>
     <div class="header-right">
       <span id="userDisplay"></span>
       <div class="search-box">🔍<input type="text" id="searchInput" placeholder="Search..." oninput="filterFiles()"></div>

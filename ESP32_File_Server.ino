@@ -671,8 +671,11 @@ void handleMove() {
   File dd = SD.open(dest);
   if (dd && dd.isDirectory()) { String n = path.substring(path.lastIndexOf('/')+1); dp = dest + (dest.endsWith("/")?"":"/") + n; dd.close(); }
   else dp = dest;
+  // Lock source file to prevent concurrent modification during move
+  if (!acquireFileLock(path, 3000)) { webServer.send(423, "text/plain", "Source file is locked"); return; }
   if (moveFile(path, dp)) { logActivity("move", path+" -> "+dp, u); broadcastChange("move", dp); webServer.send(200, "text/plain", "OK"); }
   else webServer.send(500, "text/plain", "Failed");
+  releaseFileLock(path);
 }
 
 // ============== COPY ==============
@@ -743,6 +746,12 @@ void handleUpload() {
       return;
     }
     upp = p + safeName;
+    // Acquire lock to prevent concurrent write corruption
+    if (!acquireFileLock(upp, 5000)) {
+      Serial.println("Upload rejected: file is locked: " + upp);
+      webServer.send(423, "text/plain", "File is locked by another operation");
+      return;
+    }
     if (SD.exists(upp)) createVersion(upp);
     else SD.remove(upp);
     uf = SD.open(upp, FILE_WRITE);
@@ -757,6 +766,7 @@ void handleUpload() {
     }
   } else if (up.status == UPLOAD_FILE_END) {
     if (uf) uf.close();
+    releaseFileLock(upp); // Release lock after upload completes
     totalWriteOps++;
     totalWriteBytes += up.totalSize;
     logActivity("upload", upp+" ("+String(up.totalSize)+"B)", u);
@@ -1513,16 +1523,21 @@ void handleBatchCopy() {
 }
 
 // ============== RECURSIVE SEARCH ==============
-void searchRecursive(String path, String query, JsonArray &results) {
+// Max search results to prevent OOM on large storage
+#define MAX_SEARCH_RESULTS 200
+
+void searchRecursive(String path, String query, JsonArray &results, int &found) {
+  if (found >= MAX_SEARCH_RESULTS) return; // Early exit when limit reached
   File dir = SD.open(path);
   if (!dir || !dir.isDirectory()) return;
   File file;
   while (file = dir.openNextFile()) {
+    if (found >= MAX_SEARCH_RESULTS) { file.close(); break; }
     String fn = String(file.name());
     int sl = fn.lastIndexOf('/');
     String name = (sl >= 0) ? fn.substring(sl+1) : fn;
     if (file.isDirectory()) {
-      searchRecursive(fn, query, results);
+      searchRecursive(fn, query, results, found);
     } else {
       if (name.toLowerCase().indexOf(query) >= 0) {
         String p = path + (path.endsWith("/")?"":"/") + name;
@@ -1531,6 +1546,7 @@ void searchRecursive(String path, String query, JsonArray &results) {
         r["path"] = p;
         r["size"] = file.size();
         r["icon"] = getFileIcon(name);
+        found++;
       }
     }
     file.close();
@@ -1543,10 +1559,13 @@ void handleSearch() {
   if (!isAuthenticated(webServer, u, lvl)) { webServer.send(401); return; }
   String query = webServer.hasArg("q") ? webServer.arg("q") : "";
   if (query.length() == 0) { webServer.send(400); return; }
-  DynamicJsonDocument doc(8192);
+  DynamicJsonDocument doc(16384);
   JsonArray results = doc.createNestedArray("results");
-  searchRecursive("/", query.toLowerCase(), results);
+  int found = 0;
+  searchRecursive("/", query.toLowerCase(), results, found);
   doc["count"] = results.size();
+  doc["limit"] = MAX_SEARCH_RESULTS;
+  doc["truncated"] = (found >= MAX_SEARCH_RESULTS);
   String out; serializeJson(doc, out);
   webServer.send(200, "application/json", out);
 }
