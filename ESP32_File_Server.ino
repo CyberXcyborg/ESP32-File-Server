@@ -243,6 +243,9 @@ void sendSecurityHeaders() {
   webServer.sendHeader("X-Frame-Options", "DENY");
   webServer.sendHeader("X-XSS-Protection", "1; mode=block");
   webServer.sendHeader("Referrer-Policy", "no-referrer");
+  webServer.sendHeader("Content-Security-Policy", "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; media-src 'self'; connect-src 'self' ws: wss:");
+  webServer.sendHeader("Strict-Transport-Security", "max-age=31536000; includeSubDomains");
+  webServer.sendHeader("Permissions-Policy", "camera=(), microphone=(), geolocation=()");
 }
 
 void sendError(int code, String msg) {
@@ -667,7 +670,18 @@ void handleUpload() {
     }
     String p = webServer.hasArg("path") ? webServer.arg("path") : "/";
     if (!p.endsWith("/")) p += "/";
-    upp = p + up.filename;
+    // Sanitize filename: strip path components, block traversal
+    String safeName = up.filename;
+    int sl = safeName.lastIndexOf('/');
+    if (sl >= 0) safeName = safeName.substring(sl + 1);
+    sl = safeName.lastIndexOf('\\');
+    if (sl >= 0) safeName = safeName.substring(sl + 1);
+    safeName.replace("..", "");
+    if (safeName.length() == 0 || safeName == "." || safeName == "..") {
+      Serial.println("Upload rejected: invalid filename");
+      return;
+    }
+    upp = p + safeName;
     if (SD.exists(upp)) createVersion(upp);
     else SD.remove(upp);
     uf = SD.open(upp, FILE_WRITE);
@@ -1137,6 +1151,11 @@ void handleUserManagementPage() {
 // ============== LOGIN/LOGOUT ==============
 void handleLogin() {
   if(isRateLimited()) return;
+  // Per-IP brute-force protection
+  if(!checkLoginRateLimit(webServer.client().remoteIP())){
+    webServer.send(429,"text/html","<html><body style='font-family:sans-serif;padding:40px'><h1>🔒 Too many login attempts</h1><p>Your IP has been temporarily locked for 5 minutes due to too many failed login attempts.</p></body></html>");
+    return;
+  }
   String err="";
   if(webServer.method()==HTTP_POST){
     String u=webServer.arg("username"),p=webServer.arg("password");

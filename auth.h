@@ -2,6 +2,7 @@
 #define AUTH_H
 
 #include <ArduinoJson.h>
+#include <WiFi.h>
 #include "config.h"
 
 // Session structure
@@ -16,13 +17,49 @@ struct Session {
 
 Session sessions[MAX_SESSIONS];
 
-// Login brute-force protection
+// Login brute-force protection (per-IP)
 struct LoginAttempt {
+  IPAddress ip;
   unsigned long lockedUntil;
   int attempts;
-} loginLock = {0, 0};
+  unsigned long windowStart;
+};
+#define MAX_LOGIN_ENTRIES 10
+LoginAttempt loginAttempts[MAX_LOGIN_ENTRIES];
+int loginAttemptCount = 0;
 const int MAX_LOGIN_ATTEMPTS = 5;
 const unsigned long LOCK_DURATION = 300000; // 5 minutes
+
+bool checkLoginRateLimit(IPAddress ip) {
+  unsigned long now = millis();
+  for (int i = 0; i < loginAttemptCount; i++) {
+    if (loginAttempts[i].ip == ip) {
+      // Check if locked
+      if (now < loginAttempts[i].lockedUntil) return false;
+      // Reset window after 1 minute
+      if (now - loginAttempts[i].windowStart > 60000UL) {
+        loginAttempts[i].attempts = 0;
+        loginAttempts[i].windowStart = now;
+      }
+      loginAttempts[i].attempts++;
+      if (loginAttempts[i].attempts >= MAX_LOGIN_ATTEMPTS) {
+        loginAttempts[i].lockedUntil = now + LOCK_DURATION;
+        Serial.println("Login lockout for " + ip.toString());
+        return false;
+      }
+      return true;
+    }
+  }
+  // New entry
+  if (loginAttemptCount < MAX_LOGIN_ENTRIES) {
+    loginAttempts[loginAttemptCount].ip = ip;
+    loginAttempts[loginAttemptCount].attempts = 1;
+    loginAttempts[loginAttemptCount].lockedUntil = 0;
+    loginAttempts[loginAttemptCount].windowStart = now;
+    loginAttemptCount++;
+  }
+  return true;
+}
 
 // HMAC-SHA256 using ESP32 hardware SHA accelerator
 #include <mbedtls/md.h>
