@@ -1208,8 +1208,11 @@ void handleRoot() {
   webServer.send(200,"text/html",String(index_html));
 }
 void handleManifest() {
-  webServer.sendHeader("Cache-Control","public, max-age=86400");
-  webServer.send(200,"application/manifest+json","{\"name\":\"ESP32 File Server\",\"short_name\":\"ESP32-FS\",\"start_url\":\"/\",\"display\":\"standalone\",\"background_color\":\"#0984e3\",\"theme_color\":\"#0984e3\",\"icons\":[]}");
+  webServer.sendHeader("Cache-Control", "public, max-age=86400");
+  webServer.send(200, "application/manifest+json", "{\"name\":\"ESP32 File Server\",\"short_name\":\"ESP32-FS\",\"start_url\":\"/\",\"display\":\"standalone\",\"background_color\":\"#0984e3\",\"theme_color\":\"#0984e3\",\"icons\":[]}");
+}
+void handleRobotsTxt() {
+  webServer.send(200, "text/plain", "User-agent: *\nDisallow: /\n");
 }
 
 // ============== BATCH OPERATIONS ==============
@@ -2167,6 +2170,7 @@ void setup() {
   webServer.on("/trash",handleTrashPage);
   webServer.on("/ota",handleOtaPage);
   webServer.on("/manifest.json",handleManifest);
+  webServer.on("/robots.txt",handleRobotsTxt);
   webServer.on("/setup",handleSetupPage);
   webServer.on("/api/complete-setup",HTTP_POST,handleCompleteSetup);
   webServer.on("/s/",HTTP_GET,handleSharedFile);
@@ -2247,4 +2251,16 @@ void loop() {
   ftpSrv.handleFTP();
   checkWiFi();
   checkSD();
+  // Periodic session cleanup (every 5 minutes)
+  static unsigned long lastSessionCleanup = 0;
+  if (millis() - lastSessionCleanup > 300000UL) {
+    lastSessionCleanup = millis();
+    unsigned long now = millis();
+    for (int i = 0; i < MAX_SESSIONS; i++) {
+      if (sessions[i].isActive && (now - sessions[i].lastActivity > SESSION_TIMEOUT)) {
+        sessions[i].isActive = false;
+        Serial.println("Session expired: " + sessions[i].username);
+      }
+    }
+  }
 }
