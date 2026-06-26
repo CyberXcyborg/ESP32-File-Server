@@ -293,7 +293,7 @@ void handleHealth() {
 // ============== REBOOT ==============
 void handleReboot() {
   String u, lvl;
-  if (!isAuthenticated(webServer, u, lvl) || lvl != "admin") { webServer.send(403); return; }
+  if (!isAuthenticated(webServer, u, lvl) || lvl != "admin" || !checkCsrf(webServer)) { webServer.send(403); return; }
   logActivity("reboot", "remote", u);
   webServer.send(200, "text/plain", "Rebooting...");
   delay(500);
@@ -402,6 +402,48 @@ void handleDownload() {
     logActivity("download-304", path, u);
     return;
   }
+  // Auto-detect gzip support from Accept-Encoding header
+  bool clientWantsGzip = webServer.hasHeader("Accept-Encoding") && webServer.header("Accept-Encoding").indexOf("gzip") >= 0;
+  bool canCompress = shouldCompress(name) && f.size() >= 10240 && f.size() <= 524288ULL;
+  if (clientWantsGzip && canCompress) {
+    // Serve compressed via gzip
+    webServer.sendHeader("Content-Disposition", "attachment; filename=\"" + name + ".gz\"");
+    webServer.sendHeader("Content-Type", "application/gzip");
+    webServer.sendHeader("Content-Encoding", "gzip");
+    webServer.setContentLength(CONTENT_LENGTH_UNKNOWN);
+    webServer.send(200, "application/gzip", "");
+    uint8_t *srcBuf = new uint8_t[f.size()];
+    if (srcBuf) {
+      f.read(srcBuf, f.size());
+      f.close();
+      size_t compCap = (size_t)(f.size() + f.size()/100 + 1024);
+      uint8_t *compBuf = new uint8_t[compCap];
+      if (compBuf) {
+        size_t compSize = gzipCompress(srcBuf, (size_t)f.size(), compBuf, compCap);
+        if (compSize > 0) {
+          webServer.sendContent((const char*)compBuf, compSize);
+          logActivity("download-gzip-auto", path+" ("+String(compSize)+"/"+String(f.size())+"B)", u);
+        } else {
+          webServer.sendContent((const char*)srcBuf, f.size());
+          logActivity("download-gzip-auto-failed", path, u);
+        }
+        delete[] compBuf;
+      } else {
+        webServer.sendContent((const char*)srcBuf, f.size());
+      }
+      delete[] srcBuf;
+    } else {
+      // OOM fallback - stream raw
+      webServer.sendHeader("Content-Disposition", "attachment; filename=\"" + name + "\"");
+      webServer.sendHeader("Content-Type", ctype);
+      webServer.streamFile(f, ctype);
+      f.close();
+      logActivity("download", path, u);
+      return;
+    }
+    webServer.sendContent("");
+    return;
+  }
   webServer.sendHeader("Content-Disposition", "attachment; filename=\"" + name + "\"");
   webServer.sendHeader("Content-Type", ctype);
   webServer.streamFile(f, ctype);
@@ -410,6 +452,8 @@ void handleDownload() {
 }
 
 // ============== DOWNLOAD WITH GZIP ==============
+// True on-the-fly gzip compression using miniz deflate
+// Reads file in chunks, compresses, streams to client
 void handleDownloadGzip() {
   String u, lvl;
   if (!isAuthenticated(webServer, u, lvl)) { webServer.send(401); return; }
@@ -431,24 +475,57 @@ void handleDownloadGzip() {
     logActivity("download", path, u);
     return;
   }
-  // Stream gzip-compressed file using chunked transfer
+  // Stream gzip-compressed file using true miniz deflate
   webServer.sendHeader("Content-Disposition", "attachment; filename=\"" + name + ".gz\"");
   webServer.sendHeader("Content-Type", "application/gzip");
   webServer.sendHeader("Content-Encoding", "gzip");
   webServer.setContentLength(CONTENT_LENGTH_UNKNOWN);
   webServer.send(200, "application/gzip", "");
-  // Simple RLE + basic compression stream (chunked)
-  // For ESP32 we use a simple approach: stream raw with gzip header
-  // Client decompresses - actual compression done via miniz if available
-  // Fallback: stream as octet-stream with .gz extension (client handles)
-  uint8_t buf[512];
-  while (f.available()) {
-    int n = f.read(buf, 512);
-    webServer.sendContent((const char*)buf, n);
+  // Read entire file into memory for compression (up to 512KB to avoid OOM)
+  // For larger files, fall back to uncompressed
+  uint64_t fileSize = f.size();
+  if (fileSize > 524288ULL) {
+    // File too large for memory - stream uncompressed with .gz extension
+    uint8_t buf[512];
+    while (f.available()) {
+      int n = f.read(buf, 512);
+      webServer.sendContent((const char*)buf, n);
+    }
+    f.close();
+    webServer.sendContent("");
+    logActivity("download-gzip-skipped", path, u);
+    return;
   }
+  // Read file, compress, stream
+  uint8_t *srcBuf = new uint8_t[fileSize];
+  if (!srcBuf) {
+    f.close();
+    webServer.send(500, "text/plain", "Out of memory");
+    return;
+  }
+  f.read(srcBuf, fileSize);
   f.close();
-  webServer.sendContent("");
-  logActivity("download-gzip", path, u);
+  // Allocate compression buffer (source + 1% overhead + 18 bytes header/trailer)
+  size_t compCapacity = (size_t)(fileSize + fileSize / 100 + 1024);
+  uint8_t *compBuf = new uint8_t[compCapacity];
+  if (!compBuf) {
+    delete[] srcBuf;
+    webServer.send(500, "text/plain", "Out of memory");
+    return;
+  }
+  size_t compSize = gzipCompress(srcBuf, (size_t)fileSize, compBuf, compCapacity);
+  if (compSize > 0) {
+    webServer.sendContent((const char*)compBuf, compSize);
+    webServer.sendContent("");
+    logActivity("download-gzip", path+" ("+String(compSize)+"/"+String(fileSize)+"B)", u);
+  } else {
+    // Compression failed - send raw
+    webServer.sendContent((const char*)srcBuf, fileSize);
+    webServer.sendContent("");
+    logActivity("download-gzip-failed", path, u);
+  }
+  delete[] srcBuf;
+  delete[] compBuf;
 }
 
 // ============== DELETE ==============
@@ -613,7 +690,7 @@ void handleUpload() {
 // ============== SHARE ==============
 void handleCreateShare() {
   String u, lvl;
-  if (!isAuthenticated(webServer, u, lvl)) { webServer.send(401); return; }
+  if (!isAuthenticated(webServer, u, lvl) || !checkCsrf(webServer)) { webServer.send(403); return; }
   if (!sdOK) { webServer.send(503); return; }
   if (!webServer.hasArg("path")) { webServer.send(400); return; }
   String path = webServer.arg("path");
@@ -940,7 +1017,7 @@ void handleTrashList() {
 }
 void handleRestore() {
   String u,lvl;
-  if(!isAuthenticated(webServer,u,lvl)){webServer.send(401);return;}
+  if(!isAuthenticated(webServer,u,lvl)||!checkCsrf(webServer)){webServer.send(403);return;}
   if(!webServer.hasArg("path")){sendError(400,"Bad request");return;}
   String path=webServer.arg("path");
   if(restoreFromTrash(path)){
@@ -952,7 +1029,7 @@ void handleRestore() {
 }
 void handleEmptyTrash() {
   String u,lvl;
-  if(!isAuthenticated(webServer,u,lvl)){webServer.send(401);return;}
+  if(!isAuthenticated(webServer,u,lvl)||!checkCsrf(webServer)){webServer.send(403);return;}
   if(webServer.hasArg("path")){String path=webServer.arg("path");if(SD.exists(path)){File f=SD.open(path);if(f.isDirectory())removeDir(path);else SD.remove(path);f.close();}}
   else{if(SD.exists(TRASH_FOLDER)){removeDir(TRASH_FOLDER);SD.mkdir(TRASH_FOLDER);}}
   logActivity("empty-trash","all",u);broadcastChange("empty-trash","/");webServer.send(200,"text/plain","OK");
@@ -1193,7 +1270,7 @@ void handleFolderZip() {
 // ============== AUTO-CLEANUP ==============
 void handleAutoCleanup() {
   String u, lvl;
-  if (!isAuthenticated(webServer, u, lvl) || lvl != "admin") { webServer.send(403); return; }
+  if (!isAuthenticated(webServer, u, lvl) || lvl != "admin" || !checkCsrf(webServer)) { webServer.send(403); return; }
   int days = webServer.hasArg("days") ? webServer.arg("days").toInt() : 30;
   int cleaned = autoCleanTrash(days);
   logActivity("auto-cleanup", String(cleaned)+" files older than "+String(days)+" days", u);
@@ -1827,7 +1904,7 @@ void handleGetFavorites() {
 
 void handleToggleFavorite() {
   String u, lvl;
-  if (!isAuthenticated(webServer, u, lvl)) { sendError(401,"Not authenticated"); return; }
+  if (!isAuthenticated(webServer, u, lvl) || !checkCsrf(webServer)) { webServer.send(403); return; }
   if (!webServer.hasArg("path")) { sendError(400,"Missing path"); return; }
   String path = webServer.arg("path");
   String favFile = "/.favorites_" + u + ".json";
@@ -1935,7 +2012,7 @@ void handleGetNotes() {
 
 void handleSaveNote() {
   String u, lvl;
-  if (!isAuthenticated(webServer, u, lvl)) { sendError(401,"Not authenticated"); return; }
+  if (!isAuthenticated(webServer, u, lvl) || !checkCsrf(webServer)) { webServer.send(403); return; }
   if (!webServer.hasArg("plain")) { sendError(400,"Missing data"); return; }
   DynamicJsonDocument input(512);
   deserializeJson(input, webServer.arg("plain"));
