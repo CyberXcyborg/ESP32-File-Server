@@ -652,12 +652,17 @@ void handleUpload() {
   HTTPUpload& up = webServer.upload();
   static File uf;
   static String upp;
-  if (up.status == UPLOAD_FILE_START) {
+  } else if (up.status == UPLOAD_FILE_START) {
     // Check free space (need at least upload size + 10KB buffer)
     uint64_t free = SD.totalBytes() - SD.usedBytes();
     if (free < up.totalSize + 10240) {
       Serial.println("Upload rejected: not enough space");
       return; // Will timeout on client
+    }
+    // Quarantine: block dangerous file types
+    if (!isUploadSafe(up.filename)) {
+      Serial.println("Upload rejected: dangerous file type: " + up.filename);
+      return;
     }
     String p = webServer.hasArg("path") ? webServer.arg("path") : "/";
     if (!p.endsWith("/")) p += "/";

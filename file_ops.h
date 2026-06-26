@@ -100,10 +100,30 @@ bool moveFile(String src, String dst) {
 }
 
 // ============== GZIP COMPRESSION ==============
-// True gzip compression using miniz (tdefl) for ESP32
+// True gzip compression using miniz deflate for ESP32
 // Compresses text-based files on-the-fly during download
 #include <miniz.h>
 #include <miniz_zip.h>
+
+// ============== UPLOAD QUARANTINE ==============
+// Block dangerous file types from being uploaded to protect the ESP32
+bool isUploadSafe(String fileName) {
+  String ext = fileName.substring(fileName.lastIndexOf('.') + 1);
+  ext.toLowerCase();
+  // Block potentially dangerous executables and scripts
+  if (ext == "exe" || ext == "bat" || ext == "cmd" || ext == "com" ||
+      ext == "scr" || ext == "pif" || ext == "vbs" || ext == "vbe" ||
+      ext == "wsf" || ext == "wsh" || ext == "msi" || ext == "msp" ||
+      ext == "js" || ext == "jsx" || ext == "hta" || ext == "cpl" ||
+      ext == "inf" || ext == "ins" || ext == "isp" || ext == "jse" ||
+      ext == "lnk" || ext == "reg" || ext == "rgs" || ext == "sct" ||
+      ext == "shb" || ext == "shs" || ext == "ws" || ext == "wsc" ||
+      ext == "ps1" || ext == "ps1xml" || ext == "ps2" || ext == "ps2xml" ||
+      ext == "psc1" || ext == "psc2") {
+    return false;
+  }
+  return true;
+}
 
 bool shouldCompress(String fileName) {
   String ext = fileName.substring(fileName.lastIndexOf('.') + 1);
