@@ -412,6 +412,10 @@ kbd{font-family:monospace;font-size:12px}
     <div class="modal-body">
       <p style="font-size:13px;color:var(--text2);margin-bottom:12px">Anyone with this link can download the file.</p>
       <div class="share-link"><input type="text" id="shareUrl" readonly><button class="btn" onclick="copyShareUrl()">📋 Copy</button></div>
+      <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap">
+        <button class="btn btn-sm btn-ghost" onclick="copyShareUrl()">📋 Copy Link</button>
+        <button class="btn btn-sm btn-ghost" onclick="shareViaEmail()">✉️ Email</button>
+      </div>
       <p style="margin-top:10px;font-size:12px;color:var(--text2)">⏱️ Link expires in: <span id="shareExpiry">24h</span></p>
     </div>
   </div>
@@ -663,6 +667,17 @@ function renderFiles(){
   document.querySelectorAll('.file-item').forEach(item=>{
     if(!item.dataset.path)return;
     item.addEventListener('contextmenu',e=>{e.preventDefault();showCtxMenu(e,item);});
+    // Long-press for mobile context menu
+    let longPressTimer = null;
+    item.addEventListener('touchstart', e => {
+      longPressTimer = setTimeout(() => {
+        e.preventDefault();
+        const touch = e.touches[0];
+        showCtxMenu({clientX: touch.clientX, clientY: touch.clientY, preventDefault: () => {}}, item);
+      }, 600);
+    }, {passive: false});
+    item.addEventListener('touchend', () => { clearTimeout(longPressTimer); });
+    item.addEventListener('touchmove', () => { clearTimeout(longPressTimer); });
   });
 }
 function filterFiles(){renderFiles();}
@@ -1026,6 +1041,12 @@ function shareFile(path){
     .catch(()=>showToast('Failed to create share link','error'));}
 }
 function copyShareUrl(){const input=document.getElementById('shareUrl');input.select();navigator.clipboard.writeText(input.value);showToast('Link copied!','success');}
+function shareViaEmail(){
+  const url=document.getElementById('shareUrl').value;
+  const subject='Shared file from ESP32';
+  const body='Download the file here: '+url;
+  window.open('mailto:?subject='+encodeURIComponent(subject)+'&body='+encodeURIComponent(body));
+}
 function deleteItem(path,name){
   document.getElementById('confirmMsg').textContent=`Move "${name}" to trash?`;
   document.getElementById('confirmBtn').onclick=()=>{
