@@ -1904,6 +1904,26 @@ void handleMarkdownPreview() {
 }
 
 // ============== FILE PREVIEW ==============
+// ============== FILE TYPE DETECTION API ==============
+void handleDetectType() {
+  String u, lvl;
+  if (!isAuthenticated(webServer, u, lvl)) { webServer.send(401); return; }
+  if (!sdOK) { webServer.send(503); return; }
+  if (!webServer.hasArg("path")) { webServer.send(400); return; }
+  String path = sanitizePath(webServer.arg("path"));
+  if (!SD.exists(path)) { webServer.send(404); return; }
+  String detectedType = detectFileTypeByContent(path);
+  String extType = getContentType(path);
+  DynamicJsonDocument doc(256);
+  doc["path"] = path;
+  doc["detected_type"] = detectedType;
+  doc["extension_type"] = extType;
+  doc["match"] = detectedType.equals(extType) || 
+    (detectedType.startsWith("text/") && extType.startsWith("text/"));
+  String out; serializeJson(doc, out);
+  webServer.send(200, "application/json", out);
+}
+
 void handleFilePreview() {
   String u, lvl;
   if (!isAuthenticated(webServer, u, lvl)) { webServer.send(401); return; }
@@ -2451,6 +2471,7 @@ void setup() {
   webServer.on("/api/scan",HTTP_GET,handleScanStorage);
   webServer.on("/api/sd-health",HTTP_GET,handleSdHealth);
   webServer.on("/api/analytics",HTTP_GET,handleStorageAnalytics);
+  webServer.on("/api/detect-type",HTTP_GET,handleDetectType);
   webServer.on("/api/crc",HTTP_GET,handleFileCRC);
   webServer.on("/api/duplicates",HTTP_GET,handleFindDuplicates);
   webServer.on("/api/recent",HTTP_GET,handleRecentFiles);
