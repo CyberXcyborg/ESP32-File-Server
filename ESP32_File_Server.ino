@@ -1061,7 +1061,7 @@ void handleManifest() {
 // ============== BATCH OPERATIONS ==============
 void handleBatchDelete() {
   String u, lvl;
-  if (!isAuthenticated(webServer, u, lvl)) { webServer.send(401); return; }
+  if (!isAuthenticated(webServer, u, lvl) || !checkCsrf(webServer)) { webServer.send(403); return; }
   if (!webServer.hasArg("plain")) { webServer.send(400); return; }
   DynamicJsonDocument doc(4096);
   deserializeJson(doc, webServer.arg("plain"));
@@ -1069,8 +1069,11 @@ void handleBatchDelete() {
   int ok = 0, fail = 0;
   for (const char* ps : paths) {
     String p = ps;
-    if (SD.exists(p) && moveToTrash(p)) { ok++; logActivity("batch-delete", p, u); }
+    if (!SD.exists(p)) { fail++; continue; }
+    if (!acquireFileLock(p, 2000)) { fail++; continue; }
+    if (moveToTrash(p)) { ok++; logActivity("batch-delete", p, u); broadcastChange("delete", p); }
     else fail++;
+    releaseFileLock(p);
   }
   String result = "{\"ok\":"+String(ok)+",\"fail\":"+String(fail)+"}";
   webServer.send(200, "application/json", result);
