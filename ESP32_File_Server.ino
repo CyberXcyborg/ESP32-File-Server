@@ -2484,6 +2484,261 @@ void handleScanStorage() {
   logActivity("scan", path, u);
 }
 
+// ============== IMAGE THUMBNAIL / RESIZE ==============
+// Simple nearest-neighbor downscale for JPEG/PNG thumbnails
+// Outputs a small BMP (24-bit) that browsers can display inline
+void handleImageThumb() {
+  String u, lvl;
+  if (!isAuthenticated(webServer, u, lvl)) { webServer.send(401); return; }
+  if (!sdOK) { webServer.send(503); return; }
+  if (!webServer.hasArg("path")) { webServer.send(400); return; }
+  String path = sanitizePath(webServer.arg("path"));
+  if (!SD.exists(path)) { webServer.send(404); return; }
+  String name = path.substring(path.lastIndexOf('/')+1);
+  String ext = name.substring(name.lastIndexOf('.')+1);
+  ext.toLowerCase();
+  // Only support common raster formats for thumbnailing
+  if (ext != "jpg" && ext != "jpeg" && ext != "png" && ext != "bmp") {
+    webServer.send(403, "text/plain", "Unsupported type"); return;
+  }
+  int maxW = webServer.hasArg("w") ? webServer.arg("w").toInt() : 160;
+  int maxH = webServer.hasArg("h") ? webServer.arg("h").toInt() : 120;
+  if (maxW < 16 || maxW > 800) maxW = 160;
+  if (maxH < 16 || maxH > 800) maxH = 120;
+  File f = SD.open(path, FILE_READ);
+  if (!f) { webServer.send(500); return; }
+  // Read first 32 bytes to get dimensions from header
+  uint8_t hdr[32];
+  if (f.read(hdr, 32) < 32) { f.close(); webServer.send(500); return; }
+  int imgW = 0, imgH = 0;
+  if (ext == "bmp") {
+    // BMP header: width at offset 18, height at offset 22 (little-endian 32-bit)
+    if (hdr[0] != 'B' || hdr[1] != 'M') { f.close(); webServer.send(403); return; }
+    imgW = hdr[18] | (hdr[19]<<8) | (hdr[20]<<16) | (hdr[21]<<24);
+    imgH = abs(hdr[22] | (hdr[23]<<8) | (hdr[24]<<16) | (hdr[25]<<24));
+  } else if (ext == "jpg" || ext == "jpeg") {
+    // Parse JPEG SOF markers to get dimensions
+    f.seek(2);
+    while (f.available()) {
+      uint8_t marker = f.read();
+      if (marker != 0xFF) break;
+      uint8_t type = f.read();
+      if (type == 0xC0 || type == 0xC2) { // SOF0 or SOF2
+        f.read(); f.read(); // length
+        f.read(); // precision
+        imgH = f.read() << 8 | f.read();
+        imgW = f.read() << 8 | f.read();
+        break;
+      }
+      if (type == 0xD8 || type == 0xD9 || (type >= 0xD0 && type <= 0xD7)) continue;
+      if (f.available() < 2) break;
+      int segLen = f.read() << 8 | f.read();
+      f.seek(f.position() + segLen - 2);
+    }
+  }
+  f.close();
+  if (imgW <= 0 || imgH <= 0 || imgW > 10000 || imgH > 10000) {
+    webServer.send(403, "text/plain", "Cannot read dimensions"); return;
+  }
+  // Calculate scaled dimensions (maintain aspect ratio)
+  float scale = min((float)maxW / imgW, (float)maxH / imgH);
+  if (scale > 1) scale = 1;
+  int thumbW = (int)(imgW * scale);
+  int thumbH = (int)(imgH * scale);
+  if (thumbW < 1) thumbW = 1;
+  if (thumbH < 1) thumbH = 1;
+  // For BMP source: generate a simple downscaled BMP
+  if (ext == "bmp") {
+    // Read pixel data offset from header
+    f = SD.open(path, FILE_READ);
+    if (!f) { webServer.send(500); return; }
+    uint8_t bhdr[54];
+    f.read(bhdr, 54);
+    int dataOffset = bhdr[10] | (bhdr[11]<<8) | (bhdr[12]<<16) | (bhdr[13]<<24);
+    int srcRowSize = ((imgW * 3 + 3) / 4) * 4;
+    int dstRowSize = ((thumbW * 3 + 3) / 4) * 4;
+    int dstImageSize = dstRowSize * thumbH;
+    int dstFileSize = 54 + dstImageSize;
+    // BMP output header
+    uint8_t out[54];
+    memset(out, 0, 54);
+    out[0]='B'; out[1]='M';
+    out[2]=dstFileSize&0xFF; out[3]=(dstFileSize>>8)&0xFF; out[4]=(dstFileSize>>16)&0xFF; out[5]=(dstFileSize>>24)&0xFF;
+    out[10]=54; out[14]=40;
+    out[18]=thumbW&0xFF; out[19]=(thumbW>>8)&0xFF; out[20]=(thumbW>>16)&0xFF; out[21]=(thumbW>>24)&0xFF;
+    out[22]=thumbH&0xFF; out[23]=(thumbH>>8)&0xFF; out[24]=(thumbH>>16)&0xFF; out[25]=(thumbH>>24)&0xFF;
+    out[26]=1; out[28]=24;
+    out[34]=dstImageSize&0xFF; out[35]=(dstImageSize>>8)&0xFF; out[36]=(dstImageSize>>16)&0xFF; out[37]=(dstImageSize>>24)&0xFF;
+    webServer.sendHeader("Content-Type", "image/bmp");
+    webServer.sendHeader("Cache-Control", "public, max-age=600");
+    webServer.setContentLength(CONTENT_LENGTH_UNKNOWN);
+    webServer.send(200, "image/bmp", "");
+    webServer.sendContent((const char*)out, 54);
+    // Nearest-neighbor downscale
+    uint8_t *rowBuf = new uint8_t[dstRowSize];
+    for (int y = 0; y < thumbH; y++) {
+      int srcY = (int)(y * (float)imgH / thumbH);
+      f.seek(dataOffset + srcY * srcRowSize);
+      uint8_t *srcRow = new uint8_t[srcRowSize];
+      f.read(srcRow, srcRowSize);
+      memset(rowBuf, 0, dstRowSize);
+      for (int x = 0; x < thumbW; x++) {
+        int srcX = (int)(x * (float)imgW / thumbW);
+        rowBuf[x*3] = srcRow[srcX*3];
+        rowBuf[x*3+1] = srcRow[srcX*3+1];
+        rowBuf[x*3+2] = srcRow[srcX*3+2];
+      }
+      webServer.sendContent((const char*)rowBuf, dstRowSize);
+      delete[] srcRow;
+    }
+    delete[] rowBuf;
+    f.close();
+    webServer.sendContent("");
+    logActivity("thumb", path+" ("+thumbW+"x"+thumbH+")", u);
+    return;
+  }
+  // For JPEG/PNG: redirect to original with query param (browser handles scaling)
+  // But return a JSON with dimensions for client-side handling
+  DynamicJsonDocument doc(256);
+  doc["width"] = imgW;
+  doc["height"] = imgH;
+  doc["thumb_w"] = thumbW;
+  doc["thumb_h"] = thumbH;
+  doc["path"] = path;
+  String out; serializeJson(doc, out);
+  webServer.send(200, "application/json", out);
+  logActivity("thumb-info", path+" ("+imgW+"x"+imgH+")", u);
+}
+
+// ============== FILE DIFF ==============
+// Compare two text files and return line-by-line diff
+void handleFileDiff() {
+  String u, lvl;
+  if (!isAuthenticated(webServer, u, lvl)) { sendError(401, "Not authenticated"); return; }
+  if (!sdOK) { sendError(503, "SD card not available"); return; }
+  if (!webServer.hasArg("a") || !webServer.hasArg("b")) { sendError(400, "Need paths a and b"); return; }
+  String pathA = sanitizePath(webServer.arg("a"));
+  String pathB = sanitizePath(webServer.arg("b"));
+  if (!SD.exists(pathA) || !SD.exists(pathB)) { sendError(404, "File not found"); return; }
+  // Read both files (limit to 32KB each)
+  String contentA = "", contentB = "";
+  File fa = SD.open(pathA, FILE_READ);
+  if (fa) {
+    size_t limit = min((size_t)fa.size(), (size_t)32768);
+    contentA.reserve(limit);
+    uint8_t buf[256];
+    size_t read = 0;
+    while (read < limit && fa.available()) {
+      size_t chunk = min((size_t)256, limit - read);
+      int n = fa.read(buf, chunk);
+      if (n <= 0) break;
+      for (int i = 0; i < n; i++) {
+        char c = buf[i];
+        if (c >= 32 && c < 127) contentA += c;
+        else if (c == '\n') contentA += '\n';
+        else if (c == '\t') contentA += '\t';
+        else if (c == '\r') contentA += '\r';
+        else contentA += '.';
+      }
+      read += n;
+    }
+    fa.close();
+  }
+  File fb = SD.open(pathB, FILE_READ);
+  if (fb) {
+    size_t limit = min((size_t)fb.size(), (size_t)32768);
+    contentB.reserve(limit);
+    uint8_t buf[256];
+    size_t read = 0;
+    while (read < limit && fb.available()) {
+      size_t chunk = min((size_t)256, limit - read);
+      int n = fb.read(buf, chunk);
+      if (n <= 0) break;
+      for (int i = 0; i < n; i++) {
+        char c = buf[i];
+        if (c >= 32 && c < 127) contentB += c;
+        else if (c == '\n') contentB += '\n';
+        else if (c == '\t') contentB += '\t';
+        else if (c == '\r') contentB += '\r';
+        else contentB += '.';
+      }
+      read += n;
+    }
+    fb.close();
+  }
+  // Split into lines
+  DynamicJsonDocument doc(65536);
+  doc["path_a"] = pathA;
+  doc["path_b"] = pathB;
+  // Simple line-by-line comparison
+  int linesA = 0, linesB = 0;
+  for (int i = 0; i < contentA.length(); i++) if (contentA[i] == '\n') linesA++;
+  for (int i = 0; i < contentB.length(); i++) if (contentB[i] == '\n') linesB++;
+  int maxLines = max(linesA, linesB) + 1;
+  int added = 0, removed = 0, changed = 0;
+  // Extract and compare lines
+  int la = 0, lb = 0;
+  String ca = "", cb = "";
+  int idx = 0;
+  while (la <= linesA || lb <= linesB) {
+    // Get next line from A
+    ca = "";
+    while (la < linesA && contentA.length() > 0) {
+      int nl = contentA.indexOf('\n', idx);
+      if (nl < 0) { ca = contentA.substring(idx); idx = contentA.length(); }
+      else { ca = contentA.substring(idx, nl); idx = nl + 1; }
+      la++;
+      break;
+    }
+    // Get next line from B
+    cb = ""; idx = 0;
+    while (lb < linesB && contentB.length() > 0) {
+      int nl = contentB.indexOf('\n', idx);
+      if (nl < 0) { cb = contentB.substring(idx); idx = contentB.length(); }
+      else { cb = contentB.substring(idx, nl); idx = nl + 1; }
+      lb++;
+      break;
+    }
+    if (ca == cb) {
+      // Unchanged
+    } else {
+      changed++;
+    }
+    if (la > linesA && cb.length() > 0) added++;
+    if (lb > linesB && ca.length() > 0) removed++;
+    if (idx > 60000) break; // Safety limit
+  }
+  doc["lines_a"] = linesA;
+  doc["lines_b"] = linesB;
+  doc["changed"] = changed;
+  doc["added"] = added;
+  doc["removed"] = removed;
+  doc["size_a"] = (uint64_t)contentA.length();
+  doc["size_b"] = (uint64_t)contentB.length();
+  String out; serializeJson(doc, out);
+  webServer.send(200, "application/json", out);
+  logActivity("diff", pathA+" vs "+pathB, u);
+}
+
+// ============== PERIODIC SD HEALTH BROADCAST ==============
+unsigned long lastHealthBroadcast = 0;
+void broadcastSdHealth() {
+  if (millis() - lastHealthBroadcast < 30000UL) return; // Every 30s max
+  lastHealthBroadcast = millis();
+  if (!sdOK) return;
+  DynamicJsonDocument doc(512);
+  doc["event"] = "sd-health";
+  doc["ok"] = sdOK;
+  doc["free_kb"] = (uint32_t)((SD.totalBytes() - SD.usedBytes()) / 1024);
+  doc["total_kb"] = (uint32_t)(SD.totalBytes() / 1024);
+  doc["used_pct"] = (uint8_t)(((SD.totalBytes() - SD.usedBytes()) * 100) / SD.totalBytes());
+  doc["write_ops"] = totalWriteOps;
+  doc["write_mb"] = (uint32_t)(totalWriteBytes / 1048576);
+  doc["risk"] = failureRisk;
+  String msg; serializeJson(doc, msg);
+  webSocket.broadcastTXT(msg);
+}
+
 void setup() {
   Serial.begin(115200);
   Serial.println("\nESP32 File Server v"+String(FIRMWARE_VERSION));
@@ -2561,6 +2816,8 @@ void setup() {
   webServer.on("/api/crc",HTTP_GET,handleFileCRC);
   webServer.on("/api/duplicates",HTTP_GET,handleFindDuplicates);
   webServer.on("/api/recent",HTTP_GET,handleRecentFiles);
+  webServer.on("/api/thumb",HTTP_GET,handleImageThumb);
+  webServer.on("/api/diff",HTTP_GET,handleFileDiff);
   webServer.on("/api/preview",HTTP_GET,handleFilePreview);
   webServer.on("/api/preview-code",HTTP_GET,handleFilePreviewCode);
   webServer.on("/api/md-preview",HTTP_GET,handleMarkdownPreview);
@@ -2590,6 +2847,7 @@ void loop() {
   ftpSrv.handleFTP();
   checkWiFi();
   checkSD();
+  broadcastSdHealth(); // Push SD health to WebSocket clients every 30s
   // Periodic session cleanup (every 5 minutes)
   static unsigned long lastSessionCleanup = 0;
   if (millis() - lastSessionCleanup > 300000UL) {

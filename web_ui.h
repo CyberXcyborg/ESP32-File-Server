@@ -9,7 +9,7 @@ const char index_html[] PROGMEM = R"rawliteral(
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>ESP32 File Server v5.7</title>
+<title>ESP32 File Server v6.1</title>
 <link rel="manifest" href="/manifest.json">
 <meta name="theme-color" content="#0984e3">
 <style>
@@ -545,6 +545,19 @@ function initWebSocket(){
           if(bar){bar.style.width=pct+'%';bar.className='storage-bar-fill '+getStorageColor(pct);}
           const lbl=document.getElementById('storageLabel');
           if(lbl)lbl.textContent=d.sd_free+' KB free';
+        }
+        // Update SD health panel
+        if(d.event==='sd-health'&&d.ok!==undefined){
+          const el=document.getElementById('analyticsHealth');
+          if(el){
+            const freeGB=((d.free_kb||0)/1048576).toFixed(1);
+            const totalGB=((d.total_kb||0)/1048576).toFixed(1);
+            let html=`<div class="info-row"><span>Status</span><span style="color:${d.ok?'#00b894':'#d63031'}">${d.ok?'✅ Healthy':'❌ Error'}</span></div>`;
+            html+=`<div class="info-row"><span>Used</span><span>${d.used_pct||0}% (${freeGB}GB free / ${totalGB}GB total)</span></div>`;
+            if(d.write_ops!==undefined)html+=`<div class="info-row"><span>Write Ops</span><span>${(d.write_ops/1000).toFixed(1)}K (${d.write_mb||0}MB written)</span></div>`;
+            if(d.risk!==undefined)html+=`<div class="info-row"><span>Failure Risk</span><span style="color:${d.risk>50?'#d63031':d.risk>20?'#fdcb6e':'#00b894'}">${d.risk}%</span></div>`;
+            el.innerHTML=html;
+          }
         }
         // Auto-refresh on file changes from other sessions
         if(['upload','delete','rename','mkdir','move','copy','restore','empty-trash'].includes(d.event)){

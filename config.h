@@ -26,6 +26,6 @@ const char* ftp_password = "esp32";
 #define DEFAULT_ADMIN_USER "admin"
 #define DEFAULT_ADMIN_PASS "admin123"
 
-#define FIRMWARE_VERSION "5.7.0"
+#define FIRMWARE_VERSION "6.1.0"
 
 #endif
