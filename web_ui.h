@@ -173,6 +173,7 @@ kbd{font-family:monospace;font-size:12px}
     <div class="controls">
       <button class="btn" onclick="showUploadModal()">⬆️ Upload</button>
       <button class="btn" onclick="showNewFolderModal()">📁 New Folder</button>
+      <button class="btn" onclick="showNewFileModal()">📄 New File</button>
       <button class="btn" onclick="refreshFiles()">🔄 Refresh</button>
       <button class="btn" onclick="toggleSelectAll()" id="selectAllBtn">☑️ Select All</button>
       <button class="btn" onclick="downloadZip()">📦 Download ZIP</button>
@@ -361,7 +362,12 @@ kbd{font-family:monospace;font-size:12px}
     <div class="modal-header"><h2>Create New Folder</h2><span class="close-modal" onclick="closeModal('folderModal')">&times;</span></div>
     <div class="modal-body"><div class="form-group"><label>Folder Name</label><input type="text" id="folderName" placeholder="Enter folder name"></div></div>
     <div class="modal-footer"><button class="btn btn-ghost" onclick="closeModal('folderModal')">Cancel</button><button class="btn" onclick="createFolder()">Create</button></div>
-  </div>
+</div>
+<div class="modal" id="newFileModal">
+    <div class="modal-header"><h2>Create New File</h2><span class="close-modal" onclick="closeModal('newFileModal')">&times;</span></div>
+    <div class="modal-body"><div class="form-group"><label>File Name</label><input type="text" id="newFileName" placeholder="Enter file name (e.g. notes.txt)"></div></div>
+    <div class="modal-footer"><button class="btn btn-ghost" onclick="closeModal('newFileModal')">Cancel</button><button class="btn" onclick="createFile()">Create</button></div>
+</div>
 </div>
 
 <div class="modal" id="renameModal">
@@ -466,6 +472,7 @@ document.addEventListener('DOMContentLoaded',()=>{
   dz.addEventListener('drop',handleDrop);
   window.onclick=e=>{if(e.target.classList.contains('modal'))e.target.style.display='none';hideCtxMenu();hideThemeMenu();};
   document.getElementById('folderName').addEventListener('keydown',e=>{if(e.key==='Enter')createFolder();});
+  document.getElementById('newFileName').addEventListener('keydown',e=>{if(e.key==='Enter')createFile();});
   // Keyboard shortcuts
   document.addEventListener('keydown',e=>{
     if(e.key==='Escape'){document.querySelectorAll('.modal').forEach(m=>m.style.display='none');hideCtxMenu();hideThemeMenu();selectedFiles=[];updateSelBtn();renderFiles();}
@@ -687,6 +694,7 @@ function hideInfoPanel(){document.getElementById('infoPanel').classList.remove('
 // ============== UPLOAD ==============
 function showUploadModal(){document.getElementById('uploadList').innerHTML='';document.getElementById('uploadProgress').style.display='none';document.getElementById('uploadProgressFill').style.width='0%';openModal('uploadModal');}
 function showNewFolderModal(){document.getElementById('folderName').value='';openModal('folderModal');document.getElementById('folderName').focus();}
+function showNewFileModal(){document.getElementById('newFileName').value='';openModal('newFileModal');document.getElementById('newFileName').focus();}
 // ============== RECURSIVE FOLDER UPLOAD ==============
 // Uses webkitGetAsEntry + createReader for true recursive folder upload
 // Falls back to flat file list if API unsupported
@@ -873,6 +881,14 @@ function createFolder(){
   fetch('/api/create-dir',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded','Authorization':'Bearer '+token},body:'path='+encodeURIComponent(currentPath+name)+'&csrf='+encodeURIComponent(csrfToken)})
     .then(r=>{if(r.status===403){throw new Error('CSRF invalid');}if(!r.ok)throw new Error();return r.text();})
     .then(()=>{showToast('Folder created','success');closeModal('folderModal');loadFiles(currentPath);})
+    .catch(e=>showToast(e.message==='CSRF invalid'?'Security token expired, refresh':'Failed','error'));
+}
+function createFile(){
+  const name=document.getElementById('newFileName').value.trim();
+  if(!name){showToast('Enter a file name','error');return;}
+  fetch('/api/create-file',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded','Authorization':'Bearer '+token},body:'path='+encodeURIComponent(currentPath+name)+'&csrf='+encodeURIComponent(csrfToken)})
+    .then(r=>{if(r.status===403){throw new Error('CSRF invalid');}if(!r.ok)throw new Error();return r.text();})
+    .then(()=>{showToast('File created','success');closeModal('newFileModal');loadFiles(currentPath);})
     .catch(e=>showToast(e.message==='CSRF invalid'?'Security token expired, refresh':'Failed','error'));
 }
 function showRenameModal(path,name){document.getElementById('renamePath').value=path;document.getElementById('renameInput').value=name;openModal('renameModal');document.getElementById('renameInput').focus();document.getElementById('renameInput').select();}

@@ -605,6 +605,25 @@ void handleCreateDir() {
   else webServer.send(500, "text/plain", "Failed");
 }
 
+// ============== CREATE EMPTY FILE ==============
+void handleCreateFile() {
+  String u, lvl;
+  if (!isAuthenticated(webServer, u, lvl) || !checkCsrf(webServer)) { webServer.send(403); return; }
+  if (!sdOK) { webServer.send(503); return; }
+  if (!webServer.hasArg("path")) { webServer.send(400); return; }
+  String path = webServer.arg("path");
+  if (SD.totalBytes() - SD.usedBytes() < 1024) { webServer.send(507, "text/plain", "SD card full"); return; }
+  if (SD.exists(path)) { webServer.send(409, "text/plain", "File already exists"); return; }
+  int slash = path.lastIndexOf('/');
+  if (slash > 0) createDirRecursive(path.substring(0, slash));
+  File f = SD.open(path, FILE_WRITE);
+  if (!f) { webServer.send(500, "text/plain", "Failed to create file"); return; }
+  f.close();
+  logActivity("create-file", path, u);
+  broadcastChange("create", path);
+  webServer.send(200, "text/plain", "OK");
+}
+
 // ============== RENAME ==============
 void handleRename() {
   String u, lvl;
@@ -2390,6 +2409,7 @@ void setup() {
   webServer.on("/api/download-gzip",HTTP_GET,handleDownloadGzip);
   webServer.on("/api/delete",HTTP_DELETE,handleDelete);
   webServer.on("/api/create-dir",HTTP_POST,handleCreateDir);
+  webServer.on("/api/create-file",HTTP_POST,handleCreateFile);
   webServer.on("/api/rename",HTTP_POST,handleRename);
   webServer.on("/api/move",HTTP_POST,handleMove);
   webServer.on("/api/copy",HTTP_POST,handleCopy);
