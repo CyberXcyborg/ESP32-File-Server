@@ -936,7 +936,7 @@ function previewFile(path){
   document.getElementById('previewTitle').textContent=path.split('/').pop();
   if(type==='image'){content.innerHTML=`<img src="${path}?token=${token}" alt="preview">`;}
   else if(type==='audio'){content.innerHTML=`<audio controls src="${path}?token=${token}"></audio>`;}
-  else if(type==='video'){content.innerHTML=`<video controls preload="metadata" poster="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 200 150'><rect fill='%23000' width='200' height='150'/><text x='100' y='80' fill='%23fff' text-anchor='middle' font-size='40'>🎬</text></svg>" src="/api/video?path=${encodeURIComponent(path)}&token=${token}"></video>`;}
+  else if(type==='video'){content.innerHTML=`<video controls preload="metadata" poster="/api/video?path=${encodeURIComponent(path)}&thumb=1&token=${token}" src="/api/video?path=${encodeURIComponent(path)}&token=${token}"></video>`;}
   else{
     // Use /api/preview for sanitized text content
     fetch('/api/preview?path='+encodeURIComponent(path)+'&token='+token).then(r=>r.json()).then(d=>{

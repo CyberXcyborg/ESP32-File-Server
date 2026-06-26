@@ -742,6 +742,7 @@ void handleZipDownload() {
 }
 
 // ============== VIDEO THUMBNAIL / STREAM ==============
+// Serve video with proper range request support and SVG thumbnail placeholder
 void handleVideoThumbnail() {
   String u, lvl;
   if (!isAuthenticated(webServer, u, lvl)) { webServer.send(401); return; }
@@ -749,8 +750,8 @@ void handleVideoThumbnail() {
   if (!webServer.hasArg("path")) { webServer.send(400); return; }
   String path = webServer.arg("path");
   if (!SD.exists(path)) { webServer.send(404); return; }
-  // For ESP32 we can't generate actual thumbnails, but we can:
-  // 1. Serve a placeholder icon image for video files
+  // For ESP32 we can't generate actual video thumbnails, but we:
+  // 1. Serve an SVG placeholder with file info for thumbnail requests
   // 2. Support range requests for streaming playback
   File f = SD.open(path, FILE_READ);
   if (!f) { webServer.send(500); return; }
@@ -766,6 +767,29 @@ void handleVideoThumbnail() {
   if (webServer.hasHeader("If-None-Match") && webServer.header("If-None-Match") == etag) {
     f.close();
     webServer.send(304, "text/plain", "Not Modified");
+    return;
+  }
+  // Thumbnail request: return SVG placeholder with file info
+  if (webServer.hasArg("thumb")) {
+    unsigned long thumbSize = fsize;
+    String thumbName = name;
+    f.close();
+    String svg = "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 320 240'>";
+    svg += "<defs><linearGradient id='g' x1='0' y1='0' x2='1' y2='1'>";
+    svg += "<stop offset='0%' stop-color='#1a1a2e'/><stop offset='100%' stop-color='#16213e'/>";
+    svg += "</linearGradient></defs>";
+    svg += "<rect width='320' height='240' fill='url(#g)'/>";
+    svg += "<rect x='120' y='80' width='80' height='80' rx='8' fill='#0f3460' stroke='#e94560' stroke-width='2'/>";
+    svg += "<polygon points='145,95 145,145 185,120' fill='#e94560'/>";
+    svg += "<text x='160' y='190' fill='#eee' text-anchor='middle' font-family='sans-serif' font-size='11'>";
+    svg += thumbName.substring(0, 20) + (thumbName.length() > 20 ? "..." : "");
+    svg += "</text>";
+    svg += "<text x='160' y='210' fill='#aaa' text-anchor='middle' font-family='sans-serif' font-size='10'>";
+    svg += getFileSize(thumbSize) + " · " + ctype;
+    svg += "</text>";
+    svg += "</svg>";
+    webServer.send(200, "image/svg+xml", svg);
+    logActivity("video-thumb", path, u);
     return;
   }
   // Support range requests for video streaming
