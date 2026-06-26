@@ -638,7 +638,11 @@ void handleRename() {
   }
   if (!acquireFileLock(path)) { sendError(423,"File is locked"); return; }
   // Create version for files (not directories)
-  if (!SD.open(path).isDirectory()) createVersion(path);
+  {
+    File tf = SD.open(path);
+    if (tf && !tf.isDirectory()) { createVersion(path); tf.close(); }
+    else if (tf) tf.close();
+  }
   int sl = path.lastIndexOf('/');
   String parent = (sl > 0) ? path.substring(0, sl+1) : "/";
   String np = parent + newName;
@@ -1557,6 +1561,7 @@ void searchRecursive(String path, String query, JsonArray &results, int &found) 
 void handleSearch() {
   String u, lvl;
   if (!isAuthenticated(webServer, u, lvl)) { webServer.send(401); return; }
+  if (isRateLimited()) return;
   String query = webServer.hasArg("q") ? webServer.arg("q") : "";
   if (query.length() == 0) { webServer.send(400); return; }
   DynamicJsonDocument doc(16384);
