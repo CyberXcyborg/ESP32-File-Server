@@ -9,7 +9,7 @@ const char index_html[] PROGMEM = R"rawliteral(
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>ESP32 File Server v5.5</title>
+<title>ESP32 File Server v5.7</title>
 <link rel="manifest" href="/manifest.json">
 <meta name="theme-color" content="#0984e3">
 <style>
@@ -131,13 +131,19 @@ kbd{font-family:monospace;font-size:12px}
   header{flex-direction:column;align-items:flex-start}
   .settings-grid{grid-template-columns:1fr}
   .toast{bottom:10px;left:10px;right:10px;transform:none;max-width:none}
+  .controls{flex-wrap:wrap}
+  #copySelBtn,#moveSelBtn{display:none !important}
 }
+/* Loading spinner */
+.loading-spinner{display:flex;justify-content:center;align-items:center;padding:40px}
+.loading-spinner::after{content:'';display:block;width:32px;height:32px;border:3px solid var(--border);border-top-color:var(--primary);border-radius:50%;animation:spin 0.8s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
 </style>
 </head>
 <body>
 <div class="container">
   <header>
-    <h1>📁 ESP32 File Server <small style="font-size:11px;color:var(--text2)">v5.3</small></h1>
+    <h1>📁 ESP32 File Server <small style="font-size:11px;color:var(--text2)">v5.7</small></h1>
     <div class="header-right">
       <span id="userDisplay"></span>
       <div class="search-box">🔍<input type="text" id="searchInput" placeholder="Search..." oninput="filterFiles()"></div>
@@ -569,6 +575,7 @@ function downloadZip(){
     .catch(()=>showToast('Failed to create ZIP','error'));}
 function loadFiles(path){
   selectedFiles=[];updateSelBtn();hideInfoPanel();
+  document.getElementById('fileContainer').innerHTML='<div class="loading-spinner"></div>';
   const sortSelect=document.getElementById('sortSelect');
   const [sortBy,sortDir]=sortSelect.value.split('-');
   fetch('/api/list?path='+encodeURIComponent(path)+'&sort='+sortBy+'&order='+sortDir,{headers:{'Authorization':'Bearer '+token}})
