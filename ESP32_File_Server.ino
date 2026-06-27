@@ -910,6 +910,10 @@ void handleDownload() {
   webServer.streamFile(f, ctype);
   f.close();
   logActivity("download", path, u);
+  // Track download count per file
+  trackFileAccess(path, "download");
+  // Fire webhook notification for download event
+  fireWebhook("download", path, u);
 }
 
 // ============== DOWNLOAD WITH GZIP ==============
@@ -1000,13 +1004,15 @@ void handleDelete() {
   if (!webServer.hasArg("path")) { webServer.send(400); return; }
   String path = webServer.arg("path");
   if (!SD.exists(path)) { webServer.send(404); return; }
+  // Reject delete if file is marked read-only (immutable)
+  if (isFileReadOnly(path)) { webServer.send(403, "application/json", "{\"error\":\"File is read-only (immutable)\"}"); return; }
   // Acquire lock to prevent concurrent deletion corruption
   if (!acquireFileLock(path, 2000)) { webServer.send(423, "text/plain", "File is locked"); return; }
   bool ok = moveToTrash(path);
   releaseFileLock(path);
   if (ok) {
     String resp = "{\"ok\":true,\"path\":\""+path+"\"}";
-    logActivity("delete", path, u); broadcastChange("delete", path); webServer.send(200, "application/json", resp);
+    logActivity("delete", path, u); broadcastChange("delete", path); fireWebhook("delete", path, u); webServer.send(200, "application/json", resp);
     // Cache idempotency result
     if (webServer.hasHeader("Idempotency-Key")) storeIdempotencyResult(webServer.header("Idempotency-Key"), 200, resp);
   }
@@ -1209,6 +1215,8 @@ void handleUpload() {
     totalWriteBytes += up.totalSize;
     logActivity("upload", upp+" ("+String(up.totalSize)+"B)", u);
     broadcastChange("upload", upp);
+    trackFileAccess(upp, "view"); // Record initial upload
+    fireWebhook("upload", upp, u);
     // Store CRC32 sidecar for integrity verification
     storeFileCRC(upp);
     // Broadcast updated storage stats to all clients
@@ -2330,6 +2338,62 @@ void storeFileCRC(String path) {
 }
 
 // ============== FILE CRC32 INTEGRITY ==============
+// ============== FILE ACCESS STATS =============
+void handleAccessStats() {
+  String u, lvl;
+  if (!isAuthenticated(webServer, u, lvl)) { webServer.send(401); return; }
+  if (!SD.exists(ACCESS_META_FILE)) { webServer.send(200, "application/json", "{}"); return; }
+  File f = SD.open(ACCESS_META_FILE, FILE_READ);
+  if (!f) { webServer.send(500); return; }
+  String content;
+  while (f.available()) content += (char)f.read();
+  f.close();
+  webServer.send(200, "application/json", content);
+}
+
+// ============== TOGGLE FILE READ-ONLY =============
+void handleSetReadOnly() {
+  String u, lvl;
+  if (!isAuthenticated(webServer, u, lvl) || lvl != "admin" || !checkCsrf(webServer)) { webServer.send(403); return; }
+  if (!webServer.hasArg("path")) { webServer.send(400); return; }
+  String path = sanitizePath(webServer.arg("path"));
+  bool readOnly = webServer.hasArg("readonly") && webServer.arg("readonly") == "1";
+  if (setFileReadOnly(path, readOnly)) {
+    logActivity(readOnly ? "lock" : "unlock", path, u);
+    broadcastChange(readOnly ? "lock" : "unlock", path);
+    webServer.send(200, "application/json", "{\"ok\":true,\"path\":\"" + path + "\",\"readonly\":" + (readOnly ? "true" : "false") + "}");
+  } else {
+    webServer.send(500, "application/json", "{\"error\":\"Failed to update\"}");
+  }
+}
+
+// ============== WEBHOOK CONFIG =============
+void handleWebhookConfig() {
+  String u, lvl;
+  if (!isAuthenticated(webServer, u, lvl) || lvl != "admin") { webServer.send(403); return; }
+  if (webServer.method() == HTTP_GET) {
+    if (!SD.exists(WEBHOOK_FILE)) { webServer.send(200, "application/json", "{\"enabled\":false,\"url\":\"\"}"); return; }
+    File f = SD.open(WEBHOOK_FILE, FILE_READ);
+    if (!f) { webServer.send(500); return; }
+    String content;
+    while (f.available()) content += (char)f.read();
+    f.close();
+    webServer.send(200, "application/json", content);
+  } else if (webServer.method() == HTTP_POST) {
+    if (!checkCsrf(webServer)) { webServer.send(403); return; }
+    String url = webServer.hasArg("url") ? webServer.arg("url") : "";
+    bool enabled = webServer.hasArg("enabled") && webServer.arg("enabled") == "1";
+    DynamicJsonDocument doc(512);
+    doc["url"] = url;
+    doc["enabled"] = enabled;
+    File f = SD.open(WEBHOOK_FILE, FILE_WRITE);
+    if (!f) { webServer.send(500); return; }
+    serializeJson(doc, f); f.close();
+    logActivity("webhook-config", url, u);
+    webServer.send(200, "application/json", "{\"ok\":true}");
+  }
+}
+
 void handleFileCRC() {
   String u, lvl;
   if (!isAuthenticated(webServer, u, lvl)) { webServer.send(401); return; }
@@ -3681,6 +3745,10 @@ void setup() {
   webServer.on("/api/crc",HTTP_GET,handleFileCRC);
   webServer.on("/api/duplicates",HTTP_GET,handleFindDuplicates);
   webServer.on("/api/recent",HTTP_GET,handleRecentFiles);
+  webServer.on("/api/access-stats",HTTP_GET,handleAccessStats);
+  webServer.on("/api/readonly",HTTP_POST,handleSetReadOnly);
+  webServer.on("/api/webhook",HTTP_GET,handleWebhookConfig);
+  webServer.on("/api/webhook",HTTP_POST,handleWebhookConfig);
   webServer.on("/api/thumb",HTTP_GET,handleImageThumb);
   webServer.on("/api/diff",HTTP_GET,handleFileDiff);
   webServer.on("/api/preview",HTTP_GET,handleFilePreview);

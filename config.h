@@ -23,10 +23,12 @@ const char* ftp_password = "esp32";
 #define SHARES_FILE "/.shares.json"
 #define VERSIONS_FOLDER "/.versions"
 #define SETTINGS_FILE "/.settings.json"
+#define ACCESS_META_FILE "/.access.json"
+#define WEBHOOK_FILE "/.webhook.json"
 #define DEFAULT_ADMIN_USER "admin"
 #define DEFAULT_ADMIN_PASS "admin123"
 
-#define FIRMWARE_VERSION "6.11.0"
+#define FIRMWARE_VERSION "6.12.0"
 
 // Maximum single upload size (16 MB — adjust for your SD card capacity)
 #define MAX_UPLOAD_SIZE (16UL * 1024UL * 1024UL)

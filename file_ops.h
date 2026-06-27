@@ -3,6 +3,8 @@
 #define FILE_OPS_H
 
 #include "config.h"
+#include <WiFiClient.h>
+#include <ArduinoJson.h>
 
 bool initSDCard() {
   SPI.begin(SPI_SCK, SPI_MISO, SPI_MOSI, SD_CS);
@@ -632,6 +634,133 @@ int countDirs(String path) {
 // Aliases for backward compatibility
 #define countFilesInDir countFiles
 #define countDirsInDir countDirs
+
+// ============== FILE ACCESS TRACKING =============
+// Increment download counter for a file path in .access.json
+void trackFileAccess(String path, String action) {
+  // Load existing access metadata
+  DynamicJsonDocument doc(4096);
+  if (SD.exists(ACCESS_META_FILE)) {
+    File f = SD.open(ACCESS_META_FILE, FILE_READ);
+    if (f) { deserializeJson(doc, f); f.close(); }
+  }
+  String key = path;
+  // JSON keys can't start with /, so prefix with _
+  if (key.startsWith("/")) key = "_" + key.substring(1);
+  JsonObject entry = doc[key];
+  if (entry.isNull()) {
+    entry = doc.createNestedObject(key);
+    entry["downloads"] = 0;
+    entry["views"] = 0;
+    entry["lastAccess"] = 0;
+  }
+  if (action == "download") entry["downloads"] = (entry["downloads"] | 0) + 1;
+  else if (action == "view") entry["views"] = (entry["views"] | 0) + 1;
+  entry["lastAccess"] = millis();
+  // Persist (limit file size by pruning entries >200)
+  if (doc.size() > 200) {
+    // Remove oldest entries
+    JsonObject obj = doc.as<JsonObject>();
+    unsigned long oldestTime = millis();
+    String oldestKey = "";
+    for (JsonPair kv : obj) {
+      unsigned long t = kv.value()["lastAccess"] | 0;
+      if (t < oldestTime) { oldestTime = t; oldestKey = kv.key().c_str(); }
+    }
+    if (oldestKey.length() > 0) doc.remove(oldestKey);
+  }
+  File wf = SD.open(ACCESS_META_FILE, FILE_WRITE);
+  if (wf) { serializeJson(doc, wf); wf.close(); }
+}
+
+// Get download count for a file
+int getFileDownloads(String path) {
+  if (!SD.exists(ACCESS_META_FILE)) return 0;
+  File f = SD.open(ACCESS_META_FILE, FILE_READ);
+  if (!f) return 0;
+  DynamicJsonDocument doc(4096);
+  deserializeJson(doc, f); f.close();
+  String key = path;
+  if (key.startsWith("/")) key = "_" + key.substring(1);
+  return doc[key]["downloads"] | 0;
+}
+
+// ============== PER-FILE READ-ONLY PROTECTION =============
+// Check if a file is marked read-only (immutable) in .access.json
+bool isFileReadOnly(String path) {
+  if (!SD.exists(ACCESS_META_FILE)) return false;
+  File f = SD.open(ACCESS_META_FILE, FILE_READ);
+  if (!f) return false;
+  DynamicJsonDocument doc(4096);
+  deserializeJson(doc, f); f.close();
+  String key = path;
+  if (key.startsWith("/")) key = "_" + path.substring(1);
+  return doc[key]["readonly"] | false;
+}
+
+// Set or clear read-only flag on a file
+bool setFileReadOnly(String path, bool readOnly) {
+  DynamicJsonDocument doc(4096);
+  if (SD.exists(ACCESS_META_FILE)) {
+    File f = SD.open(ACCESS_META_FILE, FILE_READ);
+    if (f) { deserializeJson(doc, f); f.close(); }
+  }
+  String key = path;
+  if (key.startsWith("/")) key = "_" + path.substring(1);
+  if (doc[key].isNull()) doc.createNestedObject(key);
+  doc[key]["readonly"] = readOnly;
+  File wf = SD.open(ACCESS_META_FILE, FILE_WRITE);
+  if (!wf) return false;
+  serializeJson(doc, wf); wf.close();
+  return true;
+}
+
+// ============== HTTP WEBHOOK NOTIFICATIONS =============
+// Send event to external webhook URL configured in .webhook.json
+// Non-blocking: fires and forgets to avoid blocking the main loop
+void fireWebhook(String event, String path, String username) {
+  if (!SD.exists(WEBHOOK_FILE)) return;
+  File f = SD.open(WEBHOOK_FILE, FILE_READ);
+  if (!f) return;
+  DynamicJsonDocument doc(1024);
+  if (deserializeJson(doc, f)) { f.close(); return; }
+  f.close();
+  String url = doc["url"] | "";
+  if (url.length() == 0) return;
+  bool enabled = doc["enabled"] | true;
+  if (!enabled) return;
+  // Build JSON payload
+  DynamicJsonDocument payload(512);
+  payload["event"] = event;
+  payload["path"] = path;
+  payload["user"] = username;
+  payload["time"] = millis();
+  payload["device"] = "esp32-file-server";
+  String body;
+  serializeJson(payload, body);
+  // Fire HTTP POST via WiFiClient (non-blocking best-effort)
+  WiFiClient wc;
+  // Parse host and path from URL
+  String host = url;
+  String webPath = "/";
+  if (host.startsWith("http://")) host = host.substring(7);
+  else if (host.startsWith("https://")) host = host.substring(8); // no TLS on ESP32 client, best-effort
+  int slashPos = host.indexOf('/');
+  if (slashPos > 0) { webPath = host.substring(slashPos); host = host.substring(0, slashPos); }
+  int port = 80;
+  int colonPos = host.indexOf(':');
+  if (colonPos > 0) { port = host.substring(colonPos + 1).toInt(); host = host.substring(0, colonPos); }
+  if (wc.connect(host.c_str(), port, 2000)) { // 2s connect timeout
+    wc.println("POST " + webPath + " HTTP/1.1");
+    wc.println("Host: " + host);
+    wc.println("Content-Type: application/json");
+    wc.println("Content-Length: " + String(body.length()));
+    wc.println("Connection: close");
+    wc.println();
+    wc.print(body);
+    wc.stop();
+  }
+}
 
 // ============== FILE EXISTENCE HELPER ==============
 // Fast check if a file exists and is not a directory (avoids open+isDirectory overhead)
