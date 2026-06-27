@@ -401,6 +401,10 @@ void sendSecurityHeaders() {
   webServer.sendHeader("Content-Security-Policy", "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; media-src 'self'; connect-src 'self' ws: wss:");
   webServer.sendHeader("Strict-Transport-Security", "max-age=31536000; includeSubDomains");
   webServer.sendHeader("Permissions-Policy", "camera=(), microphone=(), geolocation=()");
+  // Additional cross-origin security headers (defense-in-depth)
+  webServer.sendHeader("Cross-Origin-Opener-Policy", "same-origin");
+  webServer.sendHeader("Cross-Origin-Resource-Policy", "same-origin");
+  webServer.sendHeader("X-Permitted-Cross-Domain-Policies", "none");
   // Attach unique request ID for tracing/debugging
   requestIdCounter++;
   webServer.sendHeader("X-Request-Id", String(millis(), HEX) + "-" + String(requestIdCounter));
