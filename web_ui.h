@@ -9,7 +9,7 @@ const char index_html[] PROGMEM = R"rawliteral(
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>ESP32 File Server v6.5</title>
+<title>ESP32 File Server v6.15</title>
 <link rel="manifest" href="/manifest.json">
 <meta name="theme-color" content="#0984e3">
 <style>
@@ -143,7 +143,7 @@ kbd{font-family:monospace;font-size:12px}
 <body>
 <div class="container">
   <header>
-    <h1>📁 ESP32 File Server <small style="font-size:11px;color:var(--text2)">v6.5</small></h1>
+    <h1>📁 ESP32 File Server <small style="font-size:11px;color:var(--text2)">v6.15</small></h1>
     <div class="header-right">
       <span id="userDisplay"></span>
       <div class="search-box">🔍<input type="text" id="searchInput" placeholder="Search..." oninput="filterFiles()"></div>
@@ -485,9 +485,18 @@ kbd{font-family:monospace;font-size:12px}
 let currentPath='/',files=[],selectedFiles=[],userLevel='user',sortBy='name',sortAsc=true,trashFiles=[],users=[],ctxTarget=null,csrfToken='';
 const token=getToken();
 
+// ============== FETCH WITH RETRY =============
+// Auto-retry failed API calls up to 2 times with 1s backoff (WiFi resilience)
+function fetchRetry(url,opts,retries=2,delay=1000){
+  return fetch(url,opts).catch(err=>{
+    if(retries<=0)throw err;
+    return new Promise(r=>setTimeout(r,delay)).then(()=>fetchRetry(url,opts,retries-1,delay*2));
+  });
+}
+
 // Fetch CSRF token for this session
 function fetchCsrf(){
-  fetch('/api/csrf',{headers:{'Authorization':'Bearer '+token}})
+  fetchRetry('/api/csrf',{headers:{'Authorization':'Bearer '+token}})
     .then(r=>r.json()).then(d=>{if(d.csrf)csrfToken=d.csrf;}).catch(()=>{});
 }
 
@@ -667,7 +676,7 @@ function loadFiles(path){
   document.getElementById('fileContainer').innerHTML='<div class="loading-spinner"></div>';
   const sortSelect=document.getElementById('sortSelect');
   const [sortBy,sortDir]=sortSelect.value.split('-');
-  fetch('/api/list?path='+encodeURIComponent(path)+'&sort='+sortBy+'&order='+sortDir,{headers:{'Authorization':'Bearer '+token}})
+  fetchRetry('/api/list?path='+encodeURIComponent(path)+'&sort='+sortBy+'&order='+sortDir,{headers:{'Authorization':'Bearer '+token}})
     .then(r=>{if(r.status===401){window.location.href='/login';throw new Error();}return r.json();})
     .then(data=>{
       files=data.files||[];currentPath=path;userLevel=data.userLevel||'user';
@@ -761,7 +770,7 @@ function toggleSelectAll(){
   if(selectedFiles.length===files.length&&files.length>0){selectedFiles=[];}else{selectedFiles=files.map(f=>f.path);}
   updateSelBtn();renderFiles();
 }
-function renderPathNav(path){const parts=path.split('/').filter(p=>p);let html='<span class="path-part" onclick="loadFiles(\'/\')">Root</span>',build='/';parts.forEach(p=>{build+=p+'/';html+=`<span class="separator">/</span><span class="path-part" onclick="loadFiles('${build}')">${p}</span>`;});document.getElementById('pathNav').innerHTML=html;}
+function renderPathNav(path){const parts=path.split('/').filter(p=>p);const isFav=favorites.includes(path);const starIcon=isFav?'⭐':'☆';const starColor=isFav?'#fdcb6e':'var(--text2)';let html=`<span class="path-part" onclick="loadFiles('/')">Root</span>`,build='/';parts.forEach(p=>{build+=p+'/';html+=`<span class="separator">/</span><span class="path-part" onclick="loadFiles('${build}')">${p}</span>`;});if(path!=='/')html+=`<span style="cursor:pointer;margin-left:6px;font-size:14px;color:${starColor}" onclick="toggleFavorite('${path}',event)" title="Bookmark this folder">${starIcon}</span>`;document.getElementById('pathNav').innerHTML=html;}
 function formatSize(b){if(b<1024)return b+' B';if(b<1048576)return(b/1024).toFixed(1)+' KB';if(b<1073741824)return(b/1048576).toFixed(1)+' MB';return(b/1073741824).toFixed(1)+' GB';}
 
 // ============== CONTEXT MENU ==============
@@ -1075,14 +1084,15 @@ function doMoveCopy(){
 
 function previewFile(path){
   const ext=path.split('.').pop().toLowerCase();
-  const previewable=['jpg','jpeg','png','gif','bmp','svg','webp','txt','html','htm','css','js','json','xml','md','csv','mp3','wav','ogg','mp4','mov','avi'];
+  const previewable=['jpg','jpeg','png','gif','bmp','svg','webp','txt','html','htm','css','js','json','xml','md','csv','pdf','mp3','wav','ogg','mp4','mov','avi'];
   if(!previewable.includes(ext)){downloadFile(path);return;}
-  const type=['jpg','jpeg','png','gif','bmp','svg','webp'].includes(ext)?'image':['mp3','wav','ogg'].includes(ext)?'audio':['mp4','mov','avi'].includes(ext)?'video':'text';
+  const type=['jpg','jpeg','png','gif','bmp','svg','webp'].includes(ext)?'image':['mp3','wav','ogg'].includes(ext)?'audio':['mp4','mov','avi'].includes(ext)?'video':ext==='pdf'?'pdf':'text';
   const content=document.getElementById('previewContent');
   document.getElementById('previewTitle').textContent=path.split('/').pop();
   if(type==='image'){content.innerHTML=`<img src="${path}?token=${token}" alt="preview">`;}
   else if(type==='audio'){content.innerHTML=`<audio controls src="${path}?token=${token}"></audio>`;}
   else if(type==='video'){content.innerHTML=`<video controls preload="metadata" poster="/api/video?path=${encodeURIComponent(path)}&thumb=1&token=${token}" src="/api/video?path=${encodeURIComponent(path)}&token=${token}"></video>`;}
+  else if(type==='pdf'){content.innerHTML=`<iframe src="/api/download?path=${encodeURIComponent(path)}&token=${token}" style="width:100%;height:60vh;border:none;border-radius:6px"></iframe>`;}
   else{
     // Use markdown preview for .md files, /api/preview for other text
     if(ext==='md'){
