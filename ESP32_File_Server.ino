@@ -649,7 +649,7 @@ void handleHealth() {
   // ETag for health: based on heap + sd status + uptime bucket (changes every 10s)
   String healthEtag = "\"" + String(ESP.getFreeHeap()) + "-" + String(sdOK) + "-" + String(millis() / 10000) + "\"";
   webServer.sendHeader("ETag", healthEtag);
-  webServer.sendHeader("Cache-Control", "private, max-age=5");
+  webServer.sendHeader("Cache-Control", "private, max-age=5, stale-while-revalidate=15");
   if (webServer.hasHeader("If-None-Match") && webServer.header("If-None-Match") == healthEtag) {
     webServer.send(304, "text/plain", "Not Modified");
     return;
@@ -759,7 +759,7 @@ void handleListFiles() {
   // ETag for listing cache: based on dir stats + used bytes (changes on any file change)
   String etag = "\"" + String(count) + "-" + String(SD.usedBytes()) + "\"";
   webServer.sendHeader("ETag", etag);
-  webServer.sendHeader("Cache-Control", "private, max-age=5");
+  webServer.sendHeader("Cache-Control", "private, max-age=5, stale-while-revalidate=30");
   if (webServer.hasHeader("If-None-Match") && webServer.header("If-None-Match") == etag) {
     webServer.send(304, "text/plain", "Not Modified");
     return;
@@ -1920,7 +1920,7 @@ void handleServiceWorker() {
   sendSecurityHeaders();
   webServer.sendHeader("Cache-Control", "public, max-age=86400");
   webServer.sendHeader("Content-Type", "application/javascript");
-  String sw = "const CACHE='esp32fs-v6.6';const SHELL=['/', '/manifest.json'];\n";
+  String sw = "const CACHE='esp32fs-v6.11';const SHELL=['/', '/manifest.json'];\\n";
   sw += "self.addEventListener('install',e=>{e.waitUntil(caches.open(CACHE).then(c=>c.addAll(SHELL)));self.skipWaiting();});\n";
   sw += "self.addEventListener('activate',e=>{e.waitUntil(caches.keys().then(ks=>Promise.all(ks.filter(k=>k!==CACHE).map(k=>caches.delete(k)))));self.clients.claim();});\n";
   sw += "self.addEventListener('fetch',e=>{if(e.request.url.includes('/api/')){e.respondWith(fetch(e.request).catch(()=>caches.match(e.request)));}else{e.respondWith(caches.match(e.request).then(r=>r||fetch(e.request)));}});\n";
