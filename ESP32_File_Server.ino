@@ -3638,10 +3638,12 @@ void loop() {
   requestStartMs = millis();
   webServer.handleClient();
   // Enforce request timeout: if a request took longer than MAX_REQUEST_TIME_MS,
-  // stop the client to free resources (prevents stuck connections from blocking)
+  // send 504 Gateway Timeout and stop the client to free resources
   if (webServer.method() != HTTP_ANY && (millis() - requestStartMs) > MAX_REQUEST_TIME_MS) {
+    webServer.send(504, "application/json", "{\"error\":\"Request timeout\",\"max_ms\":" + String(MAX_REQUEST_TIME_MS) + "}");
     webServer.client().stop();
-    Serial.println("Request timeout: " + webServer.uri());
+    Serial.println("Request timeout (504): " + webServer.uri());
+    recordMetric(webServer.uri() + " [timeout]", MAX_REQUEST_TIME_MS);
   }
   // Record per-endpoint request metrics
   if (webServer.method() != HTTP_ANY && millis() > requestStartMs) {
