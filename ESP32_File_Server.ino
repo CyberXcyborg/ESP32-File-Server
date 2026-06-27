@@ -27,6 +27,41 @@ WebSocketsServer webSocket(81); // WebSocket on port 81
 FtpServer ftpSrv;
 int wsClientCount = 0; // Track connected WebSocket clients
 
+// ============== WS CLIENT METADATA ==============
+// Per-client WebSocket state for monitoring, auth tracking, and connection stats
+struct WsClientInfo {
+  bool authenticated;
+  String username;
+  String userLevel;
+  IPAddress ip;
+  unsigned long connectTime;
+  unsigned long lastActivity;
+  uint32_t msgCount;  // Messages received from this client
+};
+#define WS_MAX_CLIENTS 8
+WsClientInfo wsClients[WS_MAX_CLIENTS];
+
+// Initialize WS client on connect
+void initWsClient(uint8_t num, IPAddress remoteIp) {
+  if (num >= WS_MAX_CLIENTS) return;
+  wsClients[num].authenticated = false;
+  wsClients[num].username = "";
+  wsClients[num].userLevel = "";
+  wsClients[num].ip = remoteIp;
+  wsClients[num].connectTime = millis();
+  wsClients[num].lastActivity = millis();
+  wsClients[num].msgCount = 0;
+}
+
+// Clear WS client on disconnect
+void clearWsClient(uint8_t num) {
+  if (num >= WS_MAX_CLIENTS) return;
+  wsClients[num].authenticated = false;
+  wsClients[num].username = "";
+  wsClients[num].userLevel = "";
+  wsClients[num].msgCount = 0;
+}
+
 // ============== API RATE LIMITER ==============
 // Sliding window rate limiter per IP: max 30 requests per 10 seconds
 struct RateLimit {
@@ -150,6 +185,19 @@ void handleMetrics() {
   sys["sd_ok"] = sdOK;
   sys["wifi_rssi"] = WiFi.RSSI();
   sys["total_requests"] = 0;
+  // Include per-client WebSocket connection details
+  JsonArray wsArr = doc.createNestedArray("ws_clients_detail");
+  for (int i = 0; i < WS_MAX_CLIENTS; i++) {
+    if (wsClients[i].authenticated) {
+      JsonObject c = wsArr.createNestedObject();
+      c["id"] = i;
+      c["user"] = wsClients[i].username;
+      c["level"] = wsClients[i].userLevel;
+      c["ip"] = wsClients[i].ip.toString();
+      c["connected_s"] = (millis() - wsClients[i].connectTime) / 1000;
+      c["msgs"] = wsClients[i].msgCount;
+    }
+  }
   JsonArray arr = doc.createNestedArray("endpoints");
   uint32_t totalReqs = 0;
   for (int i = 0; i < metricCount; i++) {
@@ -196,19 +244,23 @@ void onWebSocketEvent(uint8_t num, WStype_t type, uint8_t * payload, size_t leng
   switch(type) {
     case WStype_DISCONNECTED:
       Serial.printf("[%u] WS Disconnected\n", num);
-      wsClientCount--;
+      if (num < WS_MAX_CLIENTS && wsClients[num].authenticated) wsClientCount--;
+      clearWsClient(num);
       break;
     case WStype_CONNECTED:
       {
-        // Validate session before accepting WS connection
-        // Client must send auth message within 5s or be disconnected
         IPAddress ip = webSocket.remoteIP(num);
         Serial.printf("[%u] WS Connected from %s (pending auth)\n", num, ip.toString().c_str());
+        initWsClient(num, ip);
         // Send challenge — client must respond with {"cmd":"auth","token":"..."}
         webSocket.sendTXT(num, "{\"event\":\"auth-required\"}");
       }
       break;
     case WStype_TEXT:
+      if (num < WS_MAX_CLIENTS) {
+        wsClients[num].lastActivity = millis();
+        wsClients[num].msgCount++;
+      }
       if (length > 0 && payload[0] == '{') {
         DynamicJsonDocument doc(512);
         if (!deserializeJson(doc, payload, length)) {
@@ -221,6 +273,11 @@ void onWebSocketEvent(uint8_t num, WStype_t type, uint8_t * payload, size_t leng
             String wsUser, wsLvl;
             if (validateSession(wsToken, wsUser, wsLvl)) {
               wsClientCount++;
+              if (num < WS_MAX_CLIENTS) {
+                wsClients[num].authenticated = true;
+                wsClients[num].username = wsUser;
+                wsClients[num].userLevel = wsLvl;
+              }
               webSocket.sendTXT(num, "{\"event\":\"auth-ok\",\"user\":\"" + wsUser + "\",\"level\":\"" + wsLvl + "\"}");
               // Send initial status after successful auth
               DynamicJsonDocument status(256);
