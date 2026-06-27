@@ -1469,7 +1469,9 @@ void handleAddUser() {
   if(!hasLetter||!hasDigit){sendError(400,"Password must contain letters and digits");return;}
   File f=SD.open(USERS_FILE);String c="{\"users\":[]}";if(f){c="";while(f.available())c+=(char)f.read();f.close();}
   DynamicJsonDocument ex(1024);deserializeJson(ex,c);
-  JsonObject u2=ex["users"].createNestedObject();u2["username"]=nu;u2["password"]=np;u2["userLevel"]=nl;
+  // Hash password with per-user salt before storing
+  String npHash = hashPasswordForStorage(nu, np);
+  JsonObject u2=ex["users"].createNestedObject();u2["username"]=nu;u2["password"]=npHash;u2["userLevel"]=nl;
   f=SD.open(USERS_FILE,FILE_WRITE);if(!f){webServer.send(500);return;}
   serializeJson(ex,f);f.close();logActivity("add-user",nu,u);webServer.send(200,"text/plain","OK");
 }
@@ -1488,7 +1490,8 @@ void handleUpdateUser() {
       bool hasLetter=false,hasDigit=false;
       for(unsigned int i=0;i<np.length();i++){if(isalpha(np[i]))hasLetter=true;if(isdigit(np[i]))hasDigit=true;}
       if(!hasLetter||!hasDigit){sendError(400,"Password must contain letters and digits");return;}
-      u["password"]=np;
+      // Hash password with per-user salt before storing
+      u["password"]=hashPasswordForStorage(path, np);
     }
     u["userLevel"]=doc["userLevel"]|u["userLevel"];break;}}
   f=SD.open(USERS_FILE,FILE_WRITE);if(!f){webServer.send(500);return;}

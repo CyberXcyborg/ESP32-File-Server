@@ -184,6 +184,22 @@ String createSession(String username, String userLevel) {
   return token;
 }
 
+// Check if a string looks like a HMAC-SHA256 hash (64 hex chars)
+bool isHashedPassword(const String& s) {
+  if (s.length() != 64) return false;
+  for (unsigned int i = 0; i < s.length(); i++) {
+    char c = s[i];
+    if (!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f'))) return false;
+  }
+  return true;
+}
+
+// Hash a password for storage: HMAC-SHA256 with per-user salt derived from username
+String hashPasswordForStorage(String username, String password) {
+  String salt = "ESP32FS_" + username + "_2024";
+  return hmacSha256(salt, password);
+}
+
 bool authenticateUser(String username, String password, String &userLevel) {
   if (!SD.exists(USERS_FILE)) createDefaultUsersFile();
   File file = SD.open(USERS_FILE);
@@ -191,14 +207,31 @@ bool authenticateUser(String username, String password, String &userLevel) {
   String fileContent = "";
   while (file.available()) fileContent += (char)file.read();
   file.close();
-  StaticJsonDocument<1024> doc;
+  StaticJsonDocument<2048> doc;
   if (deserializeJson(doc, fileContent)) return false;
   JsonArray users = doc["users"];
   if (users.isNull()) return false;
   for (JsonObject user : users) {
-    if (String(user["username"]|"").equals(username) && String(user["password"]|"").equals(password)) {
-      userLevel = user["userLevel"] | "user";
-      return true;
+    if (String(user["username"]|"").equals(username)) {
+      String stored = String(user["password"]|"");
+      bool match = false;
+      if (isHashedPassword(stored)) {
+        // Stored is hashed: compare hash of submitted password
+        match = hashPasswordForStorage(username, password).equals(stored);
+      } else {
+        // Legacy plaintext: direct compare (backwards compat)
+        match = stored.equals(password);
+      }
+      if (match) {
+        userLevel = user["userLevel"] | "user";
+        // Auto-upgrade plaintext passwords to hashed on login
+        if (!isHashedPassword(stored)) {
+          user["password"] = hashPasswordForStorage(username, password);
+          File wf = SD.open(USERS_FILE, FILE_WRITE);
+          if (wf) { serializeJson(doc, wf); wf.close(); }
+        }
+        return true;
+      }
     }
   }
   return false;
