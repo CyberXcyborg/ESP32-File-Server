@@ -163,7 +163,7 @@ void handleMetrics() {
   }
   sys["total_requests"] = totalReqs;
   String out; serializeJson(doc, out);
-  webServer.send(200, "application/json", out);
+  sendJson(200, out);
 }
 
 // ============== WE BROADCAST ==============
@@ -409,7 +409,15 @@ void sendSecurityHeaders() {
 void sendError(int code, String msg) {
   sendSecurityHeaders();
   String json = "{"error":""+msg+"","code":"+String(code)+"}";
+  webServer.sendHeader("Content-Length", String(json.length()));
   webServer.send(code, "application/json", json);
+
+// Send JSON response with Content-Length header for HTTP compliance
+void sendJson(int code, String json) {
+  sendSecurityHeaders();
+  webServer.sendHeader("Content-Length", String(json.length()));
+  webServer.send(code, "application/json", json);
+}
 }
 
 // ============== AUDIT LOG =============
@@ -481,7 +489,7 @@ void handleServerInfo() {
   json += ",\"sd_total\":"+String(SD.totalBytes());
   json += ",\"sd_used\":"+String(SD.usedBytes());
   json += "}";
-  webServer.send(200,"application/json",json);
+  sendJson(200, json);
 }
 
 // ============== HEALTH CHECK ==============
@@ -616,6 +624,7 @@ void handleListFiles() {
     webServer.send(304, "text/plain", "Not Modified");
     return;
   }
+  webServer.sendHeader("Content-Length", String(out.length()));
   webServer.send(200, "application/json", out);
 }
 
