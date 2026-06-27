@@ -3560,7 +3560,9 @@ void setup() {
   Serial.println("HTTP on "+String(webServerPort));
   webSocket.begin();
   webSocket.onEvent(onWebSocketEvent);
-  Serial.println("WebSocket on 81");
+  // Enable WebSocket heartbeat: ping every 30s, disconnect after 3 missed pongs (90s)
+  webSocket.enableHeartbeat(30000, 3000, 3);
+  Serial.println("WebSocket on 81 (heartbeat enabled)");
   ftpSrv.begin(ftp_user,ftp_password);
   Serial.println("FTP started");
 }
