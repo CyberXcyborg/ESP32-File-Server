@@ -1288,9 +1288,10 @@ void handleRestore() {
 void handleEmptyTrash() {
   String u,lvl;
   if(!isAuthenticated(webServer,u,lvl)||!checkCsrf(webServer)){webServer.send(403);return;}
-  if(webServer.hasArg("path")){String path=webServer.arg("path");if(SD.exists(path)){File f=SD.open(path);if(f.isDirectory())removeDir(path);else SD.remove(path);f.close();}}
-  else{if(SD.exists(TRASH_FOLDER)){removeDir(TRASH_FOLDER);SD.mkdir(TRASH_FOLDER);}}
-  logActivity("empty-trash","all",u);broadcastChange("empty-trash","/");webServer.send(200,"text/plain","OK");
+  // POST body: optional "path" arg for single-item permanent delete
+  if(webServer.hasArg("path")){String path=sanitizePath(webServer.arg("path"));if(SD.exists(path)){File f=SD.open(path);if(f.isDirectory())removeDir(path);else SD.remove(path);f.close();logActivity("perm-delete",path,u);}}
+  else{if(SD.exists(TRASH_FOLDER)){removeDir(TRASH_FOLDER);SD.mkdir(TRASH_FOLDER);}logActivity("empty-trash","all",u);}
+  broadcastChange("empty-trash","/");webServer.send(200,"text/plain","OK");
 }
 
 // ============== BATCH RESTORE FROM TRASH ==============
@@ -2982,7 +2983,7 @@ void setup() {
   webServer.on("/api/trash",HTTP_GET,handleTrashList);
   webServer.on("/api/restore",HTTP_GET,handleRestore);
   webServer.on("/api/batch-restore",HTTP_POST,handleBatchRestore);
-  webServer.on("/api/empty-trash",HTTP_GET,handleEmptyTrash);
+  webServer.on("/api/empty-trash",HTTP_POST,handleEmptyTrash);
   webServer.on("/api/log",HTTP_GET,handleGetLog);
   webServer.on("/api/settings",HTTP_GET,handleGetSettings);
   webServer.on("/api/settings",HTTP_POST,handleSaveSettings);

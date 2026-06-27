@@ -1180,7 +1180,7 @@ function restoreItem(path){
 function permanentDelete(path,name){
   document.getElementById('confirmMsg').textContent=`Permanently delete "${name}"?`;
   document.getElementById('confirmBtn').onclick=()=>{
-    fetch('/api/empty-trash?path='+encodeURIComponent(path),{headers:{'Authorization':'Bearer '+token}})
+    fetch('/api/empty-trash',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded','Authorization':'Bearer '+token,'X-CSRF-Token':csrfToken},body:'path='+encodeURIComponent(path)})
       .then(r=>{if(r.ok){showToast('Deleted','success');loadTrash();}else showToast('Failed','error');closeModal('confirmModal');})
       .catch(()=>{showToast('Failed','error');closeModal('confirmModal');});
   };
@@ -1189,7 +1189,7 @@ function permanentDelete(path,name){
 function emptyTrash(){
   document.getElementById('confirmMsg').textContent='Empty all trash? This cannot be undone.';
   document.getElementById('confirmBtn').onclick=()=>{
-    fetch('/api/empty-trash',{headers:{'Authorization':'Bearer '+token}})
+    fetch('/api/empty-trash',{method:'POST',headers:{'Authorization':'Bearer '+token,'X-CSRF-Token':csrfToken}})
       .then(r=>{if(r.ok){showToast('Trash emptied','success');loadTrash();}else showToast('Failed','error');closeModal('confirmModal');})
       .catch(()=>{showToast('Failed','error');closeModal('confirmModal');});
   };
