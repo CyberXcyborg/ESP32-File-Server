@@ -1964,7 +1964,7 @@ void handleBatchDelete() {
 
 void handleBatchMove() {
   String u, lvl;
-  if (!isAuthenticated(webServer, u, lvl)) { webServer.send(401); return; }
+  if (!isAuthenticated(webServer, u, lvl) || !checkCsrf(webServer)) { webServer.send(403); return; }
   if (!webServer.hasArg("plain")) { webServer.send(400); return; }
   DynamicJsonDocument doc(4096);
   deserializeJson(doc, webServer.arg("plain"));
@@ -1987,7 +1987,7 @@ void handleBatchMove() {
 // ============== BATCH COPY ==============
 void handleBatchCopy() {
   String u, lvl;
-  if (!isAuthenticated(webServer, u, lvl)) { webServer.send(401); return; }
+  if (!isAuthenticated(webServer, u, lvl) || !checkCsrf(webServer)) { webServer.send(403); return; }
   if (!webServer.hasArg("plain")) { webServer.send(400); return; }
   DynamicJsonDocument doc(4096);
   deserializeJson(doc, webServer.arg("plain"));
