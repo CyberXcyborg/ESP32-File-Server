@@ -321,6 +321,9 @@ void checkSD() {
   }
 }
 
+// Request ID counter for tracing
+static uint32_t requestIdCounter = 0;
+
 void sendSecurityHeaders() {
   webServer.sendHeader("X-Content-Type-Options", "nosniff");
   webServer.sendHeader("X-Frame-Options", "DENY");
@@ -329,6 +332,9 @@ void sendSecurityHeaders() {
   webServer.sendHeader("Content-Security-Policy", "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; media-src 'self'; connect-src 'self' ws: wss:");
   webServer.sendHeader("Strict-Transport-Security", "max-age=31536000; includeSubDomains");
   webServer.sendHeader("Permissions-Policy", "camera=(), microphone=(), geolocation=()");
+  // Attach unique request ID for tracing/debugging
+  requestIdCounter++;
+  webServer.sendHeader("X-Request-Id", String(millis(), HEX) + "-" + String(requestIdCounter));
 }
 
 void sendError(int code, String msg) {
