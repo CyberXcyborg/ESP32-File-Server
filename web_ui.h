@@ -281,6 +281,15 @@ kbd{font-family:monospace;font-size:12px}
       <div class="info-row"><span class="info-label">Free Memory</span><span id="sysHeap"></span></div>
     </div>
     <div class="settings-section">
+      <h3>📦 Storage Quotas</h3>
+      <div id="quotaList" style="margin-bottom:8px;color:var(--text2);font-size:13px">Loading...</div>
+      <div class="settings-grid">
+        <div class="form-group"><label>Username</label><input type="text" id="quotaUser" placeholder="e.g. user1"></div>
+        <div class="form-group"><label>Limit (bytes, 0=unlimited)</label><input type="number" id="quotaLimit" min="0" value="0" placeholder="e.g. 104857600 for 100MB"></div>
+      </div>
+      <button class="btn btn-sm" onclick="setQuota()">Set Quota</button>
+    </div>
+    <div class="settings-section">
       <h3>🌐 Server Settings</h3>
       <div class="settings-grid">
         <div class="form-group"><label>Web Server Port</label><input type="number" id="setWebPort" min="80" max="65535" value="80"></div>
@@ -1313,6 +1322,21 @@ function loadSettings(){
       document.getElementById('sysUptime').textContent=formatUptime(data.uptime||0);
       document.getElementById('sysHeap').textContent=formatSize(data.free_heap||0);
     });
+  // Load quota list
+  fetch('/api/quota',{headers:{'Authorization':'Bearer '+token}})
+    .then(r=>r.json()).then(data=>{
+      if(!data.length){document.getElementById('quotaList').textContent='No quotas set (unlimited)';return;}
+      let html='';data.forEach(q=>{html+=`<div style="margin:4px 0"><strong>${q.user}</strong>: ${q.limit_mb||0} MB${q.limit===0?' (unlimited)':''}</div>`;});
+      document.getElementById('quotaList').innerHTML=html;
+    }).catch(()=>{document.getElementById('quotaList').textContent='Failed to load quotas';});
+}
+function setQuota(){
+  const user=document.getElementById('quotaUser').value.trim();
+  const limit=parseInt(document.getElementById('quotaLimit').value)||0;
+  if(!user){showToast('Enter a username','error');return;}
+  fetch('/api/quota',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded','Authorization':'Bearer '+token,'X-CSRF-Token':csrfToken},body:'user='+encodeURIComponent(user)+'&limit='+limit})
+    .then(r=>r.json()).then(data=>{if(data.ok){showToast('Quota set for '+user,'success');loadSettings();}else showToast('Failed','error');})
+    .catch(()=>showToast('Failed to set quota','error'));
 }
 function formatUptime(s){const h=Math.floor(s/3600),m=Math.floor((s%3600)/60);return h+'h '+m+'m';}
 function saveSettings(){
