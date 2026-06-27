@@ -3516,7 +3516,7 @@ void setup() {
   webServer.on("/api/settings",HTTP_POST,handleSaveSettings);
   webServer.on("/api/csrf",HTTP_GET,handleCsrfToken);
   webServer.on("/api/ota-status",HTTP_GET,handleOtaStatus);
-  webServer.on("/api/ota-upload",HTTP_POST,[](){webServer.send(200);},handleOtaUpload);
+  webServer.on("/api/ota-upload",HTTP_POST,[](){if(!checkCsrf(webServer)){webServer.send(403,"text/plain","CSRF invalid");return;}webServer.send(200);},handleOtaUpload);
   webServer.on("/api/reboot",HTTP_POST,handleReboot);
   webServer.on("/api/export-log",HTTP_GET,handleExportLog);
   webServer.on("/api/stats",HTTP_GET,handleStats);
