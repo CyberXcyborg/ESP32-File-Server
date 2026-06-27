@@ -784,6 +784,9 @@ void handleFileInfo() {
   doc["type"] = f.isDirectory() ? "dir" : "file";
   doc["size"] = f.isDirectory() ? 0 : f.size();
   doc["sizeFormatted"] = f.isDirectory() ? "-" : getFileSize(f.size());
+  // Include download count and read-only flag from access metadata
+  doc["downloads"] = getFileDownloads(path);
+  doc["readonly"] = isFileReadOnly(path);
   unsigned long fmtime = f.fileTime();
   f.close();
   String out; serializeJson(doc, out);
@@ -1066,6 +1069,8 @@ void handleRename() {
   if (!webServer.hasArg("path") || !webServer.hasArg("name")) { sendError(400,"Missing path or name"); return; }
   String path = webServer.arg("path"), newName = webServer.arg("name");
   if (!SD.exists(path)) { sendError(404,"Source file not found"); return; }
+  // Reject rename if file is read-only (immutable)
+  if (isFileReadOnly(path)) { sendError(403,"File is read-only (immutable)"); return; }
   // Validate new name - prevent path traversal
   if (newName.indexOf('/') >= 0 || newName.indexOf('\\') >= 0 || newName.length() == 0) {
     sendError(400,"Invalid file name"); return;
@@ -2827,6 +2832,8 @@ void handleFileEdit() {
   if (!webServer.hasArg("content")) { sendError(400, "Need content"); return; }
   String path = sanitizePath(webServer.arg("path"));
   if (!SD.exists(path)) { sendError(404, "File not found"); return; }
+  // Reject edit if file is read-only (immutable)
+  if (isFileReadOnly(path)) { sendError(403, "File is read-only (immutable)"); return; }
   // Only allow editing text-based files
   String name = path.substring(path.lastIndexOf('/')+1);
   if (!shouldCompress(name) && name != "txt") { sendError(403, "Cannot edit binary files"); return; }
