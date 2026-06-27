@@ -96,6 +96,76 @@ struct HealthLog {
 HealthLog healthHistory[48]; // Last 48 entries (~8 hours at 10min intervals)
 int healthIndex = 0;
 
+// ============== REQUEST METRICS ==============
+// Track per-endpoint response times and request counts for performance monitoring
+struct EndpointMetric {
+  String path;
+  uint32_t count;
+  uint32_t totalTimeMs;   // Cumulative response time
+  uint32_t maxTimeMs;     // Worst case
+  uint32_t lastTimeMs;    // Most recent
+};
+#define MAX_METRICS 40
+EndpointMetric endpointMetrics[MAX_METRICS];
+int metricCount = 0;
+
+// Find or create metric entry for a path
+EndpointMetric* findMetric(const String& path) {
+  for (int i = 0; i < metricCount; i++) {
+    if (endpointMetrics[i].path == path) return &endpointMetrics[i];
+  }
+  if (metricCount < MAX_METRICS) {
+    endpointMetrics[metricCount].path = path;
+    endpointMetrics[metricCount].count = 0;
+    endpointMetrics[metricCount].totalTimeMs = 0;
+    endpointMetrics[metricCount].maxTimeMs = 0;
+    endpointMetrics[metricCount].lastTimeMs = 0;
+    return &endpointMetrics[metricCount++];
+  }
+  return nullptr;
+}
+
+// Record a request timing
+void recordMetric(const String& path, uint32_t elapsedMs) {
+  EndpointMetric* m = findMetric(path);
+  if (!m) return;
+  m->count++;
+  m->totalTimeMs += elapsedMs;
+  if (elapsedMs > m->maxTimeMs) m->maxTimeMs = elapsedMs;
+  m->lastTimeMs = elapsedMs;
+}
+
+// Expose metrics via /api/metrics
+void handleMetrics() {
+  String u, lvl;
+  if (!isAuthenticated(webServer, u, lvl) || lvl != "admin") { webServer.send(403); return; }
+  sendSecurityHeaders();
+  DynamicJsonDocument doc(4096);
+  doc["firmware"] = FIRMWARE_VERSION;
+  doc["uptime_sec"] = millis() / 1000;
+  doc["heap_free"] = ESP.getFreeHeap();
+  doc["ws_clients"] = wsClientCount;
+  doc["metrics_count"] = metricCount;
+  JsonObject sys = doc.createNestedObject("system");
+  sys["sd_ok"] = sdOK;
+  sys["wifi_rssi"] = WiFi.RSSI();
+  sys["total_requests"] = 0;
+  JsonArray arr = doc.createNestedArray("endpoints");
+  uint32_t totalReqs = 0;
+  for (int i = 0; i < metricCount; i++) {
+    JsonObject e = arr.createNestedObject();
+    e["path"] = endpointMetrics[i].path;
+    e["count"] = endpointMetrics[i].count;
+    e["avg_ms"] = endpointMetrics[i].count > 0 ? (endpointMetrics[i].totalTimeMs / endpointMetrics[i].count) : 0;
+    e["max_ms"] = endpointMetrics[i].maxTimeMs;
+    e["last_ms"] = endpointMetrics[i].lastTimeMs;
+    totalReqs += endpointMetrics[i].count;
+  }
+  sys["total_requests"] = totalReqs;
+  String out; serializeJson(doc, out);
+  webServer.send(200, "application/json", out);
+}
+
 // ============== WE BROADCAST ==============
 void broadcastChange(String action, String path) {
   // Broadcast file change event to all connected WebSocket clients
@@ -3128,6 +3198,7 @@ void setup() {
   webServer.on("/api/notes",HTTP_POST,handleSaveNote);
   webServer.on("/api/scan",HTTP_GET,handleScanStorage);
   webServer.on("/api/sd-health",HTTP_GET,handleSdHealth);
+  webServer.on("/api/metrics",HTTP_GET,handleMetrics);
   webServer.on("/api/analytics",HTTP_GET,handleStorageAnalytics);
   webServer.on("/api/detect-type",HTTP_GET,handleDetectType);
   webServer.on("/api/crc",HTTP_GET,handleFileCRC);
@@ -3159,7 +3230,15 @@ void setup() {
 }
 
 void loop() {
+  // Record request start time for metrics
+  unsigned long reqStart = millis();
   webServer.handleClient();
+  // Record per-endpoint request metrics
+  if (webServer.method() != HTTP_ANY && millis() > reqStart) {
+    String uri = webServer.uri();
+    uint32_t elapsed = (uint32_t)(millis() - reqStart);
+    recordMetric(uri, elapsed);
+  }
   webSocket.loop();
   ftpSrv.handleFTP();
   checkWiFi();
