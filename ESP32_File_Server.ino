@@ -553,12 +553,47 @@ void handleDownload() {
   String etag = "\"" + String(fsize) + "-" + String(fmtime) + "\"";
   webServer.sendHeader("ETag", etag);
   webServer.sendHeader("Cache-Control", "public, max-age=300");
+  webServer.sendHeader("Accept-Ranges", "bytes");
   // If client sends matching If-None-Match, return 304
   if (webServer.hasHeader("If-None-Match") && webServer.header("If-None-Match") == etag) {
     f.close();
     webServer.send(304, "text/plain", "Not Modified");
     logActivity("download-304", path, u);
     return;
+  }
+  // Byte-range support for resume/partial downloads
+  if (webServer.hasHeader("Range")) {
+    String rangeHdr = webServer.header("Range");
+    if (rangeHdr.startsWith("bytes=")) {
+      String rangeSpec = rangeHdr.substring(6);
+      int dash = rangeSpec.indexOf('-');
+      if (dash > 0) {
+        unsigned long startByte = rangeSpec.substring(0, dash).toInt();
+        unsigned long endByte = (dash < rangeSpec.length()-1) ? rangeSpec.substring(dash+1).toInt() : fsize - 1;
+        if (endByte >= fsize) endByte = fsize - 1;
+        if (startByte <= endByte && startByte < fsize) {
+          unsigned long contentLen = endByte - startByte + 1;
+          webServer.sendHeader("Content-Range", "bytes " + String(startByte) + "-" + String(endByte) + "/" + String(fsize));
+          webServer.sendHeader("Content-Length", String(contentLen));
+          webServer.sendHeader("Content-Disposition", "attachment; filename=\"" + name + "\"");
+          webServer.sendHeader("Content-Type", ctype);
+          webServer.send(206, ctype, "");
+          f.seek(startByte);
+          uint8_t buf[512];
+          unsigned long sent = 0;
+          while (sent < contentLen && f.available()) {
+            int toRead = min((unsigned long)512, contentLen - sent);
+            int n = f.read(buf, toRead);
+            if (n <= 0) break;
+            webServer.sendContent((const char*)buf, n);
+            sent += n;
+          }
+          f.close();
+          logActivity("download-range", path + " (" + String(startByte) + "-" + String(endByte) + ")", u);
+          return;
+        }
+      }
+    }
   }
   // Auto-detect gzip support from Accept-Encoding header
   bool clientWantsGzip = webServer.hasHeader("Accept-Encoding") && webServer.header("Accept-Encoding").indexOf("gzip") >= 0;
