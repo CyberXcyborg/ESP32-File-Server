@@ -772,6 +772,11 @@ void handleDownload() {
   }
   webServer.sendHeader("Content-Disposition", "attachment; filename=\"" + name + "\"");
   webServer.sendHeader("Content-Type", ctype);
+  // Add Last-Modified header for better client caching
+  if (fmtime > 0) {
+    // Format as HTTP-date (best effort — ESP32 time may not be NTP-synced)
+    webServer.sendHeader("Last-Modified", String(fmtime));
+  }
   webServer.streamFile(f, ctype);
   f.close();
   logActivity("download", path, u);
@@ -2606,6 +2611,45 @@ void handleFilePreviewCode() {
   logActivity("preview-code", path, u);
 }
 
+// ============== FILE CONTENT EDIT (SAVE) =============
+// Save text content to an existing file via POST body
+void handleFileEdit() {
+  String u, lvl;
+  if (!isAuthenticated(webServer, u, lvl) || !checkCsrf(webServer)) { webServer.send(403); return; }
+  if (!sdOK) { sendError(503, "SD card not available"); return; }
+  if (!webServer.hasArg("path")) { sendError(400, "Need path"); return; }
+  if (!webServer.hasArg("content")) { sendError(400, "Need content"); return; }
+  String path = sanitizePath(webServer.arg("path"));
+  if (!SD.exists(path)) { sendError(404, "File not found"); return; }
+  // Only allow editing text-based files
+  String name = path.substring(path.lastIndexOf('/')+1);
+  if (!shouldCompress(name) && name != "txt") { sendError(403, "Cannot edit binary files"); return; }
+  // Acquire lock to prevent concurrent write corruption
+  if (!acquireFileLock(path, 3000)) { sendError(423, "File is locked"); return; }
+  // Create version backup before overwriting
+  createVersion(path);
+  String content = webServer.arg("content");
+  // Limit content size to prevent OOM (max 64KB)
+  if (content.length() > 65536) { releaseFileLock(path); sendError(413, "Content too large (max 64KB)"); return; }
+  File f = SD.open(path, FILE_WRITE);
+  if (!f) { releaseFileLock(path); sendError(500, "Cannot open file for writing"); return; }
+  size_t written = f.print(content);
+  f.close();
+  releaseFileLock(path);
+  totalWriteOps++;
+  totalWriteBytes += written;
+  if (written == content.length()) {
+    logActivity("edit", path + " (" + String(written) + "B)", u);
+    broadcastChange("edit", path);
+    broadcastStatsUpdate();
+    // Recompute CRC sidecar after edit
+    storeFileCRC(path);
+    sendJson(200, "{\"ok\":true,\"path\":\"" + path + "\",\"size\":" + String(written) + "}");
+  } else {
+    sendError(500, "Write incomplete");
+  }
+}
+
 void handleFilePreview() {
   String u, lvl;
   if (!isAuthenticated(webServer, u, lvl)) { webServer.send(401); return; }
@@ -3499,6 +3543,7 @@ void setup() {
   webServer.on("/api/diff",HTTP_GET,handleFileDiff);
   webServer.on("/api/preview",HTTP_GET,handleFilePreview);
   webServer.on("/api/preview-code",HTTP_GET,handleFilePreviewCode);
+  webServer.on("/api/edit",HTTP_POST,handleFileEdit);
   webServer.on("/api/md-preview",HTTP_GET,handleMarkdownPreview);
   webServer.on("/api/users",HTTP_GET,handleGetUsers);
   webServer.on("/api/users",HTTP_POST,handleAddUser);
