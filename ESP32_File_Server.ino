@@ -2122,9 +2122,15 @@ void handleCompleteSetup() {
   String ap = webServer.arg("admin_pass");
   String ws = webServer.arg("wifi_ssid");
   String wp = webServer.arg("wifi_pass");
-  // Save users file
+  // Validate input: username 1-32 chars, password 4-64 chars
+  if (au.length() < 1 || au.length() > 32 || ap.length() < 4 || ap.length() > 64) {
+    webServer.send(400, "text/plain", "Invalid credentials (user:1-32, pass:4-64)"); return;
+  }
+  // Hash password before storing (use HMAC-SHA256 like normal user creation)
+  String hashedPw = hashPasswordForStorage(au, ap);
+  // Save users file with hashed password
   File f = SD.open(USERS_FILE, FILE_WRITE);
-  if (f) { f.print("{\"users\":[{\"username\":\""+au+"\",\"password\":\""+ap+"\",\"userLevel\":\"admin\"}]}"); f.close(); }
+  if (f) { f.print("{\"users\":[{\"username\":\""+au+"\",\"password\":\""+hashedPw+"\",\"userLevel\":\"admin\"}]}"); f.close(); }
   // Save settings
   saveSettings(ws, wp, ap_ssid, ap_password, ftp_user, ftp_password);
   webServer.send(200, "text/html", "<html><body style="font-family:system-ui;padding:40px;text-align:center"><h1>✅ Setup Complete!</h1><p>Device will now connect to WiFi and restart.</p></body></html>");
