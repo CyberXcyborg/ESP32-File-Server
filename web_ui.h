@@ -1416,6 +1416,8 @@ function loadAnalytics(){
       document.getElementById('auditLog').innerHTML=html;
     }).catch(()=>{document.getElementById('auditLog').innerHTML='<p style="color:var(--text2)">Audit log unavailable</p>';});
 }
+// ============== PWA SERVICE WORKER REGISTRATION ==============
+if('serviceWorker' in navigator){navigator.serviceWorker.register('/sw.js').then(()=>console.log('SW registered')).catch(()=>console.log('SW skipped'));}
 </script>
 </body>
 </html>

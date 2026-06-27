@@ -1722,7 +1722,14 @@ void handleRoot() {
 }
 void handleManifest() {
   webServer.sendHeader("Cache-Control", "public, max-age=86400");
-  webServer.send(200, "application/manifest+json", "{\"name\":\"ESP32 File Server\",\"short_name\":\"ESP32-FS\",\"start_url\":\"/\",\"display\":\"standalone\",\"background_color\":\"#0984e3\",\"theme_color\":\"#0984e3\",\"icons\":[]}");
+  // PWA manifest with inline icons (1x1 blue PNG as placeholder)
+  String m = "{\"name\":\"ESP32 File Server\",\"short_name\":\"ESP32-FS\",\"start_url\":\"/\",\"display\":\"standalone\",";
+  m += "\"background_color\":\"#0984e3\",\"theme_color\":\"#0984e3\",";
+  m += "\"description\":\"WiFi file manager for ESP32 with SD card\",";
+  m += "\"categories\":[\"utilities\",\"productivity\"],";
+  m += "\"icons\":[{\"src\":\"/favicon.ico\",\"sizes\":\"32x32\",\"type\":\"image/x-icon\"}],";
+  m += "\"shortcuts\":[{\"name\":\"Upload\",\"url\":\"/\",\"description\":\"Upload files\"}]}";
+  webServer.send(200, "application/manifest+json", m);
 }
 void handleRobotsTxt() {
   webServer.send(200, "text/plain", "User-agent: *\nDisallow: /\n");
@@ -1731,6 +1738,19 @@ void handleFavicon() {
   // Inline 1x1 transparent PNG to avoid 404
   webServer.sendHeader("Cache-Control", "public, max-age=86400");
   webServer.send(200, "image/x-icon", "");
+}
+
+// ============== SERVICE WORKER =============
+// Minimal SW for PWA offline support: cache app shell, network-first for API
+void handleServiceWorker() {
+  sendSecurityHeaders();
+  webServer.sendHeader("Cache-Control", "public, max-age=86400");
+  webServer.sendHeader("Content-Type", "application/javascript");
+  String sw = "const CACHE='esp32fs-v6.6';const SHELL=['/', '/manifest.json'];\n";
+  sw += "self.addEventListener('install',e=>{e.waitUntil(caches.open(CACHE).then(c=>c.addAll(SHELL)));self.skipWaiting();});\n";
+  sw += "self.addEventListener('activate',e=>{e.waitUntil(caches.keys().then(ks=>Promise.all(ks.filter(k=>k!==CACHE).map(k=>caches.delete(k)))));self.clients.claim();});\n";
+  sw += "self.addEventListener('fetch',e=>{if(e.request.url.includes('/api/')){e.respondWith(fetch(e.request).catch(()=>caches.match(e.request)));}else{e.respondWith(caches.match(e.request).then(r=>r||fetch(e.request)));}});\n";
+  webServer.send(200, "application/javascript", sw);
 }
 
 // ============== BATCH OPERATIONS ==============
@@ -3300,6 +3320,7 @@ void setup() {
   webServer.on("/manifest.json",handleManifest);
   webServer.on("/robots.txt",handleRobotsTxt);
   webServer.on("/favicon.ico",handleFavicon);
+  webServer.on("/sw.js",handleServiceWorker);
   webServer.on("/setup",handleSetupPage);
   webServer.on("/api/complete-setup",HTTP_POST,handleCompleteSetup);
   webServer.on("/s/",HTTP_GET,handleSharedFile);
