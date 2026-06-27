@@ -724,7 +724,7 @@ void handleUpload() {
   HTTPUpload& up = webServer.upload();
   static File uf;
   static String upp;
-  } else if (up.status == UPLOAD_FILE_START) {
+  if (up.status == UPLOAD_FILE_START) {
     // Enforce maximum upload size limit
     if (up.totalSize > MAX_UPLOAD_SIZE) {
       Serial.printf("Upload rejected: too large (%u > %u)\n", up.totalSize, MAX_UPLOAD_SIZE);
