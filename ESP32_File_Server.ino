@@ -1171,6 +1171,12 @@ void handleUpload() {
       Serial.printf("Upload rejected: too large (%u > %u)\n", up.totalSize, MAX_UPLOAD_SIZE);
       return;
     }
+    // Check per-user storage quota before upload
+    if (!checkUserQuota(u, up.totalSize)) {
+      Serial.println("Upload rejected: user quota exceeded");
+      webServer.send(507, "text/plain", "Storage quota exceeded");
+      return;
+    }
     // Check free space (need at least upload size + 10KB buffer)
     uint64_t free = SD.totalBytes() - SD.usedBytes();
     if (free < up.totalSize + 10240) {
@@ -1212,6 +1218,19 @@ void handleUpload() {
         // SD full?
         Serial.println("Write failed - SD may be full");
         sdOK = false;
+      }
+      // Broadcast upload progress via WebSocket every 32KB chunk
+      static size_t progressAccum = 0;
+      progressAccum += up.currentSize;
+      if (progressAccum >= 32768) {
+        progressAccum = 0;
+        DynamicJsonDocument pd(128);
+        pd["event"] = "upload-progress";
+        pd["path"] = upp;
+        pd["loaded"] = (uint32_t)up.totalSize;
+        pd["total"] = (uint32_t)up.totalSize;
+        String pmsg; serializeJson(pd, pmsg);
+        webSocket.broadcastTXT(pmsg);
       }
     }
   } else if (up.status == UPLOAD_FILE_END) {
@@ -1983,6 +2002,161 @@ void handleBatchMove() {
     else fail++;
   }
   webServer.send(200, "application/json", "{\"ok\":"+String(ok)+",\"fail\":"+String(fail)+"}");
+}
+
+// ============== PER-USER STORAGE QUOTA ==============
+// Track bytes written per user to enforce storage limits
+struct UserQuota {
+  String username;
+  uint64_t bytesUsed;
+  uint64_t bytesLimit;  // 0 = unlimited
+};
+#define MAX_QUOTA_ENTRIES 10
+UserQuota userQuotas[MAX_QUOTA_ENTRIES];
+int quotaCount = 0;
+#define DEFAULT_USER_QUOTA 0 // 0 = unlimited (admin can set per-user)
+
+// Load quota settings from .quota.json on SD
+void loadQuotas() {
+  quotaCount = 0;
+  if (!SD.exists("/.quota.json")) return;
+  File f = SD.open("/.quota.json", FILE_READ);
+  if (!f) return;
+  String content = "";
+  while (f.available()) content += (char)f.read();
+  f.close();
+  DynamicJsonDocument doc(1024);
+  if (deserializeJson(doc, content)) return;
+  JsonArray arr = doc.as<JsonArray>();
+  for (JsonObject obj : arr) {
+    if (quotaCount >= MAX_QUOTA_ENTRIES) break;
+    userQuotas[quotaCount].username = obj["user"] | "";
+    userQuotas[quotaCount].bytesUsed = 0; // Will be calculated on demand
+    userQuotas[quotaCount].bytesLimit = obj["limit"] | (uint64_t)0;
+    quotaCount++;
+  }
+}
+
+// Save quota settings to SD
+void saveQuotas() {
+  DynamicJsonDocument doc(1024);
+  JsonArray arr = doc.to<JsonArray>();
+  for (int i = 0; i < quotaCount; i++) {
+    JsonObject obj = arr.createNestedObject();
+    obj["user"] = userQuotas[i].username;
+    obj["limit"] = userQuotas[i].bytesLimit;
+  }
+  File f = SD.open("/.quota.json", FILE_WRITE);
+  if (f) { serializeJson(doc, f); f.close(); }
+}
+
+// Check if a user can write more bytes (quota enforcement)
+bool checkUserQuota(String username, uint64_t additionalBytes) {
+  // Find user quota entry
+  for (int i = 0; i < quotaCount; i++) {
+    if (userQuotas[i].username == username && userQuotas[i].bytesLimit > 0) {
+      // Calculate current usage by scanning all files owned by this user
+      // For efficiency, use totalWriteBytes as approximation
+      // A more accurate check would scan the SD, but that's too slow
+      // Instead, we track per-user usage via access metadata
+      uint64_t currentUsage = 0;
+      if (SD.exists(ACCESS_META_FILE)) {
+        File af = SD.open(ACCESS_META_FILE, FILE_READ);
+        if (af) {
+          String ac = "";
+          while (af.available()) ac += (char)af.read();
+          af.close();
+          DynamicJsonDocument adoc(4096);
+          if (!deserializeJson(adoc, ac)) {
+            for (JsonPair kv : adoc.as<JsonObject>()) {
+              JsonObject meta = kv.value().as<JsonObject>();
+              if (String(meta["owner"] | "") == username) {
+                currentUsage += meta["size"] | (uint64_t)0;
+              }
+            }
+          }
+        }
+      }
+      if (currentUsage + additionalBytes > userQuotas[i].bytesLimit) return false;
+    }
+  }
+  return true; // No quota set or unlimited
+}
+
+// Handle quota config API
+void handleQuotaConfig() {
+  String u, lvl;
+  if (!isAuthenticated(webServer, u, lvl) || lvl != "admin") { webServer.send(403); return; }
+  if (webServer.method() == HTTP_GET) {
+    DynamicJsonDocument doc(1024);
+    JsonArray arr = doc.to<JsonArray>();
+    for (int i = 0; i < quotaCount; i++) {
+      JsonObject obj = arr.createNestedObject();
+      obj["user"] = userQuotas[i].username;
+      obj["limit"] = userQuotas[i].bytesLimit;
+      obj["limit_mb"] = (uint32_t)(userQuotas[i].bytesLimit / 1048576UL);
+    }
+    String out; serializeJson(doc, out);
+    webServer.send(200, "application/json", out);
+    return;
+  }
+  // POST: set quota for a user
+  if (!webServer.hasArg("user") || !webServer.hasArg("limit")) { webServer.send(400); return; }
+  String targetUser = webServer.arg("user");
+  uint64_t limit = strtoull(webServer.arg("limit").c_str(), NULL, 10);
+  // Find or create entry
+  int slot = -1;
+  for (int i = 0; i < quotaCount; i++) {
+    if (userQuotas[i].username == targetUser) { slot = i; break; }
+  }
+  if (slot < 0 && quotaCount < MAX_QUOTA_ENTRIES) { slot = quotaCount++; }
+  if (slot < 0) { webServer.send(507); return; }
+  userQuotas[slot].username = targetUser;
+  userQuotas[slot].bytesLimit = limit;
+  userQuotas[slot].bytesUsed = 0;
+  saveQuotas();
+  logActivity("quota-set", targetUser + " limit=" + String((uint32_t)(limit/1048576UL)) + "MB", u);
+  webServer.send(200, "application/json", "{\"ok\":true}");
+}
+
+// ============== BATCH RENAME ==============
+// Rename multiple files using find/replace pattern
+void handleBatchRename() {
+  String u, lvl;
+  if (!isAuthenticated(webServer, u, lvl) || !checkCsrf(webServer)) { webServer.send(403); return; }
+  if (!validatePostBody()) return;
+  if (!webServer.hasArg("plain")) { webServer.send(400); return; }
+  DynamicJsonDocument doc(4096);
+  deserializeJson(doc, webServer.arg("plain"));
+  JsonArray paths = doc["paths"];
+  String find = doc["find"] | "";
+  String replace = doc["replace"] | "";
+  if (find.length() == 0) { webServer.send(400, "application/json", "{\"error\":\"Empty find pattern\"}"); return; }
+  int ok = 0, fail = 0;
+  for (const char* ps : paths) {
+    String p = ps;
+    if (!SD.exists(p)) { fail++; continue; }
+    String name = p.substring(p.lastIndexOf('/') + 1);
+    String dir = p.substring(0, p.lastIndexOf('/') + 1);
+    // Apply find/replace to filename only
+    String newName = name;
+    int pos;
+    while ((pos = newName.indexOf(find)) >= 0) {
+      newName = newName.substring(0, pos) + replace + newName.substring(pos + find.length());
+    }
+    if (newName == name || newName.length() == 0) { fail++; continue; }
+    String newPath = dir + newName;
+    if (SD.exists(newPath)) { fail++; continue; } // Don't overwrite
+    if (!acquireFileLock(p, 2000)) { fail++; continue; }
+    if (SD.rename(p, newPath)) {
+      ok++;
+      logActivity("batch-rename", p + " -> " + newPath, u);
+      broadcastChange("rename", newPath);
+      fireWebhook("rename", newPath, u);
+    } else fail++;
+    releaseFileLock(p);
+  }
+  webServer.send(200, "application/json", "{\"ok\":" + String(ok) + ",\"fail\":" + String(fail) + "}");
 }
 
 // ============== BATCH COPY ==============
@@ -3677,6 +3851,7 @@ void setup() {
   if(!sdOK) Serial.println("SD Card failed!");
   else Serial.println("SD OK");
   loadSettings();
+  loadQuotas();
   setupAuthentication();
   connectToWiFi();
 
@@ -3715,6 +3890,9 @@ void setup() {
   webServer.on("/api/batch-delete",HTTP_POST,handleBatchDelete);
   webServer.on("/api/batch-move",HTTP_POST,handleBatchMove);
   webServer.on("/api/batch-copy",HTTP_POST,handleBatchCopy);
+  webServer.on("/api/batch-rename",HTTP_POST,handleBatchRename);
+  webServer.on("/api/quota",HTTP_GET,handleQuotaConfig);
+  webServer.on("/api/quota",HTTP_POST,handleQuotaConfig);
   webServer.on("/api/search",HTTP_GET,handleSearch);
   webServer.on("/api/grep",HTTP_GET,handleGrep);
   webServer.on("/api/changes",HTTP_GET,handleChanges);

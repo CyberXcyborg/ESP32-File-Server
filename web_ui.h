@@ -132,7 +132,7 @@ kbd{font-family:monospace;font-size:12px}
   .settings-grid{grid-template-columns:1fr}
   .toast{bottom:10px;left:10px;right:10px;transform:none;max-width:none}
   .controls{flex-wrap:wrap}
-  #copySelBtn,#moveSelBtn{display:none !important}
+  #copySelBtn,#moveSelBtn,#renameSelBtn{display:none !important}
 }
 /* Loading spinner */
 .loading-spinner{display:flex;justify-content:center;align-items:center;padding:40px}
@@ -186,6 +186,7 @@ kbd{font-family:monospace;font-size:12px}
       <button class="btn btn-danger" id="delSelBtn" style="display:none" onclick="deleteSelected()">🗑️ Delete Selected</button>
       <button class="btn" id="copySelBtn" style="display:none" onclick="copySelected()">📋 Copy Selected</button>
       <button class="btn" id="moveSelBtn" style="display:none" onclick="moveSelected()">📦 Move Selected</button>
+      <button class="btn" id="renameSelBtn" style="display:none" onclick="renameSelected()">✏️ Rename Selected</button>
       <button class="btn" id="downloadSelBtn" style="display:none" onclick="downloadSelected()">⬇️ Download Selected</button>
       <select class="btn btn-ghost" id="sortSelect" onchange="sortFiles()" style="padding:8px 12px">
         <option value="name-asc">Name ↑</option>
@@ -615,6 +616,11 @@ function initWebSocket(){
         if(d.event==='crc-mismatch'){
           showToast('⚠️ CRC mismatch: '+d.path,'error');
         }
+        // Show upload progress from server-side WebSocket broadcasts
+        if(d.event==='upload-progress'&&d.path){
+          const el=document.getElementById('ul-'+d.path.replace(/[^a-zA-Z0-9]/g,'_'));
+          if(el&&d.total>0){el.textContent=Math.round(d.loaded/d.total*100)+'%';}
+        }
       }
     }catch(err){}
   };
@@ -739,7 +745,7 @@ function filterFiles(){renderFiles();}
 function setSort(s){if(sortBy===s)sortAsc=!sortAsc;else{sortBy=s;sortAsc=true;}renderFiles();}
 function sortFiles(){const v=document.getElementById('sortSelect').value;const[p,d]=v.split('-');sortBy=p;sortAsc=d==='asc';loadFiles(currentPath);}
 function toggleSel(item){const path=item.dataset.path;if(selectedFiles.includes(path)){selectedFiles=selectedFiles.filter(f=>f!==path);item.classList.remove('selected');}else{selectedFiles.push(path);item.classList.add('selected');}updateSelBtn();}
-function updateSelBtn(){const b=document.getElementById('delSelBtn');const c=document.getElementById('copySelBtn');const m=document.getElementById('moveSelBtn');const d=document.getElementById('downloadSelBtn');if(selectedFiles.length>0){b.style.display='';b.textContent='🗑️ Delete ('+selectedFiles.length+')';if(c)c.style.display='';if(m)m.style.display='';if(d)d.style.display='';}else{b.style.display='none';if(c)c.style.display='none';if(m)m.style.display='none';if(d)d.style.display='none';}const sa=document.getElementById('selectAllBtn');if(sa)sa.textContent=selectedFiles.length===files.length&&files.length>0?'☐ Deselect All':'☑️ Select All';}
+function updateSelBtn(){const b=document.getElementById('delSelBtn');const c=document.getElementById('copySelBtn');const m=document.getElementById('moveSelBtn');const rn=document.getElementById('renameSelBtn');const d=document.getElementById('downloadSelBtn');if(selectedFiles.length>0){b.style.display='';b.textContent='🗑️ Delete ('+selectedFiles.length+')';if(c)c.style.display='';if(m)m.style.display='';if(rn)rn.style.display='';if(d)d.style.display='';}else{b.style.display='none';if(c)c.style.display='none';if(m)m.style.display='none';if(rn)rn.style.display='none';if(d)d.style.display='none';}const sa=document.getElementById('selectAllBtn');if(sa)sa.textContent=selectedFiles.length===files.length&&files.length>0?'☐ Deselect All':'☑️ Select All';}
 function toggleSelectAll(){
   if(selectedFiles.length===files.length&&files.length>0){selectedFiles=[];}else{selectedFiles=files.map(f=>f.path);}
   updateSelBtn();renderFiles();
@@ -1182,6 +1188,20 @@ function moveSelected(){
       loadFiles(currentPath);
     })
     .catch(()=>showToast('Move failed','error'));
+}
+// ============== BATCH RENAME ==============
+function renameSelected(){
+  if(!selectedFiles.length)return;
+  const find=prompt('Find in filename:');
+  if(!find)return;
+  const replace=prompt('Replace with:','');
+  fetch('/api/batch-rename',{method:'POST',headers:{'Authorization':'Bearer '+token,'Content-Type':'application/json','X-CSRF-Token':csrfToken},body:JSON.stringify({paths:selectedFiles,find:find,replace:replace})})
+    .then(r=>r.json()).then(data=>{
+      if(data.ok>0)showToast('Renamed '+data.ok+' item(s)','success');
+      if(data.fail>0)showToast(data.fail+' failed','error');
+      loadFiles(currentPath);
+    })
+    .catch(()=>showToast('Rename failed','error'));
 }
 function refreshFiles(){loadFiles(currentPath);}
 
