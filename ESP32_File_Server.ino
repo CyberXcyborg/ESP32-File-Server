@@ -517,6 +517,8 @@ void sendSecurityHeaders() {
   webServer.sendHeader("Cross-Origin-Opener-Policy", "same-origin");
   webServer.sendHeader("Cross-Origin-Resource-Policy", "same-origin");
   webServer.sendHeader("X-Permitted-Cross-Domain-Policies", "none");
+  // Suppress server identity for security (don't leak ESP32/Arduino info)
+  webServer.sendHeader("Server", "ESP32FS");
   // Allow HTTP keep-alive for fewer TCP round-trips on repeated requests
   webServer.sendHeader("Connection", "keep-alive");
   webServer.sendHeader("Keep-Alive", "timeout=5, max=100");
@@ -590,7 +592,7 @@ bool isRateLimited() {
   webServer.sendHeader("X-RateLimit-Reset", String(resetIn));
 
   if (!checkRateLimit(ip)) {
-    webServer.send(429, "application/json", "{\"error\":\"Too many requests\",\"retry\":" + String(resetIn) + "}");
+    webServer.send(429, "application/json", "{\"error\":\"Too many requests\",\"retry\":\"" + String(resetIn) + "}");
     return true;
   }
   // Check POST body size to prevent OOM
@@ -599,6 +601,12 @@ bool isRateLimited() {
       sendError(413, "Request body too large (max 32KB)");
       return true;
     }
+  }
+  // Emit CORS headers on actual API requests (non-preflight) for cross-origin access
+  if (webServer.uri().startsWith("/api/")) {
+    webServer.sendHeader("Access-Control-Allow-Origin", "*");
+    webServer.sendHeader("Access-Control-Allow-Headers", "Authorization, Content-Type, X-CSRF-Token, Idempotency-Key");
+    webServer.sendHeader("Access-Control-Expose-Headers", "X-Request-Id, X-RateLimit-Limit, X-RateLimit-Remaining, Server-Timing");
   }
   return false;
 }
@@ -3674,7 +3682,18 @@ void setup() {
   webServer.on("/api/users/",HTTP_DELETE,handleDeleteUser);
 
   // Add security headers to all responses
+  // CORS preflight handler: respond to OPTIONS on /api/* with proper CORS headers
   webServer.onNotFound([](){
+    // Handle CORS preflight (OPTIONS) requests for /api/* paths
+    if (webServer.method() == HTTP_OPTIONS && webServer.uri().startsWith("/api/")) {
+      webServer.sendHeader("Access-Control-Allow-Origin", "*");
+      webServer.sendHeader("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
+      webServer.sendHeader("Access-Control-Allow-Headers", "Authorization, Content-Type, X-CSRF-Token, Idempotency-Key");
+      webServer.sendHeader("Access-Control-Max-Age", "86400"); // Preflight cache 24h
+      webServer.sendHeader("Access-Control-Allow-Credentials", "true");
+      webServer.send(204, "text/plain", ""); // No content for OPTIONS
+      return;
+    }
     webServer.sendHeader("X-Content-Type-Options", "nosniff");
     webServer.sendHeader("X-Frame-Options", "DENY");
     webServer.send(404, "text/plain", "Not Found");
