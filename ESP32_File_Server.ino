@@ -334,7 +334,63 @@ void checkSD() {
   }
 }
 
-// Request ID counter for tracing
+// ============== IDEMPOTENCY KEY SUPPORT =============
+// Prevents duplicate operations on network retries
+// Client sends "Idempotency-Key" header; server caches result for 60s
+struct IdempotencyEntry {
+  String key;
+  String response; // Cached response body
+  int code;        // Cached HTTP status
+  unsigned long timestamp;
+};
+#define MAX_IDEMPOTENCY 10
+#define IDEMPOTENCY_TTL 60000UL // 60 second cache
+IdempotencyEntry idempotencyCache[MAX_IDEMPOTENCY];
+int idempotencyCount = 0;
+
+// Check if request has a cached idempotency response; if so, send it and return true
+bool checkIdempotencyKey(WebServer &server) {
+  if (!server.hasHeader("Idempotency-Key")) return false;
+  String key = server.header("Idempotency-Key");
+  if (key.length() == 0) return false;
+  unsigned long now = millis();
+  for (int i = 0; i < idempotencyCount; i++) {
+    if (idempotencyCache[i].key == key) {
+      // Expired? Remove and allow re-execution
+      if (now - idempotencyCache[i].timestamp > IDEMPOTENCY_TTL) {
+        idempotencyCache[i].key = "";
+        return false;
+      }
+      // Return cached response
+      server.send(idempotencyCache[i].code, "application/json", idempotencyCache[i].response);
+      return true;
+    }
+  }
+  return false;
+}
+
+// Store an idempotency result for future duplicate requests
+void storeIdempotencyResult(String key, int code, String response) {
+  if (key.length() == 0) return;
+  unsigned long now = millis();
+  // Find expired slot, or use oldest/LRU
+  int slot = -1;
+  unsigned long oldest = now;
+  for (int i = 0; i < idempotencyCount; i++) {
+    if (idempotencyCache[i].key.length() == 0 || now - idempotencyCache[i].timestamp > IDEMPOTENCY_TTL) {
+      slot = i; break;
+    }
+    if (idempotencyCache[i].timestamp < oldest) { oldest = idempotencyCache[i].timestamp; slot = i; }
+  }
+  if (slot < 0 && idempotencyCount < MAX_IDEMPOTENCY) { slot = idempotencyCount; idempotencyCount++; }
+  if (slot < 0) slot = 0; // Overwrite LRU
+  idempotencyCache[slot].key = key;
+  idempotencyCache[slot].code = code;
+  idempotencyCache[slot].response = response.substring(0, 512); // Cap cached response size
+  idempotencyCache[slot].timestamp = now;
+}
+
+// ============== REQUEST ID COUNTER =============
 static uint32_t requestIdCounter = 0;
 
 void sendSecurityHeaders() {
@@ -377,9 +433,31 @@ void auditRequest(String action, String detail) {
 }
 
 // Rate-limited request wrapper
+// Sends X-RateLimit-* headers so clients can self-throttle
 bool isRateLimited() {
-  if (!checkRateLimit(webServer.client().remoteIP())) {
-    webServer.send(429, "application/json", "{\"error\":\"Too many requests\",\"retry\":10}");
+  IPAddress ip = webServer.client().remoteIP();
+  // Find current rate limit entry to report remaining count
+  int remaining = RATE_MAX_REQUESTS;
+  unsigned long resetIn = RATE_WINDOW_MS / 1000;
+  for (int i = 0; i < rateLimitCount; i++) {
+    if (rateLimits[i].ip == ip) {
+      unsigned long now = millis();
+      if (now - rateLimits[i].windowStart > RATE_WINDOW_MS) {
+        remaining = RATE_MAX_REQUESTS - 1; // New window, this request counts
+      } else {
+        remaining = RATE_MAX_REQUESTS - rateLimits[i].count;
+        resetIn = (RATE_WINDOW_MS - (now - rateLimits[i].windowStart)) / 1000;
+      }
+      break;
+    }
+  }
+  // Always send rate limit headers for client awareness
+  webServer.sendHeader("X-RateLimit-Limit", String(RATE_MAX_REQUESTS));
+  webServer.sendHeader("X-RateLimit-Remaining", String(max(0, remaining)));
+  webServer.sendHeader("X-RateLimit-Reset", String(resetIn));
+
+  if (!checkRateLimit(ip)) {
+    webServer.send(429, "application/json", "{\"error\":\"Too many requests\",\"retry\":" + String(resetIn) + "}");
     return true;
   }
   // Check POST body size to prevent OOM
@@ -740,10 +818,12 @@ void handleDownloadGzip() {
   delete[] compBuf;
 }
 
-// ============== DELETE ==============
+// ============== DELETE =============
 void handleDelete() {
   String u, lvl;
   if (!isAuthenticated(webServer, u, lvl) || !checkCsrf(webServer)) { webServer.send(403); return; }
+  // Idempotency: if duplicate request, return cached result
+  if (checkIdempotencyKey(webServer)) return;
   auditRequest("delete", webServer.hasArg("path") ? webServer.arg("path") : "");
   if (!sdOK) { webServer.send(503); return; }
   if (!webServer.hasArg("path")) { webServer.send(400); return; }
@@ -753,14 +833,20 @@ void handleDelete() {
   if (!acquireFileLock(path, 2000)) { webServer.send(423, "text/plain", "File is locked"); return; }
   bool ok = moveToTrash(path);
   releaseFileLock(path);
-  if (ok) { logActivity("delete", path, u); broadcastChange("delete", path); webServer.send(200, "text/plain", "Moved to trash"); }
+  if (ok) {
+    String resp = "{\"ok\":true,\"path\":\""+path+"\"}";
+    logActivity("delete", path, u); broadcastChange("delete", path); webServer.send(200, "application/json", resp);
+    // Cache idempotency result
+    if (webServer.hasHeader("Idempotency-Key")) storeIdempotencyResult(webServer.header("Idempotency-Key"), 200, resp);
+  }
   else webServer.send(500, "text/plain", "Failed");
 }
 
-// ============== CREATE DIR ==============
+// ============== CREATE DIR =============
 void handleCreateDir() {
   String u, lvl;
   if (!isAuthenticated(webServer, u, lvl) || !checkCsrf(webServer)) { webServer.send(403); return; }
+  if (checkIdempotencyKey(webServer)) return;
   if (!sdOK) { webServer.send(503); return; }
   if (!webServer.hasArg("path")) { webServer.send(400); return; }
   String path = webServer.arg("path");
@@ -768,7 +854,11 @@ void handleCreateDir() {
   if (SD.totalBytes() - SD.usedBytes() < 1024) {
     webServer.send(507, "text/plain", "SD card full"); return;
   }
-  if (createDirRecursive(path)) { logActivity("mkdir", path, u); broadcastChange("mkdir", path); webServer.send(200, "text/plain", "OK"); }
+  if (createDirRecursive(path)) {
+    String resp = "{\"ok\":true,\"path\":\""+path+"\"}";
+    logActivity("mkdir", path, u); broadcastChange("mkdir", path); webServer.send(200, "application/json", resp);
+    if (webServer.hasHeader("Idempotency-Key")) storeIdempotencyResult(webServer.header("Idempotency-Key"), 200, resp);
+  }
   else webServer.send(500, "text/plain", "Failed");
 }
 
@@ -3317,6 +3407,35 @@ void loop() {
   checkSD();
   broadcastSdHealth(); // Push SD health to WebSocket clients every 30s
   autoExpireTrash();   // Auto-purge old trash items every hour
+  // ============== OOM PROTECTION ==============
+  // If free heap drops below 8KB, reject new connections and log warning
+  // ESP32 has ~320KB; below 8KB means critical memory pressure
+  static unsigned long lastHeapCheck = 0;
+  if (millis() - lastHeapCheck > 5000UL) {
+    lastHeapCheck = millis();
+    uint32_t freeHeap = ESP.getFreeHeap();
+    if (freeHeap < 8192) {
+      Serial.println("WARNING: Low heap (" + String(freeHeap) + "B) — dropping oldest session");
+      // Force-expire least recently used session to reclaim memory
+      unsigned long oldest = millis();
+      int oldestIdx = -1;
+      for (int i = 0; i < MAX_SESSIONS; i++) {
+        if (sessions[i].isActive && sessions[i].lastActivity < oldest) {
+          oldest = sessions[i].lastActivity; oldestIdx = i;
+        }
+      }
+      if (oldestIdx >= 0) {
+        sessions[oldestIdx].isActive = false;
+        Serial.println("Evicted session: " + sessions[oldestIdx].username);
+      }
+      // Prune idempotency cache to reclaim String memory
+      for (int i = 0; i < idempotencyCount; i++) {
+        idempotencyCache[i].key = "";
+        idempotencyCache[i].response = "";
+      }
+      idempotencyCount = 0;
+    }
+  }
   // Periodic session cleanup (every 5 minutes)
   static unsigned long lastSessionCleanup = 0;
   if (millis() - lastSessionCleanup > 300000UL) {
