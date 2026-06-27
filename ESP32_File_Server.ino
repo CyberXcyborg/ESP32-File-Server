@@ -604,6 +604,7 @@ bool isRateLimited() {
   webServer.sendHeader("X-RateLimit-Reset", String(resetIn));
 
   if (!checkRateLimit(ip)) {
+    webServer.sendHeader("Retry-After", String(resetIn));
     webServer.send(429, "application/json", "{\"error\":\"Too many requests\",\"retry\":\"" + String(resetIn) + "\"}");
     return true;
   }
