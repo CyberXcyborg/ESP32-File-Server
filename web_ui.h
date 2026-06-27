@@ -501,6 +501,38 @@ document.addEventListener('DOMContentLoaded',()=>{
     if(e.ctrlKey&&e.key==='k'&&document.activeElement.tagName!=='INPUT'){e.preventDefault();document.getElementById('searchInput').focus();document.getElementById('searchInput').select();}
     if(e.key==='?'&&document.activeElement.tagName!=='INPUT'){e.preventDefault();showShortcuts();}
   });
+  // ============== CLIPBOARD PASTE UPLOAD ==============
+  // Paste images or files from clipboard directly into the file browser
+  document.addEventListener('paste',e=>{
+    if(document.activeElement.tagName==='INPUT'||document.activeElement.tagName==='TEXTAREA')return;
+    const items=e.clipboardData&&e.clipboardData.items;
+    if(!items)return;
+    let hasFiles=false;
+    const pasteFiles=[];
+    for(let i=0;i<items.length;i++){
+      if(items[i].kind==='file'){
+        const f=items[i].getAsFile();
+        if(f&&f.size>0){hasFiles=true;pasteFiles.push(f);}
+      }
+    }
+    if(!hasFiles)return;
+    e.preventDefault();
+    showToast('Uploading pasted file(s)...','info');
+    // Reuse existing upload logic
+    uploadQueue=[];uploadCompleted=0;uploadFailed=0;
+    const MAX_SIZE=16*1024*1024;
+    pasteFiles.forEach(f=>{
+      if(f.size>MAX_SIZE){showToast(f.name+' exceeds 16MB limit','error');return;}
+      uploadQueue.push({file:f,path:f.name||('clipboard-'+Date.now()+'.png')});
+    });
+    openModal('uploadModal');
+    const list=document.getElementById('uploadList');list.innerHTML='';
+    uploadQueue.forEach(item=>{
+      const id='ul-'+item.path.replace(/[^a-zA-Z0-9]/g,'_');
+      list.innerHTML+=`<div style="display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--border);font-size:12px"><span>${item.path}</span><span id="${id}">⏳</span></div>`;
+    });
+    startUploadQueue();
+  });
 });
 
 function getToken(){
