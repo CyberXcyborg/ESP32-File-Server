@@ -1851,6 +1851,83 @@ void handleBatchCopy() {
   webServer.send(200, "application/json", "{\"ok\":"+String(ok)+",\"fail\":"+String(fail)+"}");
 }
 
+// ============== CONTENT SEARCH (GREP) =============
+// Search within file contents (text grep), limited to small text files
+#define MAX_GREP_RESULTS 50
+#define MAX_GREP_FILE_SIZE 65536 // Only grep files <= 64KB
+#define MAX_GREP_PREVIEW 120     // Chars of context around match
+
+void handleGrep() {
+  String u, lvl;
+  if (!isAuthenticated(webServer, u, lvl)) { sendError(401, "Not authenticated"); return; }
+  if (!sdOK) { sendError(503, "SD card not available"); return; }
+  String query = webServer.hasArg("q") ? webServer.arg("q") : "";
+  String dir = webServer.hasArg("dir") ? sanitizePath(webServer.arg("dir")) : "/";
+  if (query.length() == 0) { sendError(400, "Need search query (q)"); return; }
+  query.toLowerCase();
+  DynamicJsonDocument doc(8192);
+  JsonArray results = doc.createNestedArray("results");
+  int found = 0;
+  // Recursive scan
+  std::function<void(String)> scanGrep = [&](String path) {
+    if (found >= MAX_GREP_RESULTS) return;
+    File d = SD.open(path);
+    if (!d || !d.isDirectory()) { if(d) d.close(); return; }
+    File f;
+    while (f = d.openNextFile()) {
+      if (found >= MAX_GREP_RESULTS) { f.close(); break; }
+      String fn = String(f.name());
+      if (f.isDirectory()) {
+        if (!fn.startsWith("/.")) scanGrep(fn);
+      } else {
+        // Only search text files within size limit
+        if (f.size() <= MAX_GREP_FILE_SIZE && shouldCompress(fn)) {
+          String content = "";
+          uint8_t buf[512];
+          size_t totalRead = 0;
+          while (f.available() && totalRead < MAX_GREP_FILE_SIZE) {
+            int n = f.read(buf, 512);
+            for (int i = 0; i < n && totalRead < MAX_GREP_FILE_SIZE; i++) {
+              char c = buf[i];
+              if (c >= 32 && c < 127) content += c;
+              else if (c == '\n' || c == '\t') content += c;
+              else content += ' ';
+              totalRead++;
+            }
+          }
+          String lower = content;
+          lower.toLowerCase();
+          int pos = lower.indexOf(query);
+          if (pos >= 0) {
+            int sl = fn.lastIndexOf('/');
+            JsonObject r = results.createNestedObject();
+            r["name"] = (sl >= 0) ? fn.substring(sl+1) : fn;
+            r["path"] = fn;
+            r["size"] = f.size();
+            int start = pos > 40 ? pos - 40 : 0;
+            int len = MAX_GREP_PREVIEW;
+            if (start + len > (int)content.length()) len = content.length() - start;
+            String preview = content.substring(start, start + len);
+            preview.replace("<", "&lt;");
+            preview.replace(">", "&gt;");
+            r["preview"] = preview;
+            r["match_pos"] = pos;
+            found++;
+          }
+        }
+      }
+      f.close();
+    }
+    d.close();
+  };
+  scanGrep(dir);
+  doc["count"] = found;
+  doc["query"] = query;
+  String out; serializeJson(doc, out);
+  sendJson(200, out);
+  logActivity("grep", query + " (" + String(found) + " hits)", u);
+}
+
 // ============== RECURSIVE SEARCH ==============
 // Max search results to prevent OOM on large storage
 #define MAX_SEARCH_RESULTS 200
@@ -3377,6 +3454,7 @@ void setup() {
   webServer.on("/api/batch-move",HTTP_POST,handleBatchMove);
   webServer.on("/api/batch-copy",HTTP_POST,handleBatchCopy);
   webServer.on("/api/search",HTTP_GET,handleSearch);
+  webServer.on("/api/grep",HTTP_GET,handleGrep);
   webServer.on("/api/changes",HTTP_GET,handleChanges);
   webServer.on("/api/folder-zip",HTTP_POST,handleFolderZip);
   webServer.on("/api/cleanup",HTTP_POST,handleAutoCleanup);
