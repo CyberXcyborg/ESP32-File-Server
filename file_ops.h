@@ -633,6 +633,16 @@ int countDirs(String path) {
 #define countFilesInDir countFiles
 #define countDirsInDir countDirs
 
+// ============== FILE EXISTENCE HELPER ==============
+// Fast check if a file exists and is not a directory (avoids open+isDirectory overhead)
+bool isRegularFile(String path) {
+  File f = SD.open(path, FILE_READ);
+  if (!f) return false;
+  bool regular = !f.isDirectory();
+  f.close();
+  return regular;
+}
+
 // ============== CRC32 INTEGRITY CHECK ==============
 // Compute CRC32 for a file on SD card (for integrity verification)
 uint32_t computeFileCRC32(String path) {
