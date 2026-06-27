@@ -1456,7 +1456,7 @@ void handleGetUsers() {
 }
 void handleAddUser() {
   String u,lvl;
-  if(!isAuthenticated(webServer,u,lvl)||lvl!="admin"){webServer.send(403);return;}
+  if(!isAuthenticated(webServer,u,lvl)||lvl!="admin"||!checkCsrf(webServer)){webServer.send(403);return;}
   auditRequest("add-user", u);
   if(!webServer.hasArg("plain")){sendError(400,"Bad request");return;}
   DynamicJsonDocument doc(256);deserializeJson(doc,webServer.arg("plain"));
@@ -1475,7 +1475,7 @@ void handleAddUser() {
 }
 void handleUpdateUser() {
   String u,lvl;
-  if(!isAuthenticated(webServer,u,lvl)||lvl!="admin"){webServer.send(403);return;}
+  if(!isAuthenticated(webServer,u,lvl)||lvl!="admin"||!checkCsrf(webServer)){webServer.send(403);return;}
   String path=webServer.pathArg(0);
   if(!webServer.hasArg("plain")){sendError(400,"Bad request");return;}
   DynamicJsonDocument doc(256);deserializeJson(doc,webServer.arg("plain"));
@@ -1496,7 +1496,7 @@ void handleUpdateUser() {
 }
 void handleDeleteUser() {
   String u,lvl;
-  if(!isAuthenticated(webServer,u,lvl)||lvl!="admin"){webServer.send(403);return;}
+  if(!isAuthenticated(webServer,u,lvl)||lvl!="admin"||!checkCsrf(webServer)){webServer.send(403);return;}
   String path=webServer.pathArg(0);
   File f=SD.open(USERS_FILE);String c="{\"users\":[]}";if(f){c="";while(f.available())c+=(char)f.read();f.close();}
   DynamicJsonDocument ex(1024);deserializeJson(ex,c);
