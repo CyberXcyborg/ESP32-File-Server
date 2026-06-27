@@ -1094,7 +1094,8 @@ void handleOtaPage() {
 
 void handleOtaUpload() {
   String u, lvl;
-  if (!isAuthenticated(webServer, u, lvl)) { webServer.send(401); return; }
+  // OTA requires admin privilege — firmware update is the highest-privilege operation
+  if (!isAuthenticated(webServer, u, lvl) || lvl != "admin") { webServer.send(403); return; }
   HTTPUpload& up = webServer.upload();
   static bool started = false;
   static size_t sz = 0;
