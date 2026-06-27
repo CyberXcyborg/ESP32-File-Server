@@ -266,6 +266,26 @@ void sendError(int code, String msg) {
   webServer.send(code, "application/json", json);
 }
 
+// ============== AUDIT LOG =============
+// Log client IP + method for state-changing requests (security audit trail)
+void auditRequest(String action, String detail) {
+  IPAddress ip = webServer.client().remoteIP();
+  String ipStr = ip.toString();
+  // Append to audit log (separate from activity log for security review)
+  File f = SD.open("/.audit.log", FILE_APPEND);
+  if (!f) f = SD.open("/.audit.log", FILE_WRITE);
+  if (f) {
+    f.print(millis());
+    f.print(",");
+    f.print(ipStr);
+    f.print(",");
+    f.print(action);
+    f.print(",");
+    f.println(detail);
+    f.close();
+  }
+}
+
 // Rate-limited request wrapper
 bool isRateLimited() {
   if (!checkRateLimit(webServer.client().remoteIP())) {
@@ -591,6 +611,7 @@ void handleDownloadGzip() {
 void handleDelete() {
   String u, lvl;
   if (!isAuthenticated(webServer, u, lvl) || !checkCsrf(webServer)) { webServer.send(403); return; }
+  auditRequest("delete", webServer.hasArg("path") ? webServer.arg("path") : "");
   if (!sdOK) { webServer.send(503); return; }
   if (!webServer.hasArg("path")) { webServer.send(400); return; }
   String path = webServer.arg("path");
@@ -733,6 +754,7 @@ void handleUploadAuth() {
 void handleUpload() {
   String u, lvl;
   if (!isAuthenticated(webServer, u, lvl) || !checkCsrf(webServer)) { webServer.send(403); return; }
+  auditRequest("upload", webServer.hasArg("path") ? webServer.arg("path") : "/");
   if (!sdOK) { webServer.send(503); return; }
   HTTPUpload& up = webServer.upload();
   static File uf;
@@ -1211,6 +1233,7 @@ void handleGetSettings() {
 void handleSaveSettings() {
   String u, lvl;
   if (!isAuthenticated(webServer, u, lvl) || !checkCsrf(webServer)) { webServer.send(403); return; }
+  auditRequest("save-settings", u);
   if (!webServer.hasArg("plain")) { webServer.send(400); return; }
   DynamicJsonDocument doc(512);
   deserializeJson(doc, webServer.arg("plain"));
@@ -1355,6 +1378,7 @@ void handleGetUsers() {
 void handleAddUser() {
   String u,lvl;
   if(!isAuthenticated(webServer,u,lvl)||lvl!="admin"){webServer.send(403);return;}
+  auditRequest("add-user", u);
   if(!webServer.hasArg("plain")){sendError(400,"Bad request");return;}
   DynamicJsonDocument doc(256);deserializeJson(doc,webServer.arg("plain"));
   String nu=doc["username"]|"",np=doc["password"]|"",nl=doc["userLevel"]|"user";
@@ -2590,6 +2614,39 @@ void handleErrorLogs() {
   webServer.send(200, "application/json", out);
 }
 
+// ============== AUDIT LOG ENDPOINT =============
+void handleAuditLog() {
+  String u, lvl;
+  if (!isAuthenticated(webServer, u, lvl) || lvl != "admin") { sendError(403,"Admin only"); return; }
+  int limit = webServer.hasArg("limit") ? webServer.arg("limit").toInt() : 50;
+  if (limit > 200) limit = 200;
+  DynamicJsonDocument adoc(8192);
+  JsonArray aarr = adoc.createNestedArray("entries");
+  if (SD.exists("/.audit.log")) {
+    File f = SD.open("/.audit.log", FILE_READ);
+    if (f) {
+      String lines[200]; int count = 0; String line = "";
+      while (f.available()) { char c = f.read(); if (c == '\n') { lines[count % 200] = line; count++; line = ""; } else line += c; }
+      f.close();
+      int start = count > limit ? count - limit : 0;
+      for (int i = start; i < count; i++) {
+        String l = lines[i % 200];
+        int c1 = l.indexOf(','), c2 = l.indexOf(',', c1+1), c3 = l.indexOf(',', c2+1);
+        if (c1 > 0 && c2 > 0 && c3 > 0) {
+          JsonObject e = aarr.createNestedObject();
+          e["time"] = l.substring(0, c1).toInt();
+          e["ip"] = l.substring(c1+1, c2);
+          e["action"] = l.substring(c2+1, c3);
+          e["detail"] = l.substring(c3+1);
+        }
+      }
+    }
+  }
+  adoc["count"] = aarr.size();
+  String out; serializeJson(adoc, out);
+  webServer.send(200, "application/json", out);
+}
+
 // ============== FILE NOTES ==============
 void handleGetNotes() {
   String u, lvl;
@@ -3020,6 +3077,7 @@ void setup() {
   webServer.on("/api/sessions",HTTP_GET,handleListSessions);
   webServer.on("/api/sessions/kill",HTTP_POST,handleKillSession);
   webServer.on("/api/errors",HTTP_GET,handleErrorLogs);
+  webServer.on("/api/audit",HTTP_GET,handleAuditLog);
   webServer.on("/api/notes",HTTP_GET,handleGetNotes);
   webServer.on("/api/notes",HTTP_POST,handleSaveNote);
   webServer.on("/api/scan",HTTP_GET,handleScanStorage);
