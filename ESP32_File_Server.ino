@@ -505,6 +505,18 @@ void storeIdempotencyResult(String key, int code, String response) {
 // ============== REQUEST ID COUNTER =============
 static uint32_t requestIdCounter = 0;
 
+// ============== POST BODY VALIDATION =============
+// Ensures POST/PUT request body doesn't exceed MAX_POST_BODY_SIZE
+// Returns true if valid, false if too large (sends 413 automatically)
+bool validatePostBody() {
+  if ((webServer.method() == HTTP_POST || webServer.method() == HTTP_PUT) &&
+      webServer.hasArg("plain") && webServer.arg("plain").length() > MAX_POST_BODY_SIZE) {
+    sendError(413, "Request body too large (max 32KB)");
+    return false;
+  }
+  return true;
+}
+
 void sendSecurityHeaders() {
   webServer.sendHeader("X-Content-Type-Options", "nosniff");
   webServer.sendHeader("X-Frame-Options", "DENY");
@@ -592,16 +604,11 @@ bool isRateLimited() {
   webServer.sendHeader("X-RateLimit-Reset", String(resetIn));
 
   if (!checkRateLimit(ip)) {
-    webServer.send(429, "application/json", "{\"error\":\"Too many requests\",\"retry\":\"" + String(resetIn) + "}");
+    webServer.send(429, "application/json", "{\"error\":\"Too many requests\",\"retry\":\"" + String(resetIn) + "\"}");
     return true;
   }
   // Check POST body size to prevent OOM
-  if (webServer.method() == HTTP_POST || webServer.method() == HTTP_PUT) {
-    if (webServer.hasArg("plain") && webServer.arg("plain").length() > MAX_POST_BODY_SIZE) {
-      sendError(413, "Request body too large (max 32KB)");
-      return true;
-    }
-  }
+  if (!validatePostBody()) return true;
   // Emit CORS headers on actual API requests (non-preflight) for cross-origin access
   if (webServer.uri().startsWith("/api/")) {
     webServer.sendHeader("Access-Control-Allow-Origin", "*");
@@ -1373,6 +1380,7 @@ void handleZipDownload() {
   if (!isAuthenticated(webServer, u, lvl)) { webServer.send(401); return; }
   if (!sdOK) { webServer.send(503); return; }
   if (!webServer.hasArg("plain")) { webServer.send(400); return; }
+  if (!validatePostBody()) return;
   DynamicJsonDocument doc(4096);
   deserializeJson(doc, webServer.arg("plain"));
   JsonArray paths = doc["paths"];
@@ -1621,6 +1629,7 @@ void handleSaveSettings() {
   String u, lvl;
   if (!isAuthenticated(webServer, u, lvl) || !checkCsrf(webServer)) { webServer.send(403); return; }
   auditRequest("save-settings", u);
+  if (!validatePostBody()) return;
   if (!webServer.hasArg("plain")) { webServer.send(400); return; }
   DynamicJsonDocument doc(512);
   deserializeJson(doc, webServer.arg("plain"));
@@ -1766,6 +1775,7 @@ void handleAddUser() {
   String u,lvl;
   if(!isAuthenticated(webServer,u,lvl)||lvl!="admin"||!checkCsrf(webServer)){webServer.send(403);return;}
   auditRequest("add-user", u);
+  if(!validatePostBody())return;
   if(!webServer.hasArg("plain")){sendError(400,"Bad request");return;}
   DynamicJsonDocument doc(256);deserializeJson(doc,webServer.arg("plain"));
   String nu=doc["username"]|"",np=doc["password"]|"",nl=doc["userLevel"]|"user";
@@ -1921,6 +1931,7 @@ void handleServiceWorker() {
 void handleBatchDelete() {
   String u, lvl;
   if (!isAuthenticated(webServer, u, lvl) || !checkCsrf(webServer)) { webServer.send(403); return; }
+  if (!validatePostBody()) return;
   if (!webServer.hasArg("plain")) { webServer.send(400); return; }
   DynamicJsonDocument doc(4096);
   deserializeJson(doc, webServer.arg("plain"));
