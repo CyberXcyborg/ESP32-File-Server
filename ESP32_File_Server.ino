@@ -498,6 +498,14 @@ void handleHealth() {
   checkSD(); doc["sd"] = sdOK;
   doc["ip"] = server_ip;
   String out; serializeJson(doc, out);
+  // ETag for health: based on heap + sd status + uptime bucket (changes every 10s)
+  String healthEtag = "\"" + String(ESP.getFreeHeap()) + "-" + String(sdOK) + "-" + String(millis() / 10000) + "\"";
+  webServer.sendHeader("ETag", healthEtag);
+  webServer.sendHeader("Cache-Control", "private, max-age=5");
+  if (webServer.hasHeader("If-None-Match") && webServer.header("If-None-Match") == healthEtag) {
+    webServer.send(304, "text/plain", "Not Modified");
+    return;
+  }
   webServer.send(200, "application/json", out);
 }
 
@@ -627,8 +635,17 @@ void handleFileInfo() {
   doc["type"] = f.isDirectory() ? "dir" : "file";
   doc["size"] = f.isDirectory() ? 0 : f.size();
   doc["sizeFormatted"] = f.isDirectory() ? "-" : getFileSize(f.size());
+  unsigned long fmtime = f.fileTime();
   f.close();
   String out; serializeJson(doc, out);
+  // ETag caching for file info: based on size + mtime (changes on file edit)
+  String infoEtag = "\"" + String((uint32_t)doc["size"]) + "-" + String(fmtime) + "\"";
+  webServer.sendHeader("ETag", infoEtag);
+  webServer.sendHeader("Cache-Control", "private, max-age=10");
+  if (webServer.hasHeader("If-None-Match") && webServer.header("If-None-Match") == infoEtag) {
+    webServer.send(304, "text/plain", "Not Modified");
+    return;
+  }
   webServer.send(200, "application/json", out);
 }
 
