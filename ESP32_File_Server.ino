@@ -404,6 +404,12 @@ void sendSecurityHeaders() {
   // Attach unique request ID for tracing/debugging
   requestIdCounter++;
   webServer.sendHeader("X-Request-Id", String(millis(), HEX) + "-" + String(requestIdCounter));
+  // Server-Timing header (W3C spec): expose server-side processing time in ms
+  // Browsers show this in DevTools Network panel
+  if (requestStartMs > 0) {
+    uint32_t elapsed = (uint32_t)(millis() - requestStartMs);
+    webServer.sendHeader("Server-Timing", "handler;dur=" + String(elapsed));
+  }
 }
 
 void sendError(int code, String msg) {
