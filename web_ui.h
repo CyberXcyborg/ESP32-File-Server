@@ -9,7 +9,7 @@ const char index_html[] PROGMEM = R"rawliteral(
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>ESP32 File Server v6.3</title>
+<title>ESP32 File Server v6.4</title>
 <link rel="manifest" href="/manifest.json">
 <meta name="theme-color" content="#0984e3">
 <style>
@@ -143,7 +143,7 @@ kbd{font-family:monospace;font-size:12px}
 <body>
 <div class="container">
   <header>
-    <h1>📁 ESP32 File Server <small style="font-size:11px;color:var(--text2)">v6.3</small></h1>
+    <h1>📁 ESP32 File Server <small style="font-size:11px;color:var(--text2)">v6.4</small></h1>
     <div class="header-right">
       <span id="userDisplay"></span>
       <div class="search-box">🔍<input type="text" id="searchInput" placeholder="Search..." oninput="filterFiles()"></div>
@@ -539,11 +539,12 @@ function toggleDark(){
 }
 // ============== WEBSOCKET ==============
 let wsConnected=false;
+let wsReconnectDelay=1000; // Exponential backoff for WS reconnect
 function initWebSocket(){
   const proto=location.protocol==='https:'?'wss':'ws';
   const ws=new WebSocket(proto+'://'+location.hostname+':81/');
-  ws.onopen=()=>{wsConnected=true;console.log('WS connected');};
-  ws.onclose=()=>{wsConnected=false;setTimeout(initWebSocket,3000);};
+  ws.onopen=()=>{wsConnected=true;wsReconnectDelay=1000;console.log('WS connected');};
+  ws.onclose=()=>{wsConnected=false;console.log('WS closed, reconnect in '+wsReconnectDelay+'ms');setTimeout(initWebSocket,wsReconnectDelay);wsReconnectDelay=Math.min(wsReconnectDelay*2,30000);};
   ws.onerror=()=>{ws.close();};
   ws.onmessage=(e)=>{
     try{

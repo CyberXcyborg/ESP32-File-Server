@@ -1,7 +1,7 @@
 /usr/bin/bash: warning: setlocale: LC_ALL: cannot change locale (en_US.UTF-8): No such file or directory
 /usr/bin/bash: warning: setlocale: LC_ALL: cannot change locale (en_US.UTF-8): No such file or directory
 /*
- * ESP32 File Server v3.5
+ * ESP32 File Server v3.5 -> v6.4
  * (c) 2024 CyberXcyborg
  */
 
