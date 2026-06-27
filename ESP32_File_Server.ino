@@ -122,6 +122,9 @@ uint32_t consecutiveErrors = 0; // Count of sequential check failures
 uint32_t totalErrors = 0; // Lifetime error counter
 unsigned long firstErrorTime = 0; // When errors started
 uint8_t failureRisk = 0; // 0-100% estimated failure risk
+// CRC spot-check: verify one random file's CRC per health cycle
+uint32_t crcSpotCheckErrors = 0; // Count of CRC mismatches found by spot-checks
+uint32_t crcSpotChecksDone = 0; // Total spot-checks performed
 struct HealthLog {
   unsigned long timestamp;
   bool ok;
@@ -386,6 +389,58 @@ void checkSD() {
       // Decay risk slowly on successful checks
       if (failureRisk > 0 && (millis() - lastHealthCheck > healthCheckInterval * 2)) {
         failureRisk = max(0, (int)failureRisk - 5);
+      }
+      // ============== CRC SPOT-CHECK ==============
+      // Each health cycle, pick one file with a .crc32 sidecar and verify integrity
+      // This detects silent data corruption from SD wear or flash errors
+      {
+        File root = SD.open("/");
+        if (root && root.isDirectory()) {
+          File f;
+          String checkPath = "";
+          String checkCrcPath = "";
+          // Scan for a file with a .crc32 sidecar (pick the first one we find)
+          while (f = root.openNextFile()) {
+            if (!f.isDirectory()) {
+              String fp = String(f.name());
+              f.close();
+              if (fp.endsWith(".crc32") || fp.endsWith(".lock") || fp.startsWith("/.")) continue;
+              String crcPath = fp + ".crc32";
+              if (SD.exists(crcPath)) {
+                checkPath = fp;
+                checkCrcPath = crcPath;
+                break;
+              }
+            } else {
+              f.close();
+            }
+          }
+          root.close();
+          // Verify CRC if we found a candidate
+          if (checkPath.length() > 0 && SD.exists(checkPath)) {
+            crcSpotChecksDone++;
+            // Read stored CRC
+            String storedCrc = "";
+            File cf = SD.open(checkCrcPath, FILE_READ);
+            if (cf) { storedCrc = cf.readString().trim(); cf.close(); }
+            // Compute current CRC
+            String computedCrc = getFileCRC32(checkPath);
+            if (storedCrc.length() > 0 && computedCrc.length() > 0 && storedCrc != computedCrc) {
+              crcSpotCheckErrors++;
+              Serial.println("CRC SPOT-CHECK MISMATCH: " + checkPath + " stored=" + storedCrc + " current=" + computedCrc);
+              // Broadcast corruption alert via WebSocket
+              DynamicJsonDocument alert(256);
+              alert["event"] = "crc-mismatch";
+              alert["path"] = checkPath;
+              alert["stored_crc"] = storedCrc;
+              alert["current_crc"] = computedCrc;
+              alert["spot_errors"] = crcSpotCheckErrors;
+              String msg;
+              serializeJson(alert, msg);
+              webSocket.broadcastTXT(msg);
+            }
+          }
+        }
       }
     }
   }
@@ -2238,6 +2293,8 @@ void handleStats() {
   doc["sd_wear_pct"] = totalWriteOps > 0 ? min(100, (int)(totalWriteOps / 10000UL)) : 0;
   doc["sd_write_mb"] = (uint32_t)(totalWriteBytes / 1048576UL);
   doc["sd_failure_risk"] = failureRisk;
+  doc["sd_crc_spot_checks"] = crcSpotChecksDone;
+  doc["sd_crc_spot_errors"] = crcSpotCheckErrors;
   doc["max_upload_size"] = MAX_UPLOAD_SIZE;
   String out; serializeJson(doc, out);
   webServer.send(200, "application/json", out);

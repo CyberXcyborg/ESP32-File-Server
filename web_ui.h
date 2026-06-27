@@ -610,6 +610,10 @@ function initWebSocket(){
         if(['upload','delete','rename','mkdir','move','copy','restore','empty-trash'].includes(d.event)){
           if(d.path&&d.path.startsWith(currentPath))refreshFiles();
         }
+        // Alert on CRC integrity mismatch detected by spot-check
+        if(d.event==='crc-mismatch'){
+          showToast('⚠️ CRC mismatch: '+d.path,'error');
+        }
       }
     }catch(err){}
   };
