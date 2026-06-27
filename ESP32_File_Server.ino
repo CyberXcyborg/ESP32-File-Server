@@ -69,6 +69,12 @@ String server_ip = "";
 unsigned long lastWiFiCheck = 0;
 bool sdOK = true;
 
+// ============== REQUEST SIZE LIMITER =============
+// Reject POST/PUT bodies larger than this to prevent OOM
+#define MAX_POST_BODY_SIZE 32768 // 32KB max POST body
+unsigned long requestStartMs = 0; // Track request start time
+#define MAX_REQUEST_TIME_MS 15000 // 15s max per request
+
 // ============== SD HEALTH MONITORING ==============
 unsigned long lastHealthCheck = 0;
 uint32_t sectorErrors = 0;
@@ -265,6 +271,13 @@ bool isRateLimited() {
   if (!checkRateLimit(webServer.client().remoteIP())) {
     webServer.send(429, "application/json", "{\"error\":\"Too many requests\",\"retry\":10}");
     return true;
+  }
+  // Check POST body size to prevent OOM
+  if (webServer.method() == HTTP_POST || webServer.method() == HTTP_PUT) {
+    if (webServer.hasArg("plain") && webServer.arg("plain").length() > MAX_POST_BODY_SIZE) {
+      sendError(413, "Request body too large (max 32KB)");
+      return true;
+    }
   }
   return false;
 }
