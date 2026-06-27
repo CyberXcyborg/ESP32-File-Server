@@ -405,6 +405,9 @@ void sendSecurityHeaders() {
   webServer.sendHeader("Cross-Origin-Opener-Policy", "same-origin");
   webServer.sendHeader("Cross-Origin-Resource-Policy", "same-origin");
   webServer.sendHeader("X-Permitted-Cross-Domain-Policies", "none");
+  // Allow HTTP keep-alive for fewer TCP round-trips on repeated requests
+  webServer.sendHeader("Connection", "keep-alive");
+  webServer.sendHeader("Keep-Alive", "timeout=5, max=100");
   // Attach unique request ID for tracing/debugging
   requestIdCounter++;
   webServer.sendHeader("X-Request-Id", String(millis(), HEX) + "-" + String(requestIdCounter));
