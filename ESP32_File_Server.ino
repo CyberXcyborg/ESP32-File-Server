@@ -200,27 +200,40 @@ void onWebSocketEvent(uint8_t num, WStype_t type, uint8_t * payload, size_t leng
       break;
     case WStype_CONNECTED:
       {
-        wsClientCount++;
+        // Validate session before accepting WS connection
+        // Client must send auth message within 5s or be disconnected
         IPAddress ip = webSocket.remoteIP(num);
-        Serial.printf("[%u] WS Connected from %s\n", num, ip.toString().c_str());
-        // Send initial status on connect
-        DynamicJsonDocument doc(256);
-        doc["event"] = "connected";
-        doc["uptime"] = millis() / 1000;
-        doc["sd_ok"] = sdOK;
-        String msg;
-        serializeJson(doc, msg);
-        webSocket.sendTXT(num, msg);
+        Serial.printf("[%u] WS Connected from %s (pending auth)\n", num, ip.toString().c_str());
+        // Send challenge — client must respond with {"cmd":"auth","token":"..."}
+        webSocket.sendTXT(num, "{\"event\":\"auth-required\"}");
       }
       break;
     case WStype_TEXT:
-      // Handle ping/pong or auth
       if (length > 0 && payload[0] == '{') {
-        DynamicJsonDocument doc(256);
+        DynamicJsonDocument doc(512);
         if (!deserializeJson(doc, payload, length)) {
           String cmd = doc["cmd"] | "";
           if (cmd == "ping") {
             webSocket.sendTXT(num, "{\"event\":\"pong\"}");
+          } else if (cmd == "auth") {
+            // Authenticate WebSocket with session token
+            String wsToken = doc["token"] | "";
+            String wsUser, wsLvl;
+            if (validateSession(wsToken, wsUser, wsLvl)) {
+              wsClientCount++;
+              webSocket.sendTXT(num, "{\"event\":\"auth-ok\",\"user\":\"" + wsUser + "\",\"level\":\"" + wsLvl + "\"}");
+              // Send initial status after successful auth
+              DynamicJsonDocument status(256);
+              status["event"] = "connected";
+              status["uptime"] = millis() / 1000;
+              status["sd_ok"] = sdOK;
+              String msg;
+              serializeJson(status, msg);
+              webSocket.sendTXT(num, msg);
+            } else {
+              webSocket.sendTXT(num, "{\"event\":\"auth-failed\"}");
+              webSocket.disconnect(num);
+            }
           }
         }
       }
@@ -1581,6 +1594,7 @@ void handleLogin() {
       String lvl;
       if(authenticateUser(u,p,lvl)){
         auditRequest("login-ok", u);
+        resetLoginRateLimit(webServer.client().remoteIP()); // Clear rate limit on success
         String tok=createSession(u,lvl);
         webServer.sendHeader("Set-Cookie","session_token="+tok+"; Path=/; Max-Age=1800; SameSite=Strict; HttpOnly");
         String r=webServer.hasArg("redirect")?webServer.arg("redirect"):"/";
@@ -3282,13 +3296,19 @@ void setup() {
 }
 
 void loop() {
-  // Record request start time for metrics
-  unsigned long reqStart = millis();
+  // Record request start time for metrics & timeout enforcement
+  requestStartMs = millis();
   webServer.handleClient();
+  // Enforce request timeout: if a request took longer than MAX_REQUEST_TIME_MS,
+  // stop the client to free resources (prevents stuck connections from blocking)
+  if (webServer.method() != HTTP_ANY && (millis() - requestStartMs) > MAX_REQUEST_TIME_MS) {
+    webServer.client().stop();
+    Serial.println("Request timeout: " + webServer.uri());
+  }
   // Record per-endpoint request metrics
-  if (webServer.method() != HTTP_ANY && millis() > reqStart) {
+  if (webServer.method() != HTTP_ANY && millis() > requestStartMs) {
     String uri = webServer.uri();
-    uint32_t elapsed = (uint32_t)(millis() - reqStart);
+    uint32_t elapsed = (uint32_t)(millis() - requestStartMs);
     recordMetric(uri, elapsed);
   }
   webSocket.loop();

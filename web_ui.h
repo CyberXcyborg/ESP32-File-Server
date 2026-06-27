@@ -9,7 +9,7 @@ const char index_html[] PROGMEM = R"rawliteral(
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>ESP32 File Server v6.4</title>
+<title>ESP32 File Server v6.5</title>
 <link rel="manifest" href="/manifest.json">
 <meta name="theme-color" content="#0984e3">
 <style>
@@ -143,7 +143,7 @@ kbd{font-family:monospace;font-size:12px}
 <body>
 <div class="container">
   <header>
-    <h1>📁 ESP32 File Server <small style="font-size:11px;color:var(--text2)">v6.4</small></h1>
+    <h1>📁 ESP32 File Server <small style="font-size:11px;color:var(--text2)">v6.5</small></h1>
     <div class="header-right">
       <span id="userDisplay"></span>
       <div class="search-box">🔍<input type="text" id="searchInput" placeholder="Search..." oninput="filterFiles()"></div>
@@ -543,12 +543,15 @@ let wsReconnectDelay=1000; // Exponential backoff for WS reconnect
 function initWebSocket(){
   const proto=location.protocol==='https:'?'wss':'ws';
   const ws=new WebSocket(proto+'://'+location.hostname+':81/');
-  ws.onopen=()=>{wsConnected=true;wsReconnectDelay=1000;console.log('WS connected');};
+  ws.onopen=()=>{wsReconnectDelay=1000;console.log('WS connected, sending auth');ws.send(JSON.stringify({cmd:'auth',token:token}));};
   ws.onclose=()=>{wsConnected=false;console.log('WS closed, reconnect in '+wsReconnectDelay+'ms');setTimeout(initWebSocket,wsReconnectDelay);wsReconnectDelay=Math.min(wsReconnectDelay*2,30000);};
   ws.onerror=()=>{ws.close();};
   ws.onmessage=(e)=>{
     try{
       const d=JSON.parse(e.data);
+      if(d.event==='auth-required'){ws.send(JSON.stringify({cmd:'auth',token:token}));return;}
+      if(d.event==='auth-ok'){wsConnected=true;console.log('WS auth OK as '+d.user);return;}
+      if(d.event==='auth-failed'){console.log('WS auth failed');ws.close();return;}
       if(d.event&&d.event!=='pong'&&d.event!=='connected'){
         // Update storage bar on stats updates
         if(d.event==='stats-update'&&d.sd_free!==undefined){

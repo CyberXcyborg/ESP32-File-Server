@@ -30,6 +30,19 @@ int loginAttemptCount = 0;
 const int MAX_LOGIN_ATTEMPTS = 5;
 const unsigned long LOCK_DURATION = 300000; // 5 minutes
 
+// Reset rate limit for an IP after successful authentication
+// Prevents legitimate users from being throttled after a login attempt clears
+void resetLoginRateLimit(IPAddress ip) {
+  for (int i = 0; i < loginAttemptCount; i++) {
+    if (loginAttempts[i].ip == ip) {
+      loginAttempts[i].attempts = 0;
+      loginAttempts[i].lockedUntil = 0;
+      loginAttempts[i].windowStart = millis();
+      return;
+    }
+  }
+}
+
 bool checkLoginRateLimit(IPAddress ip) {
   unsigned long now = millis();
   for (int i = 0; i < loginAttemptCount; i++) {
