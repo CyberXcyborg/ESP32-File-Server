@@ -1453,14 +1453,16 @@ void handleLogin() {
     }
     if(submittedCsrf.length()==0 || cookieCsrf.length()==0 || submittedCsrf!=cookieCsrf){
       err="Security token mismatch";
+      auditRequest("csrf-fail", webServer.arg("username"));
     } else {
       String lvl;
       if(authenticateUser(u,p,lvl)){
+        auditRequest("login-ok", u);
         String tok=createSession(u,lvl);
         webServer.sendHeader("Set-Cookie","session_token="+tok+"; Path=/; Max-Age=1800; SameSite=Strict; HttpOnly");
         String r=webServer.hasArg("redirect")?webServer.arg("redirect"):"/";
         webServer.sendHeader("Location",r+"?token="+tok,true);webServer.send(302,"text/plain","");return;
-      } else err="Invalid username or password";
+      } else { err="Invalid username or password"; auditRequest("login-fail", u); }
     }
   }
   String info=accessPointMode?"AP: "+String(ap_ssid):"IP: "+server_ip;

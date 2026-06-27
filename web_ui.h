@@ -319,6 +319,10 @@ kbd{font-family:monospace;font-size:12px}
       <h3 style="margin-bottom:12px">🔍 Duplicate Files</h3>
       <div id="dupResults"><p style="color:var(--text2)">Click Refresh to scan for duplicates</p></div>
     </div>
+    <div class="info-panel show" style="margin-top:10px">
+      <h3 style="margin-bottom:12px">🔒 Security Audit Log</h3>
+      <div id="auditLog"><p style="color:var(--text2)">Click Refresh to view audit log</p></div>
+    </div>
   </div>
 </div>
 
@@ -1359,6 +1363,22 @@ function loadAnalytics(){
       });
       document.getElementById('dupResults').innerHTML=html;
     }).catch(()=>{document.getElementById('dupResults').innerHTML='<p style="color:var(--danger)">Error scanning</p>';});
+  // Load audit log
+  fetch('/api/audit?limit=20',{headers:{'Authorization':'Bearer '+token}})
+    .then(r=>r.json()).then(data=>{
+      if(!data.entries||data.entries.length===0){
+        document.getElementById('auditLog').innerHTML='<p style="color:var(--text2)">No audit entries</p>';
+        return;
+      }
+      let html='<table style="width:100%;font-size:11px;border-collapse:collapse"><tr style="color:var(--text2);border-bottom:1px solid var(--border)"><th style="text-align:left;padding:4px">Time</th><th style="text-align:left;padding:4px">IP</th><th style="text-align:left;padding:4px">Action</th><th style="text-align:left;padding:4px">Detail</th></tr>';
+      data.entries.forEach(e=>{
+        const acted=e.action||'';
+        const color=acted.includes('fail')?'var(--danger)':acted.includes('ok')?'var(--success)':'var(--text)';
+        html+=`<tr style="color:${color};border-bottom:1px solid var(--border)"><td style="padding:3px">${Math.round(e.time/1000)}s</td><td style="padding:3px;font-family:monospace">${e.ip||''}</td><td style="padding:3px">${acted}</td><td style="padding:3px">${e.detail||''}</td></tr>`;
+      });
+      html+='</table>';
+      document.getElementById('auditLog').innerHTML=html;
+    }).catch(()=>{document.getElementById('auditLog').innerHTML='<p style="color:var(--text2)">Audit log unavailable</p>';});
 }
 </script>
 </body>
