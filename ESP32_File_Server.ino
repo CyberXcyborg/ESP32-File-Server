@@ -1276,6 +1276,38 @@ void handleSharedFile() {
   File f = SD.open(path, FILE_READ);
   if (!f) { webServer.send(500); return; }
   String name = path.substring(path.lastIndexOf('/')+1);
+  // If client wants the raw file download (default), or Accept is application/octet-stream
+  String accept = "";
+  if (webServer.hasHeader("Accept")) accept = webServer.header("Accept");
+  bool wantPreview = accept.indexOf("text/html") >= 0 && !webServer.hasArg("download");
+  if (wantPreview) {
+    // Serve an HTML preview page with OpenGraph meta tags for social media previews
+    unsigned long fsize = f.size();
+    f.close();
+    String ctype = getContentType(name);
+    String html = "<!DOCTYPE html><html><head><meta charset='utf-8'>";
+    html += "<meta name='viewport' content='width=device-width,initial-scale=1'>";
+    // OpenGraph meta tags for rich previews on social media / messaging
+    html += "<meta property='og:title' content='" + name + "'>";
+    html += "<meta property='og:type' content='file'>";
+    html += "<meta property='og:url' content='http://" + server_ip + "/s/" + tok + "'>";
+    html += "<meta property='og:description' content='" + getFileSize(fsize) + " " + ctype + " - ESP32 File Server'>";
+    html += "<meta name='twitter:card' content='summary'>";
+    html += "<meta name='twitter:title' content='" + name + "'>";
+    html += "<meta name='twitter:description' content='" + getFileSize(fsize) + " " + ctype + "'>";
+    html += "<title>" + name + " - ESP32 File Server</title>";
+    html += "<style>body{font-family:system-ui;max-width:600px;margin:40px auto;padding:0 20px;color:#333}";
+    html += ".card{border:1px solid #ddd;border-radius:8px;padding:20px;margin:20px 0}";
+    html += "h1{font-size:18px;margin:0 0 8px} .meta{color:#888;font-size:14px}";
+    html += "a{color:#0984e3;text-decoration:none}a:hover{text-decoration:underline}</style></head><body>";
+    html += "<div class='card'><h1>📄 " + name + "</h1>";
+    html += "<p class='meta'>" + getFileSize(fsize) + " &middot; " + ctype + "</p>";
+    html += "<p><a href='/s/" + tok + "?download=1'>⬇️ Download file</a></p></div>";
+    html += "<p style='text-align:center;font-size:12px;color:#aaa'>Shared via ESP32 File Server</p>";
+    html += "</body></html>";
+    webServer.send(200, "text/html", html);
+    return;
+  }
   webServer.sendHeader("Content-Disposition", "attachment; filename=\""+name+"\"");
   webServer.streamFile(f, "application/octet-stream");
   f.close();
