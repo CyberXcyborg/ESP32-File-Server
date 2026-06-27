@@ -15,6 +15,7 @@
 #include <FS.h>
 #include <ArduinoJson.h>
 #include <Update.h>
+#include <time.h>
 
 #include "config.h"
 #include "auth.h"
@@ -2990,6 +2991,49 @@ void handleFileDiff() {
   logActivity("diff", pathA+" vs "+pathB, u);
 }
 
+// ============== AUTO TRASH EXPIRY ==============
+// Periodically purge trash items older than TRASH_EXPIRY_DAYS to prevent SD fill
+#define TRASH_EXPIRY_DAYS 30
+unsigned long lastTrashExpiry = 0;
+void autoExpireTrash() {
+  if (millis() - lastTrashExpiry < 3600000UL) return; // Check every hour
+  lastTrashExpiry = millis();
+  if (!sdOK || !SD.exists(TRASH_FOLDER)) return;
+  // Estimate cutoff: since millis() wraps at ~49 days, use file modification time
+  File dir = SD.open(TRASH_FOLDER);
+  if (!dir || !dir.isDirectory()) { if (dir) dir.close(); return; }
+  int expired = 0;
+  File f;
+  while (f = dir.openNextFile()) {
+    if (f.isDirectory()) { f.close(); continue; }
+    // Check file age via name timestamp or size heuristic
+    // Trash files older than TRASH_EXPIRY_DAYS: use fileTime if available
+    unsigned long ftime = f.fileTime();
+    // fileTime returns epoch seconds on ESP32 SD; compare against current epoch
+    if (ftime > 0) {
+      // Get current time (best effort — may be 0 if NTP not synced)
+      time_t now_secs = time(nullptr);
+      if (now_secs > TRASH_EXPIRY_DAYS * 86400UL) {
+        time_t cutoff = now_secs - (TRASH_EXPIRY_DAYS * 86400UL);
+        if (ftime < cutoff) {
+          String fp = String(f.name());
+          f.close();
+          SD.remove(fp);
+          expired++;
+          if (expired >= 50) break; // Limit per cycle to avoid blocking
+          continue;
+        }
+      }
+    }
+    f.close();
+  }
+  dir.close();
+  if (expired > 0) {
+    Serial.println("Auto-expired " + String(expired) + " trash items");
+    logActivity("trash-expiry", String(expired) + " items", "system");
+  }
+}
+
 // ============== PERIODIC SD HEALTH BROADCAST ==============
 unsigned long lastHealthBroadcast = 0;
 void broadcastSdHealth() {
@@ -3121,6 +3165,7 @@ void loop() {
   checkWiFi();
   checkSD();
   broadcastSdHealth(); // Push SD health to WebSocket clients every 30s
+  autoExpireTrash();   // Auto-purge old trash items every hour
   // Periodic session cleanup (every 5 minutes)
   static unsigned long lastSessionCleanup = 0;
   if (millis() - lastSessionCleanup > 300000UL) {
