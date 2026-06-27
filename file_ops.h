@@ -326,6 +326,15 @@ bool getSharePath(String token, String &path) {
   deserializeJson(doc, f); f.close();
   JsonObject share = doc[token];
   if (share.isNull()) return false;
+  // Enforce 24h share expiry (86400000 ms) to prevent stale links
+  unsigned long created = share["created"] | 0UL;
+  if (created > 0 && (millis() - created) > 86400000UL) {
+    // Expired — remove from shares file and reject
+    doc.remove(token);
+    File fw = SD.open(SHARES_FILE, FILE_WRITE);
+    if (fw) { serializeJson(doc, fw); fw.close(); }
+    return false;
+  }
   path = share["path"].as<String>();
   share["downloads"] = (share["downloads"] | 0) + 1;
   File fw = SD.open(SHARES_FILE, FILE_WRITE);
