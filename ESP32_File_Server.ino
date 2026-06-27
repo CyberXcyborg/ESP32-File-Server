@@ -1985,7 +1985,7 @@ void handleServiceWorker() {
   sendSecurityHeaders();
   webServer.sendHeader("Cache-Control", "public, max-age=86400");
   webServer.sendHeader("Content-Type", "application/javascript");
-  String sw = "const CACHE='esp32fs-v6.11';const SHELL=['/', '/manifest.json'];\\n";
+  String sw = "const CACHE='esp32fs-v6.14';const SHELL=['/', '/manifest.json'];\\n";
   sw += "self.addEventListener('install',e=>{e.waitUntil(caches.open(CACHE).then(c=>c.addAll(SHELL)));self.skipWaiting();});\n";
   sw += "self.addEventListener('activate',e=>{e.waitUntil(caches.keys().then(ks=>Promise.all(ks.filter(k=>k!==CACHE).map(k=>caches.delete(k)))));self.clients.claim();});\n";
   sw += "self.addEventListener('fetch',e=>{if(e.request.url.includes('/api/')){e.respondWith(fetch(e.request).catch(()=>caches.match(e.request)));}else{e.respondWith(caches.match(e.request).then(r=>r||fetch(e.request)));}});\n";
