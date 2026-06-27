@@ -503,6 +503,14 @@ void handleListFiles() {
   doc["fileCount"] = fc; doc["dirCount"] = dc;
   doc["sortBy"] = sortBy; doc["sortOrder"] = sortOrder;
   String out; serializeJson(doc, out);
+  // ETag for listing cache: based on dir stats + used bytes (changes on any file change)
+  String etag = "\"" + String(count) + "-" + String(SD.usedBytes()) + "\"";
+  webServer.sendHeader("ETag", etag);
+  webServer.sendHeader("Cache-Control", "private, max-age=5");
+  if (webServer.hasHeader("If-None-Match") && webServer.header("If-None-Match") == etag) {
+    webServer.send(304, "text/plain", "Not Modified");
+    return;
+  }
   webServer.send(200, "application/json", out);
 }
 
