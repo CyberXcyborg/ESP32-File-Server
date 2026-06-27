@@ -339,6 +339,7 @@ kbd{font-family:monospace;font-size:12px}
   <div class="ctx-item" onclick="ctxCopy()">📋 Copy</div>
   <div class="ctx-item" onclick="ctxShare()">🔗 Share</div>
   <div class="ctx-item" onclick="ctxCopyPath()">📋 Copy Path</div>
+  <div class="ctx-item" onclick="ctxLock()">🔒 Lock/Unlock</div>
   <div class="ctx-sep"></div>
   <div class="ctx-item" onclick="ctxDelete()">🗑️ Delete</div>
 </div>
@@ -704,8 +705,8 @@ function renderFiles(){
   if(currentPath!=='/'){const parent=currentPath.split('/').slice(0,-2).join('/')+'/';html+=`<div class="file-item" onclick="loadFiles('${parent}')"><div class="file-icon">📁</div><div class="file-name">..</div><div class="file-size"></div><div class="file-actions"></div></div>`;}
   f.forEach(file=>{
     const sel=selectedFiles.includes(file.path);
-    html+=`<div class="file-item${sel?' selected':''}" data-path="${file.path}" data-name="${file.name}" data-type="${file.type}">
-      <div class="file-icon">${file.type==='dir'?'📁':file.icon}</div>
+    html+=`<div class="file-item${sel?' selected':''}" data-path="${file.path}" data-name="${file.name}" data-type="${file.type}" data-readonly="${file.readonly||false}">
+      <div class="file-icon">${file.type==='dir'?'📁':file.icon}${file.readonly?'🔒':''}</div>
       <div class="file-name" onclick="${file.type==='dir'?`loadFiles('${file.path}')`:`previewFile('${file.path}')`}">${file.name}</div>
       <div class="file-size">${file.type==='dir'?'':formatSize(file.size)}</div>
       <div class="file-actions">
@@ -768,6 +769,17 @@ function ctxMove(){showMoveModal(ctxTarget.dataset.path,'move');hideCtxMenu();}
 function ctxCopy(){showMoveModal(ctxTarget.dataset.path,'copy');hideCtxMenu();}
 function ctxShare(){shareFile(ctxTarget.dataset.path);hideCtxMenu();}
 function ctxCopyPath(){navigator.clipboard.writeText(ctxTarget.dataset.path).then(()=>showToast('Path copied!','success')).catch(()=>showToast('Copy failed','error'));hideCtxMenu();}
+function ctxLock(){
+  const path=ctxTarget.dataset.path;
+  const isLocked=ctxTarget.dataset.readonly==='true';
+  const newState=!isLocked;
+  fetch('/api/readonly',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded','Authorization':'Bearer '+token},body:'path='+encodeURIComponent(path)+'&readonly='+(newState?'1':'0')+'&csrf='+encodeURIComponent(csrfToken)})
+    .then(r=>r.json()).then(d=>{
+      if(d.ok){ctxTarget.dataset.readonly=newState?'true':'false';showToast(newState?'🔒 File locked (read-only)':'🔓 File unlocked','success');loadFiles(currentPath);}
+      else showToast('Failed to toggle lock','error');
+    }).catch(()=>showToast('Lock toggle failed','error'));
+  hideCtxMenu();
+}
 function ctxDelete(){deleteItem(ctxTarget.dataset.path,ctxTarget.dataset.name);hideCtxMenu();}
 
 // ============== FILE INFO ==============
