@@ -725,6 +725,11 @@ void handleUpload() {
   static File uf;
   static String upp;
   } else if (up.status == UPLOAD_FILE_START) {
+    // Enforce maximum upload size limit
+    if (up.totalSize > MAX_UPLOAD_SIZE) {
+      Serial.printf("Upload rejected: too large (%u > %u)\n", up.totalSize, MAX_UPLOAD_SIZE);
+      return;
+    }
     // Check free space (need at least upload size + 10KB buffer)
     uint64_t free = SD.totalBytes() - SD.usedBytes();
     if (free < up.totalSize + 10240) {
@@ -1763,6 +1768,7 @@ void handleStats() {
   doc["sd_wear_pct"] = totalWriteOps > 0 ? min(100, (int)(totalWriteOps / 10000UL)) : 0;
   doc["sd_write_mb"] = (uint32_t)(totalWriteBytes / 1048576UL);
   doc["sd_failure_risk"] = failureRisk;
+  doc["max_upload_size"] = MAX_UPLOAD_SIZE;
   String out; serializeJson(doc, out);
   webServer.send(200, "application/json", out);
 }

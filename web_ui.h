@@ -833,12 +833,16 @@ function handleFiles(fileList){
   uploadQueue = [];
   uploadCompleted = 0;
   uploadFailed = 0;
+  const MAX_SIZE = 16*1024*1024; // 16 MB — must match MAX_UPLOAD_SIZE in config.h
+  let oversized = 0;
   Array.from(fileList).forEach(f=>{
+    if(f.size > MAX_SIZE){ oversized++; return; } // Skip files exceeding limit
     const name=f.webkitRelativePath||f.name;
     uploadQueue.push({ file: f, path: name });
     const id='ul-'+name.replace(/[^a-zA-Z0-9]/g,'_');
     list.innerHTML+=`<div style="display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--border);font-size:12px"><span>${name}</span><span id="${id}">⏳</span></div>`;
   });
+  if(oversized>0) showToast(oversized+' file(s) exceed 16 MB limit, skipped','error');
   startUploadQueue();
 }
 
