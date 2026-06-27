@@ -418,16 +418,16 @@ void sendSecurityHeaders() {
 
 void sendError(int code, String msg) {
   sendSecurityHeaders();
-  String json = "{"error":""+msg+"","code":"+String(code)+"}";
+  String json = "{\"error\":\""+msg+"\",\"code\":"+String(code)+"}";
   webServer.sendHeader("Content-Length", String(json.length()));
   webServer.send(code, "application/json", json);
+}
 
 // Send JSON response with Content-Length header for HTTP compliance
 void sendJson(int code, String json) {
   sendSecurityHeaders();
   webServer.sendHeader("Content-Length", String(json.length()));
   webServer.send(code, "application/json", json);
-}
 }
 
 // ============== AUDIT LOG =============
