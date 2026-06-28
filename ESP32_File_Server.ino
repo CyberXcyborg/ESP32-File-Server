@@ -123,6 +123,7 @@ bool accessPointMode = false;
 String server_ip = "";
 unsigned long lastWiFiCheck = 0;
 bool sdOK = true;
+bool sdWriteProtected = false; // Physical write-protect switch detection
 
 // ============== REQUEST SIZE LIMITER =============
 // Reject POST/PUT bodies larger than this to prevent OOM
@@ -485,6 +486,28 @@ void checkSD() {
   if (millis() - lastHealthCheck > healthCheckInterval) {
     lastHealthCheck = millis();
     bool ok = SD.begin(SD_CS);
+    // Write-protect detection: try creating a temporary test file
+    if (ok) {
+      File testFile = SD.open("/.wptest", FILE_WRITE);
+      if (testFile) {
+        testFile.print("wp");
+        testFile.close();
+        SD.remove("/.wptest");
+        if (sdWriteProtected) {
+          sdWriteProtected = false;
+          Serial.println("SD card write-protect cleared");
+          logActivity("sd-write-protect", "cleared", "system");
+        }
+      } else {
+        // Write failed but SD responded = physical write-protect switch is on
+        if (!sdWriteProtected) {
+          sdWriteProtected = true;
+          Serial.println("WARNING: SD card write-protect switch detected!");
+          logActivity("sd-write-protect", "enabled", "system");
+        }
+        ok = false;
+      }
+    }
     uint32_t free = SD.totalBytes() - SD.usedBytes();
     healthHistory[healthIndex % 48] = {(unsigned long)(millis() / 1000), ok, (uint32_t)(free / 1024), sectorErrors};
     healthIndex++;
@@ -4739,6 +4762,8 @@ void broadcastSdHealth() {
   doc["write_ops"] = totalWriteOps;
   doc["write_mb"] = (uint32_t)(totalWriteBytes / 1048576);
   doc["risk"] = failureRisk;
+  doc["rssi"] = WiFi.RSSI(); // WiFi signal strength for connection quality indicator
+  doc["write_protected"] = sdWriteProtected;
   String msg; serializeJson(doc, msg);
   webSocket.broadcastTXT(msg);
 }
