@@ -3824,6 +3824,8 @@ void handleStorageBreakdown() {
   JsonObject oth = breakdown.createNestedObject("other"); oth["size"] = other; oth["formatted"] = getFileSize(other);
   JsonObject tr = breakdown.createNestedObject("trash"); tr["size"] = trash; tr["formatted"] = getFileSize(trash);
   JsonObject dr = breakdown.createNestedObject("empty"); dr["size"] = (SD.totalBytes()-SD.usedBytes()); dr["formatted"] = getFileSize((uint64_t)(SD.totalBytes()-SD.usedBytes()));
+  String out; serializeJson(doc, out);
+  webServer.send(200, "application/json", out);
 }
 
 // ============== FOLDER SPACE USAGE ==============
