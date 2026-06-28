@@ -2107,7 +2107,14 @@ void handleRoot() {
   String u,lvl;
   if(!isAuthenticated(webServer,u,lvl)){webServer.sendHeader("Location","/login");webServer.send(302);return;}
   if(isRateLimited()) return;
-  webServer.sendHeader("Cache-Control","no-cache");
+  // ETag based on content length for conditional requests (saves bandwidth on large UI)
+  String etag = "\"" + String(strlen(index_html)) + "-" + String(FIRMWARE_VERSION) + "\"";
+  webServer.sendHeader("ETag", etag);
+  webServer.sendHeader("Cache-Control", "no-cache");
+  if (webServer.hasHeader("If-None-Match") && webServer.header("If-None-Match") == etag) {
+    webServer.send(304, "text/plain", "");
+    return;
+  }
   webServer.send(200,"text/html",String(index_html));
 }
 void handleManifest() {
