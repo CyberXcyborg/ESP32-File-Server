@@ -3384,6 +3384,27 @@ void handleFilePreviewCode() {
     read += n;
   }
   f.close();
+  // Detect language from extension for syntax highlighting
+  String lang = "plaintext";
+  if (ext == "js" || ext == "jsx") lang = "javascript";
+  else if (ext == "ts" || ext == "tsx") lang = "typescript";
+  else if (ext == "py") lang = "python";
+  else if (ext == "c") lang = "c";
+  else if (ext == "cpp" || ext == "hpp") lang = "cpp";
+  else if (ext == "h") lang = "c";
+  else if (ext == "java") lang = "java";
+  else if (ext == "html" || ext == "htm") lang = "html";
+  else if (ext == "css") lang = "css";
+  else if (ext == "json") lang = "json";
+  else if (ext == "xml") lang = "xml";
+  else if (ext == "md") lang = "markdown";
+  else if (ext == "sh") lang = "bash";
+  else if (ext == "sql") lang = "sql";
+  else if (ext == "php") lang = "php";
+  else if (ext == "rs") lang = "rust";
+  else if (ext == "go") lang = "go";
+  else if (ext == "yaml" || ext == "yml") lang = "yaml";
+  else if (ext == "toml") lang = "toml";
   // Build line-numbered HTML
   int lineCount = 1;
   for (int i = 0; i < content.length(); i++) {
@@ -3415,6 +3436,7 @@ void handleFilePreviewCode() {
   doc["sizeFormatted"] = getFileSize((uint64_t)fileSize);
   doc["truncated"] = fileSize > maxBytes;
   doc["lineCount"] = lineNum - 1;
+  doc["language"] = lang;
   doc["html"] = html;
   String out; serializeJson(doc, out);
   webServer.send(200, "application/json", out);
@@ -3454,6 +3476,7 @@ void handleFileEdit() {
     logActivity("edit", path + " (" + String(written) + "B)", u);
     broadcastChange("edit", path);
     broadcastStatsUpdate();
+    trackWriteActivity(path); // Track wear leveling
     // Recompute CRC sidecar after edit
     storeFileCRC(path);
     sendJson(200, "{\"ok\":true,\"path\":\"" + path + "\",\"size\":" + String(written) + "}");
@@ -3535,12 +3558,34 @@ void handleFilePreview() {
     read += n;
   }
   f.close();
+  // Detect language from extension for syntax highlighting
+  String lang = "plaintext";
+  if (ext == "js" || ext == "jsx") lang = "javascript";
+  else if (ext == "ts" || ext == "tsx") lang = "typescript";
+  else if (ext == "py") lang = "python";
+  else if (ext == "c") lang = "c";
+  else if (ext == "cpp" || ext == "hpp") lang = "cpp";
+  else if (ext == "h") lang = "c";
+  else if (ext == "java") lang = "java";
+  else if (ext == "html" || ext == "htm") lang = "html";
+  else if (ext == "css") lang = "css";
+  else if (ext == "json") lang = "json";
+  else if (ext == "xml") lang = "xml";
+  else if (ext == "md") lang = "markdown";
+  else if (ext == "sh") lang = "bash";
+  else if (ext == "sql") lang = "sql";
+  else if (ext == "php") lang = "php";
+  else if (ext == "rs") lang = "rust";
+  else if (ext == "go") lang = "go";
+  else if (ext == "yaml" || ext == "yml") lang = "yaml";
+  else if (ext == "toml") lang = "toml";
   DynamicJsonDocument doc(65536 + 512);
   doc["name"] = name;
   doc["path"] = path;
   doc["size"] = (uint64_t)fileSize;
   doc["sizeFormatted"] = getFileSize((uint64_t)fileSize);
   doc["truncated"] = fileSize > maxBytes;
+  doc["language"] = lang;
   doc["content"] = content;
   String out; serializeJson(doc, out);
   webServer.send(200, "application/json", out);
