@@ -1300,9 +1300,25 @@ void handleMove() {
   File dd = SD.open(dest);
   if (dd && dd.isDirectory()) { String n = path.substring(path.lastIndexOf('/')+1); dp = dest + (dest.endsWith("/")?"":"/") + n; dd.close(); }
   else dp = dest;
+  // Auto-rename on conflict: if dest exists and is a file, append _(N) suffix
+  if (SD.exists(dp)) {
+    File df = SD.open(dp);
+    if (df && !df.isDirectory()) {
+      df.close();
+      String parent = dp.substring(0, dp.lastIndexOf('/')+1);
+      String name = dp.substring(dp.lastIndexOf('/')+1);
+      int dot = name.lastIndexOf('.');
+      String b = (dot > 0) ? name.substring(0, dot) : name;
+      String e = (dot > 0) ? name.substring(dot) : "";
+      for (int i = 1; i < 1000; i++) {
+        String candidate = parent + b + "_(" + String(i) + ")" + e;
+        if (!SD.exists(candidate)) { dp = candidate; break; }
+      }
+    } else if (df) { df.close(); }
+  }
   // Lock source file to prevent concurrent modification during move
   if (!acquireFileLock(path, 3000)) { webServer.send(423, "text/plain", "Source file is locked"); return; }
-  if (moveFile(path, dp)) { logActivity("move", path+" -> "+dp, u); broadcastChange("move", dp); webServer.send(200, "text/plain", "OK"); }
+  if (moveFile(path, dp)) { logActivity("move", path+" -> "+dp, u); broadcastChange("move", dp); webServer.send(200, "application/json", "{\"ok\":true,\"path\":\""+dp+"\"}"); }
   else webServer.send(500, "text/plain", "Failed");
   releaseFileLock(path);
 }
