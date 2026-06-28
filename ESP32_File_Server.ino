@@ -4532,6 +4532,7 @@ void setup() {
   webServer.on("/api/batch-download",HTTP_POST,handleBatchDownload);
   webServer.on("/api/video",HTTP_GET,handleVideoThumbnail);
   webServer.on("/api/build-info",HTTP_GET,handleBuildInfo);
+  webServer.on("/api/stats",HTTP_GET,handleQuickStats);
   webServer.on("/api/batch-delete",HTTP_POST,handleBatchDelete);
   webServer.on("/api/batch-move",HTTP_POST,handleBatchMove);
   webServer.on("/api/batch-copy",HTTP_POST,handleBatchCopy);
@@ -4628,6 +4629,29 @@ void setup() {
   Serial.println("WebSocket on 81 (heartbeat enabled)");
   ftpSrv.begin(ftp_user,ftp_password);
   Serial.println("FTP started");
+}
+
+// ============== QUICK STATS ENDPOINT ==============
+// Returns total file count, directory count, and SD card summary in one request
+void handleQuickStats() {
+  String u, lvl;
+  if (!isAuthenticated(webServer, u, lvl)) { webServer.send(401); return; }
+  if (!sdOK) { webServer.send(503); return; }
+  DynamicJsonDocument doc(512);
+  doc["files"] = countFiles("/");
+  doc["dirs"] = countDirs("/");
+  doc["sd_total_mb"] = (uint32_t)(SD.totalBytes() / 1048576UL);
+  doc["sd_used_mb"] = (uint32_t)(SD.usedBytes() / 1048576UL);
+  doc["sd_free_mb"] = (uint32_t)((SD.totalBytes() - SD.usedBytes()) / 1048576UL);
+  doc["sd_pct"] = (uint8_t)(SD.usedBytes() * 100 / max((uint64_t)1, SD.totalBytes()));
+  doc["uptime_h"] = (uint32_t)(millis() / 3600000UL);
+  doc["heap_free_kb"] = (uint32_t)(ESP.getFreeHeap() / 1024);
+  int activeSess = 0;
+  for (int i = 0; i < MAX_SESSIONS; i++) if (sessions[i].isActive) activeSess++;
+  doc["active_sessions"] = activeSess;
+  String out;
+  serializeJson(doc, out);
+  sendJson(200, out);
 }
 
 // ============== BUILD INFO ENDPOINT ==============
