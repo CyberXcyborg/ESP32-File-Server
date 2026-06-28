@@ -1379,6 +1379,7 @@ void handleUpload() {
     logActivity("upload", upp+" ("+String(up.totalSize)+"B)", u);
     broadcastChange("upload", upp);
     trackFileAccess(upp, "view"); // Record initial upload
+    trackWriteActivity(upp); // Track wear leveling
     fireWebhook("upload", upp, u);
     // Store CRC32 sidecar for integrity verification
     storeFileCRC(upp);
@@ -4533,6 +4534,7 @@ void setup() {
   webServer.on("/api/video",HTTP_GET,handleVideoThumbnail);
   webServer.on("/api/build-info",HTTP_GET,handleBuildInfo);
   webServer.on("/api/stats",HTTP_GET,handleQuickStats);
+  webServer.on("/api/wear-level",HTTP_GET,handleWearLevel);
   webServer.on("/api/batch-delete",HTTP_POST,handleBatchDelete);
   webServer.on("/api/batch-move",HTTP_POST,handleBatchMove);
   webServer.on("/api/batch-copy",HTTP_POST,handleBatchCopy);
@@ -4649,6 +4651,35 @@ void handleQuickStats() {
   int activeSess = 0;
   for (int i = 0; i < MAX_SESSIONS; i++) if (sessions[i].isActive) activeSess++;
   doc["active_sessions"] = activeSess;
+  String out;
+  serializeJson(doc, out);
+  sendJson(200, out);
+}
+
+// ============== WEAR LEVELING ENDPOINT ==============
+// Returns write-frequency data for files (top 20 most-written files)
+void handleWearLevel() {
+  String u, lvl;
+  if (!isAuthenticated(webServer, u, lvl)) { webServer.send(401); return; }
+  // Sort wear entries by writeCount (simple bubble, list is small)
+  for (int i = 0; i < wearCount - 1; i++) {
+    for (int j = 0; j < wearCount - i - 1; j++) {
+      if (wearEntries[j].writeCount < wearEntries[j+1].writeCount) {
+        WearEntry tmp = wearEntries[j];
+        wearEntries[j] = wearEntries[j+1];
+        wearEntries[j+1] = tmp;
+      }
+    }
+  }
+  DynamicJsonDocument doc(2048);
+  JsonArray arr = doc.createNestedArray("files");
+  int limit = wearCount < 20 ? wearCount : 20;
+  for (int i = 0; i < limit; i++) {
+    if (wearEntries[i].writeCount < 2) break;
+    JsonObject o = arr.createNestedObject();
+    o["path"] = wearEntries[i].path;
+    o["writes"] = wearEntries[i].writeCount;
+  }
   String out;
   serializeJson(doc, out);
   sendJson(200, out);
