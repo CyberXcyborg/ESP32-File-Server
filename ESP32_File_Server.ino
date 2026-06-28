@@ -3228,6 +3228,33 @@ void handleFileEdit() {
   }
 }
 
+// ============== SERVER TIME ENDPOINT ==============
+// Returns current device time for client clock synchronization
+// Helps browser display correct timestamps when device NTP sync is unavailable
+void handleServerTime() {
+  String u, lvl;
+  if (!isAuthenticated(webServer, u, lvl)) { webServer.send(401); return; }
+  DynamicJsonDocument doc(256);
+  time_t now = time(nullptr);
+  doc["epoch"] = (unsigned long)now;
+  doc["millis"] = millis();
+  doc["timezone"] = "UTC";
+  if (now > 0) {
+    struct tm *tm = gmtime(&now);
+    char buf[32];
+    strftime(buf, sizeof(buf), "%Y-%m-%dT%H:%M:%SZ", tm);
+    doc["iso"] = String(buf);
+    strftime(buf, sizeof(buf), "%a, %d %b %Y %H:%M:%S GMT", tm);
+    doc["http"] = String(buf);
+  } else {
+    doc["iso"] = "unknown";
+    doc["http"] = "unknown";
+  }
+  String out;
+  serializeJson(doc, out);
+  webServer.send(200, "application/json", out);
+}
+
 void handleFilePreview() {
   String u, lvl;
   if (!isAuthenticated(webServer, u, lvl)) { webServer.send(401); return; }
@@ -4150,6 +4177,7 @@ void setup() {
   webServer.on("/api/preview-code",HTTP_GET,handleFilePreviewCode);
   webServer.on("/api/edit",HTTP_POST,handleFileEdit);
   webServer.on("/api/md-preview",HTTP_GET,handleMarkdownPreview);
+  webServer.on("/api/time",HTTP_GET,handleServerTime);
   webServer.on("/api/users",HTTP_GET,handleGetUsers);
   webServer.on("/api/users",HTTP_POST,handleAddUser);
   webServer.on("/api/users/",HTTP_PUT,handleUpdateUser);
