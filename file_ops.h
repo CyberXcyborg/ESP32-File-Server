@@ -258,6 +258,34 @@ bool copyDir(String src, String dst) {
   return true;
 }
 
+// Count all files recursively (for stats/progress)
+uint32_t countFilesRecursive(String path) {
+  uint32_t count = 0;
+  File dir = SD.open(path);
+  if (!dir || !dir.isDirectory()) { if (dir) dir.close(); return 0; }
+  File f;
+  while (f = dir.openNextFile()) {
+    if (f.isDirectory()) { f.close(); count += countFilesRecursive(String(f.name())); }
+    else { f.close(); count++; }
+  }
+  dir.close();
+  return count;
+}
+
+// Count all directories recursively
+uint32_t countDirsRecursive(String path) {
+  uint32_t count = 0;
+  File dir = SD.open(path);
+  if (!dir || !dir.isDirectory()) { if (dir) dir.close(); return 0; }
+  File f;
+  while (f = dir.openNextFile()) {
+    if (f.isDirectory()) { f.close(); count += 1 + countDirsRecursive(String(f.name())); }
+    else f.close();
+  }
+  dir.close();
+  return count;
+}
+
 // ============== ACTIVITY LOG ==============
 void logActivity(String action, String path, String username) {
   // Truncate log to last 1000 entries to prevent SD fill

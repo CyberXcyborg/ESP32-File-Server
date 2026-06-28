@@ -2833,6 +2833,8 @@ void handleStats() {
   doc["sd_wear_pct"] = totalWriteOps > 0 ? min(100, (int)(totalWriteOps / 10000UL)) : 0;
   doc["sd_write_mb"] = (uint32_t)(totalWriteBytes / 1048576UL);
   doc["sd_failure_risk"] = failureRisk;
+  doc["fs_total_files"] = countFilesRecursive("/");
+  doc["fs_total_dirs"] = countDirsRecursive("/");
   doc["sd_crc_spot_checks"] = crcSpotChecksDone;
   doc["sd_crc_spot_errors"] = crcSpotCheckErrors;
   doc["max_upload_size"] = MAX_UPLOAD_SIZE;
