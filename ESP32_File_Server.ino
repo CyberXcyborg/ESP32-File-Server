@@ -250,6 +250,25 @@ void broadcastChange(String action, String path) {
   webSocket.broadcastTXT(msg);
 }
 
+// ============== LOG BROADCAST ==============
+// Push log events in real-time to all authenticated admin WebSocket clients
+void broadcastLogEvent(String action, String path, String username) {
+  DynamicJsonDocument doc(256);
+  doc["event"] = "log";
+  doc["action"] = action;
+  doc["path"] = path;
+  doc["user"] = username;
+  doc["time"] = millis();
+  String msg;
+  serializeJson(doc, msg);
+  // Only send to admin-level WS clients to reduce noise
+  for (int i = 0; i < WS_MAX_CLIENTS; i++) {
+    if (wsClients[i].authenticated && wsClients[i].userLevel == "admin") {
+      webSocket.sendTXT(i, msg);
+    }
+  }
+}
+
 // ============== UPLOAD PROGRESS TRACKING ==============
 // Track ongoing uploads and broadcast progress to WebSocket clients for real-time visibility
 struct UploadProgress {

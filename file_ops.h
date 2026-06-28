@@ -337,6 +337,8 @@ void logActivity(String action, String path, String username) {
   logFile.print(",");
   logFile.println(path);
   logFile.close();
+  // Broadcast log event to authenticated admin WebSocket clients
+  broadcastLogEvent(action, path, username);
 }
 
 // ============== FILE VERSIONING ==============
@@ -914,5 +916,8 @@ String getFileCRC32(String path) {
   }
   return result;
 }
+
+// Forward declaration — defined in main .ino
+void broadcastLogEvent(String action, String path, String username);
 
 #endif
