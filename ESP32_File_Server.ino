@@ -4900,6 +4900,7 @@ void setup() {
   webServer.on("/api/detect-type",HTTP_GET,handleDetectType);
   webServer.on("/api/crc",HTTP_GET,handleFileCRC);
   webServer.on("/api/bulk-crc",HTTP_GET,handleBulkVerifyCRC);
+  webServer.on("/api/config-backup",HTTP_POST,handleConfigBackup);
   webServer.on("/api/duplicates",HTTP_GET,handleFindDuplicates);
   webServer.on("/api/recent",HTTP_GET,handleRecentFiles);
   webServer.on("/api/export-list",HTTP_GET,handleExportFileList);
@@ -5026,6 +5027,49 @@ void handleBuildInfo() {
   sendJson(200, out);
 }
 
+// ============== CONFIG AUTO-BACKUP ==============
+// Copy a config file to /config-backup/ directory with timestamp
+// Keeps last 3 backups per file to avoid filling SD
+void backupConfigFile(const char* srcPath) {
+  if (!SD.exists(srcPath)) return;
+  SD.mkdir("/config-backup");
+  String name = String(srcPath);
+  int slash = name.lastIndexOf('/');
+  if (slash >= 0) name = name.substring(slash + 1);
+  // Remove .bak files older than newest 3
+  String prefix = "/config-backup/" + name + ".";
+  // Simple approach: always write .bak2, move .bak1->.bak2, .bak0->.bak1, current->.bak0
+  SD.remove(prefix + "bak2");
+  SD.rename(prefix + "bak1", prefix + "bak2");
+  SD.rename(prefix + "bak0", prefix + "bak1");
+  // Copy current file to .bak0
+  File src = SD.open(srcPath, FILE_READ);
+  if (!src) return;
+  File dst = SD.open(prefix + "bak0", FILE_WRITE);
+  if (!dst) { src.close(); return; }
+  uint8_t buf[256];
+  while (src.available()) {
+    int n = src.read(buf, 256);
+    dst.write(buf, n);
+  }
+  src.close();
+  dst.close();
+}
+
+// ============== MANUAL CONFIG BACKUP ==============
+// POST /api/config-backup (admin only)
+// Triggers immediate backup of all config files
+void handleConfigBackup() {
+  String u, lvl;
+  if (!isAuthenticated(webServer, u, lvl) || lvl != "admin" || !checkCsrf(webServer)) { webServer.send(403); return; }
+  backupConfigFile(USERS_FILE);
+  backupConfigFile(SETTINGS_FILE);
+  backupConfigFile(SHARES_FILE);
+  backupConfigFile(WEBHOOK_FILE);
+  logActivity("config-backup", "manual", u);
+  webServer.send(200, "application/json", "{\"ok\":true,\"message\":\"Config backup created\"}");
+}
+
 void loop() {
   // Record request start time for metrics & timeout enforcement
   requestStartMs = millis();
@@ -5091,5 +5135,15 @@ void loop() {
         Serial.println("Session expired: " + sessions[i].username);
       }
     }
+  }
+  // ============== CONFIG AUTO-BACKUP ==============
+  // Backup critical config files every 6 hours to prevent data loss
+  static unsigned long lastConfigBackup = 0;
+  if (millis() - lastConfigBackup > 21600000UL) { // 6 hours
+    lastConfigBackup = millis();
+    backupConfigFile(USERS_FILE);
+    backupConfigFile(SETTINGS_FILE);
+    backupConfigFile(SHARES_FILE);
+    Serial.println("Config auto-backup completed");
   }
 }
