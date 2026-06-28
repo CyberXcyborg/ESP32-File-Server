@@ -250,6 +250,80 @@ void broadcastChange(String action, String path) {
   webSocket.broadcastTXT(msg);
 }
 
+// ============== UPLOAD PROGRESS TRACKING ==============
+// Track ongoing uploads and broadcast progress to WebSocket clients for real-time visibility
+struct UploadProgress {
+  String filename;
+  uint32_t totalBytes;
+  uint32_t uploadedBytes;
+  String username;
+  bool active;
+  unsigned long startTime;
+};
+#define MAX_TRACKED_UPLOADS 8
+UploadProgress uploadProgress[MAX_TRACKED_UPLOADS];
+int uploadProgressCount = 0;
+
+void startUploadProgress(String filename, uint32_t totalBytes, String username) {
+  // Find existing entry or add new
+  for (int i = 0; i < MAX_TRACKED_UPLOADS; i++) {
+    if (uploadProgress[i].active && uploadProgress[i].filename == filename) {
+      uploadProgress[i].totalBytes = totalBytes;
+      uploadProgress[i].uploadedBytes = 0;
+      uploadProgress[i].startTime = millis();
+      return;
+    }
+  }
+  for (int i = 0; i < MAX_TRACKED_UPLOADS; i++) {
+    if (!uploadProgress[i].active) {
+      uploadProgress[i].filename = filename;
+      uploadProgress[i].totalBytes = totalBytes;
+      uploadProgress[i].uploadedBytes = 0;
+      uploadProgress[i].username = username;
+      uploadProgress[i].active = true;
+      uploadProgress[i].startTime = millis();
+      uploadProgressCount++;
+      return;
+    }
+  }
+}
+
+void updateUploadProgress(String filename, uint32_t uploadedBytes) {
+  for (int i = 0; i < MAX_TRACKED_UPLOADS; i++) {
+    if (uploadProgress[i].active && uploadProgress[i].filename == filename) {
+      uploadProgress[i].uploadedBytes = uploadedBytes;
+      // Broadcast progress to all WebSocket clients
+      DynamicJsonDocument doc(256);
+      doc["event"] = "upload-progress";
+      doc["filename"] = filename;
+      doc["uploaded"] = uploadedBytes;
+      doc["total"] = uploadProgress[i].totalBytes;
+      doc["pct"] = (uploadedBytes * 100) / max((uint32_t)1, uploadProgress[i].totalBytes);
+      doc["user"] = uploadProgress[i].username;
+      String msg; serializeJson(doc, msg);
+      webSocket.broadcastTXT(msg);
+      return;
+    }
+  }
+}
+
+void endUploadProgress(String filename) {
+  for (int i = 0; i < MAX_TRACKED_UPLOADS; i++) {
+    if (uploadProgress[i].active && uploadProgress[i].filename == filename) {
+      uploadProgress[i].active = false;
+      uploadProgressCount--;
+      // Notify clients upload is done
+      DynamicJsonDocument doc(128);
+      doc["event"] = "upload-progress";
+      doc["filename"] = filename;
+      doc["done"] = true;
+      String msg; serializeJson(doc, msg);
+      webSocket.broadcastTXT(msg);
+      return;
+    }
+  }
+}
+
 // ============== BROADCAST STATS UPDATE ==============
 void broadcastStatsUpdate() {
   DynamicJsonDocument doc(256);
@@ -1353,6 +1427,8 @@ void handleChunkedUpload() {
     webServer.send(400, "application/json", "{\"error\":\"file-type-blocked\"}"); return;
   }
   String fullPath = p + filename;
+  // Track upload progress for WebSocket broadcast
+  if (offset == 0) startUploadProgress(filename, total, u);
   // Acquire lock
   if (offset == 0 && !acquireFileLock(fullPath, 5000)) {
     webServer.send(423, "application/json", "{\"error\":\"file-locked\"}"); return;
@@ -1386,6 +1462,8 @@ void handleChunkedUpload() {
     }
   }
   f.close();
+  // Update upload progress
+  updateUploadProgress(filename, offset + contentLen);
   // Release lock if this is the last chunk
   if (offset + contentLen >= total) {
     releaseFileLock(fullPath);
@@ -1395,6 +1473,7 @@ void handleChunkedUpload() {
     broadcastChange("upload", fullPath);
     storeFileCRC(fullPath);
     broadcastStatsUpdate();
+    endUploadProgress(filename);
     webServer.send(200, "application/json", "{\"ok\":true,\"path\":\"" + fullPath + "\",\"complete\":true}");
   } else {
     webServer.send(200, "application/json", "{\"ok\":true,\"offset\":" + String(offset + contentLen) + ",\"complete\":false}");
