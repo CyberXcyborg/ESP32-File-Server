@@ -191,11 +191,24 @@ String getContentType(String fileName) {
   if (ext=="jpg"||ext=="jpeg") return "image/jpeg";
   if (ext=="gif") return "image/gif";
   if (ext=="svg") return "image/svg+xml";
+  if (ext=="webp") return "image/webp";
+  if (ext=="ico") return "image/x-icon";
   if (ext=="pdf") return "application/pdf";
   if (ext=="mp3") return "audio/mpeg";
+  if (ext=="wav") return "audio/wav";
+  if (ext=="ogg") return "audio/ogg";
   if (ext=="mp4") return "video/mp4";
+  if (ext=="webm") return "video/webm";
+  if (ext=="mkv") return "video/x-matroska";
+  if (ext=="avi") return "video/x-msvideo";
   if (ext=="zip") return "application/zip";
   if (ext=="gz") return "application/gzip";
+  if (ext=="woff2") return "font/woff2";
+  if (ext=="woff") return "font/woff";
+  if (ext=="ttf") return "font/ttf";
+  if (ext=="otf") return "font/otf";
+  if (ext=="md"||ext=="markdown") return "text/markdown";
+  if (ext=="xml") return "application/xml";
   return "application/octet-stream";
 }
 

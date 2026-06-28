@@ -529,6 +529,7 @@ document.addEventListener('DOMContentLoaded',()=>{
     if(e.key==='Escape'){document.querySelectorAll('.modal').forEach(m=>m.style.display='none');hideCtxMenu();hideThemeMenu();selectedFiles=[];updateSelBtn();renderFiles();}
     if(e.key==='Delete'&&selectedFiles.length>0&&document.activeElement.tagName!=='INPUT'){e.preventDefault();deleteSelected();}
     if(e.key==='F2'&&selectedFiles.length===1){e.preventDefault();const f=files.find(x=>x.path===selectedFiles[0]);if(f)showRenameModal(f.path,f.name);}
+    if(e.key==='ArrowLeft'&&document.activeElement.tagName!=='INPUT'&&document.activeElement.tagName!=='TEXTAREA'){e.preventDefault();if(currentPath!=='/'){const p=currentPath.substring(0,currentPath.lastIndexOf('/'));loadFiles(p?p:'/');}}
     if(e.ctrlKey&&e.key==='a'&&document.activeElement.tagName!=='INPUT'){e.preventDefault();selectedFiles=files.map(f=>f.path);updateSelBtn();renderFiles();}
     if(e.ctrlKey&&e.key==='k'&&document.activeElement.tagName!=='INPUT'){e.preventDefault();document.getElementById('searchInput').focus();document.getElementById('searchInput').select();}
     if(e.ctrlKey&&e.key==='r'&&selectedFiles.length>0&&document.activeElement.tagName!=='INPUT'){e.preventDefault();renameSelected();}
