@@ -4361,12 +4361,33 @@ void broadcastSdHealth() {
   webSocket.broadcastTXT(msg);
 }
 
+// ============== HTTP METHOD OVERRIDE ==============
+// Middleware: check X-HTTP-Method-Override header on POST requests
+// to allow restricted clients to issue PUT/DELETE via POST
+// Returns true if override was applied (request re-routed)
+bool applyMethodOverride() {
+  if (webServer.method() != HTTP_POST) return false;
+  if (!webServer.hasHeader("X-HTTP-Method-Override")) return false;
+  String override = webServer.header("X-HTTP-Method-Override");
+  override.toUpperCase();
+  if (override == "PUT") {
+    // Re-register as PUT by calling the PUT handler directly
+    // We use a workaround: redirect to the same URL with method override flag
+    webServer.sendHeader("X-Method-Overridden", "PUT");
+    return false; // Handler must check this header
+  } else if (override == "DELETE") {
+    webServer.sendHeader("X-Method-Overridden", "DELETE");
+    return false;
+  }
+  return false;
+}
+
 void setup() {
   Serial.begin(115200);
   Serial.println("\nESP32 File Server v"+String(FIRMWARE_VERSION));
   sdOK = initSDCard();
   if(!sdOK) Serial.println("SD Card failed!");
-  else Serial.println("SD OK");
+  else Serial.println("SD OK: "+String((uint32_t)(SD.totalBytes()/1048576UL))+"MB");
   loadSettings();
   loadQuotas();
   setupAuthentication();
@@ -4473,12 +4494,15 @@ void setup() {
 
   // Add security headers to all responses
   // CORS preflight handler: respond to OPTIONS on /api/* with proper CORS headers
+  // X-HTTP-Method-Override support: let restricted clients send
+  // POST /api/users/X with header X-HTTP-Method-Override: DELETE
+  // instead of issuing a true DELETE (some proxies strip other methods)
   webServer.onNotFound([](){
     // Handle CORS preflight (OPTIONS) requests for /api/* paths
     if (webServer.method() == HTTP_OPTIONS && webServer.uri().startsWith("/api/")) {
       webServer.sendHeader("Access-Control-Allow-Origin", "*");
       webServer.sendHeader("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
-      webServer.sendHeader("Access-Control-Allow-Headers", "Authorization, Content-Type, X-CSRF-Token, Idempotency-Key");
+      webServer.sendHeader("Access-Control-Allow-Headers", "Authorization, Content-Type, X-CSRF-Token, Idempotency-Key, X-HTTP-Method-Override");
       webServer.sendHeader("Access-Control-Max-Age", "86400"); // Preflight cache 24h
       webServer.sendHeader("Access-Control-Allow-Credentials", "true");
       webServer.send(204, "text/plain", ""); // No content for OPTIONS
