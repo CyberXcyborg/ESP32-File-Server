@@ -838,6 +838,39 @@ void fireWebhook(String event, String path, String username) {
   }
 }
 
+// ============== WEAR LEVELING TRACKING ==============
+// Track write operations per path to estimate SD wear (helps identify hot files)
+#define WEAR_FILE "/.wear.json"
+#define WEAR_MAX_ENTRIES 100
+struct WearEntry { String path; uint32_t writeCount; uint32_t lastWrite; };
+WearEntry wearEntries[WEAR_MAX_ENTRIES];
+int wearCount = 0;
+
+void trackWriteActivity(String path) {
+  // Limit tracking to first 100 most-written files
+  for (int i = 0; i < wearCount; i++) {
+    if (wearEntries[i].path == path) {
+      wearEntries[i].writeCount++;
+      wearEntries[i].lastWrite = millis() / 1000;
+      return;
+    }
+  }
+  if (wearCount < WEAR_MAX_ENTRIES) {
+    wearEntries[wearCount].path = path;
+    wearEntries[wearCount].writeCount = 1;
+    wearEntries[wearCount].lastWrite = millis() / 1000;
+    wearCount++;
+  }
+}
+
+// Get wear count for a file (for UI indicator)
+uint32_t getWearCount(String path) {
+  for (int i = 0; i < wearCount; i++) {
+    if (wearEntries[i].path == path) return wearEntries[i].writeCount;
+  }
+  return 0;
+}
+
 // ============== FILE EXISTENCE HELPER ==============
 // Fast check if a file exists and is not a directory (avoids open+isDirectory overhead)
 bool isRegularFile(String path) {

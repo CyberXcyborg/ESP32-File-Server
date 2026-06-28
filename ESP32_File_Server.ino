@@ -2063,6 +2063,48 @@ void handleRestore() {
   }
   else webServer.send(500,"text/plain","Failed");
 }
+
+// ============== RESTORE WITH CONFLICT RESOLUTION ==============
+// Restore from trash, auto-renaming if original path already exists
+void handleSmartRestore() {
+  String u, lvl;
+  if (!isAuthenticated(webServer, u, lvl) || !checkCsrf(webServer)) { webServer.send(403); return; }
+  if (!webServer.hasArg("path")) { sendError(400, "Bad request"); return; }
+  String trashPath = webServer.arg("path");
+  if (!SD.exists(trashPath)) { sendError(404, "Not in trash"); return; }
+  // Compute original path
+  String origPath = trashPath;
+  origPath.replace(TRASH_FOLDER, "");
+  // Conflict resolution: if original exists, append _restored_N
+  if (SD.exists(origPath)) {
+    int suffix = 1;
+    String base = origPath;
+    String ext = "";
+    int dot = origPath.lastIndexOf('.');
+    int slash = origPath.lastIndexOf('/');
+    if (dot > slash) {
+      base = origPath.substring(0, dot);
+      ext = origPath.substring(dot);
+    }
+    while (SD.exists(base + "_restored_" + String(suffix) + ext) && suffix < 100) suffix++;
+    origPath = base + "_restored_" + String(suffix) + ext;
+  }
+  // Perform the rename
+  int slash = origPath.lastIndexOf('/');
+  if (slash > 0) createDirRecursive(origPath.substring(0, slash));
+  if (SD.rename(trashPath, origPath)) {
+    logActivity("restore", origPath, u);
+    broadcastChange("restore", origPath);
+    DynamicJsonDocument doc(256);
+    doc["status"] = "restored";
+    doc["path"] = origPath;
+    doc["renamed"] = (origPath != webServer.arg("path").replace(TRASH_FOLDER, ""));
+    String out; serializeJson(doc, out);
+    webServer.send(200, "application/json", out);
+  } else {
+    webServer.send(500, "text/plain", "Failed");
+  }
+}
 void handleEmptyTrash() {
   String u,lvl;
   if(!isAuthenticated(webServer,u,lvl)||!checkCsrf(webServer)){webServer.send(403);return;}
@@ -4489,6 +4531,7 @@ void setup() {
   webServer.on("/api/zip",HTTP_POST,handleZipDownload);
   webServer.on("/api/batch-download",HTTP_POST,handleBatchDownload);
   webServer.on("/api/video",HTTP_GET,handleVideoThumbnail);
+  webServer.on("/api/build-info",HTTP_GET,handleBuildInfo);
   webServer.on("/api/batch-delete",HTTP_POST,handleBatchDelete);
   webServer.on("/api/batch-move",HTTP_POST,handleBatchMove);
   webServer.on("/api/batch-copy",HTTP_POST,handleBatchCopy);
@@ -4503,6 +4546,7 @@ void setup() {
   webServer.on("/api/dir-info",HTTP_GET,handleDirInfo);
   webServer.on("/api/trash",HTTP_GET,handleTrashList);
   webServer.on("/api/restore",HTTP_GET,handleRestore);
+  webServer.on("/api/restore-smart",HTTP_POST,handleSmartRestore);
   webServer.on("/api/batch-restore",HTTP_POST,handleBatchRestore);
   webServer.on("/api/empty-trash",HTTP_POST,handleEmptyTrash);
   webServer.on("/api/log",HTTP_GET,handleGetLog);
@@ -4584,6 +4628,28 @@ void setup() {
   Serial.println("WebSocket on 81 (heartbeat enabled)");
   ftpSrv.begin(ftp_user,ftp_password);
   Serial.println("FTP started");
+}
+
+// ============== BUILD INFO ENDPOINT ==============
+// Returns compile-time info for OTA verification and debugging
+void handleBuildInfo() {
+  DynamicJsonDocument doc(512);
+  doc["version"] = FIRMWARE_VERSION;
+  doc["build_date"] = __DATE__;
+  doc["build_time"] = __TIME__;
+  doc["sdk"] = ESP.getSdkVersion();
+  doc["chip_model"] = ESP.getChipModel();
+  doc["chip_rev"] = ESP.getChipRevision();
+  doc["cpu_freq"] = ESP.getCpuFreqMHz();
+  doc["flash_size"] = ESP.getFlashChipSize() / 1048576;
+  doc["heap_size"] = ESP.getHeapSize() / 1024;
+  doc["psram"] = ESP.getPsramSize() > 0;
+  doc["sketch_size"] = ESP.getSketchSize();
+  doc["free_sketch"] = ESP.getFreeSketchSpace();
+  doc["mac"] = WiFi.macAddress();
+  String out;
+  serializeJson(doc, out);
+  sendJson(200, out);
 }
 
 void loop() {
