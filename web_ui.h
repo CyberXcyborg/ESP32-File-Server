@@ -193,6 +193,8 @@ kbd{font-family:monospace;font-size:12px}
         <option value="name-desc">Name ↓</option>
         <option value="size-asc">Size ↑</option>
         <option value="size-desc">Size ↓</option>
+        <option value="date-asc">Date ↑</option>
+        <option value="date-desc">Date ↓</option>
       </select>
       <div style="flex:1"></div>
       <div class="storage-info" id="storageInfo"></div>
@@ -218,6 +220,7 @@ kbd{font-family:monospace;font-size:12px}
       <div class="file-list-header">
         <div></div>
         <div onclick="setSort('name')">Name</div>
+        <div onclick="setSort('date')" style="text-align:center;min-width:70px">Modified</div>
         <div onclick="setSort('size')" style="text-align:right">Size</div>
         <div style="text-align:right">Actions</div>
       </div>
@@ -636,6 +639,10 @@ function initWebSocket(){
         if(d.event==='crc-mismatch'){
           showToast('⚠️ CRC mismatch: '+d.path,'error');
         }
+        // Alert on storage warning (>90% used)
+        if(d.event==='storage-warning'){
+          showToast('⚠️ Storage '+d.used_pct+'% used! Only '+Math.round((d.free_kb||0)/1024)+'MB free','error');
+        }
         // Show upload progress from server-side WebSocket broadcasts
         if(d.event==='upload-progress'&&d.path){
           const el=document.getElementById('ul-'+d.path.replace(/[^a-zA-Z0-9]/g,'_'));
@@ -724,16 +731,19 @@ function renderFiles(){
     let cmp=0;
     if(sortBy==='name')cmp=a.name.localeCompare(b.name);
     else if(sortBy==='size')cmp=a.size-b.size;
+    else if(sortBy==='date')cmp=(a.mtime||0)-(b.mtime||0);
     return sortAsc?cmp:-cmp;
   });
   if(!f.length){document.getElementById('fileContainer').innerHTML='<div class="empty-msg">📂 This folder is empty</div>';return;}
   let html='';
-  if(currentPath!=='/'){const parent=currentPath.split('/').slice(0,-2).join('/')+'/';html+=`<div class="file-item" onclick="loadFiles('${parent}')"><div class="file-icon">📁</div><div class="file-name">..</div><div class="file-size"></div><div class="file-actions"></div></div>`;}
+  if(currentPath!=='/'){const parent=currentPath.split('/').slice(0,-2).join('/')+'/';html+=`<div class="file-item" onclick="loadFiles('${parent}')"><div class="file-icon">📁</div><div class="file-name">..</div><div class="file-date"></div><div class="file-size"></div><div class="file-actions"></div></div>`;}
   f.forEach(file=>{
     const sel=selectedFiles.includes(file.path);
+    const dateStr=file.mtime?new Date(file.mtime*1000).toLocaleDateString():'';
     html+=`<div class="file-item${sel?' selected':''}" data-path="${file.path}" data-name="${file.name}" data-type="${file.type}" data-readonly="${file.readonly||false}">
       <div class="file-icon">${file.type==='dir'?'📁':file.icon}${file.readonly?'🔒':''}</div>
       <div class="file-name" onclick="${file.type==='dir'?`loadFiles('${file.path}')`:`previewFile('${file.path}')`}">${file.name}</div>
+      <div class="file-date" style="text-align:center;font-size:11px;color:var(--text2)">${dateStr}</div>
       <div class="file-size">${file.type==='dir'?'':formatSize(file.size)}</div>
       <div class="file-actions">
         <span class="file-action" onclick="toggleFavorite('${file.path}',event)" title="Favorite" id="fav-${file.path.replace(/[^a-zA-Z0-9]/g,'_')}">☆</span>

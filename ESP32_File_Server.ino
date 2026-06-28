@@ -37,7 +37,11 @@ struct WsClientInfo {
   unsigned long connectTime;
   unsigned long lastActivity;
   uint32_t msgCount;  // Messages received from this client
+  unsigned long rateWindowStart;  // Rate limiting window
+  uint32_t rateMsgCount;          // Messages in current window
 };
+#define WS_RATE_WINDOW_MS 10000UL   // 10-second window
+#define WS_RATE_MAX_MSGS 50         // Max 50 messages per window
 #define WS_MAX_CLIENTS 8
 WsClientInfo wsClients[WS_MAX_CLIENTS];
 
@@ -51,6 +55,21 @@ void initWsClient(uint8_t num, IPAddress remoteIp) {
   wsClients[num].connectTime = millis();
   wsClients[num].lastActivity = millis();
   wsClients[num].msgCount = 0;
+  wsClients[num].rateWindowStart = millis();
+  wsClients[num].rateMsgCount = 0;
+}
+
+// Check WebSocket rate limit for a client; returns true if within budget
+bool checkWsRateLimit(uint8_t num) {
+  if (num >= WS_MAX_CLIENTS) return false;
+  unsigned long now = millis();
+  if (now - wsClients[num].rateWindowStart > WS_RATE_WINDOW_MS) {
+    wsClients[num].rateWindowStart = now;
+    wsClients[num].rateMsgCount = 1;
+    return true;
+  }
+  wsClients[num].rateMsgCount++;
+  return wsClients[num].rateMsgCount <= WS_RATE_MAX_MSGS;
 }
 
 // Clear WS client on disconnect
@@ -213,6 +232,8 @@ void handleMetrics() {
     totalReqs += endpointMetrics[i].count;
   }
   sys["total_requests"] = totalReqs;
+  sys["ws_rate_limit_max"] = WS_RATE_MAX_MSGS;
+  sys["ws_rate_window_ms"] = WS_RATE_WINDOW_MS;
   String out; serializeJson(doc, out);
   sendJson(200, out);
 }
@@ -263,6 +284,11 @@ void onWebSocketEvent(uint8_t num, WStype_t type, uint8_t * payload, size_t leng
       if (num < WS_MAX_CLIENTS) {
         wsClients[num].lastActivity = millis();
         wsClients[num].msgCount++;
+        // Rate limit WebSocket messages to prevent DoS
+        if (!checkWsRateLimit(num)) {
+          webSocket.sendTXT(num, "{\"error\":\"rate-limited\",\"retry_ms\":" + String(WS_RATE_WINDOW_MS) + "}");
+          break;
+        }
       }
       if (length > 0 && payload[0] == '{') {
         DynamicJsonDocument doc(512);
@@ -440,6 +466,24 @@ void checkSD() {
               webSocket.broadcastTXT(msg);
             }
           }
+        }
+      }
+      // ============== STORAGE WARNING =============
+      // Broadcast alert when storage usage crosses 90% threshold
+      {
+        uint32_t usedPct = (uint32_t)((SD.usedBytes() * 100) / SD.totalBytes());
+        static bool storageWarned = false;
+        if (usedPct >= 90 && !storageWarned) {
+          storageWarned = true;
+          DynamicJsonDocument warn(256);
+          warn["event"] = "storage-warning";
+          warn["used_pct"] = usedPct;
+          warn["free_kb"] = (uint32_t)((SD.totalBytes() - SD.usedBytes()) / 1024);
+          String msg; serializeJson(warn, msg);
+          webSocket.broadcastTXT(msg);
+          Serial.println("STORAGE WARNING: " + String(usedPct) + "% used");
+        } else if (usedPct < 85) {
+          storageWarned = false; // Reset threshold with hysteresis
         }
       }
     }
@@ -753,6 +797,7 @@ void handleListFiles() {
     f["size"] = entries[i].isDir ? 0 : (uint64_t)entries[i].size;
     f["icon"] = entries[i].isDir ? "📁" : getFileIcon(entries[i].name);
     f["previewable"] = isPreviewable(entries[i].name);
+    f["mtime"] = entries[i].mtime;
   }
   doc["fileCount"] = fc; doc["dirCount"] = dc;
   doc["sortBy"] = sortBy; doc["sortOrder"] = sortOrder;
