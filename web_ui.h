@@ -9,7 +9,7 @@ const char index_html[] PROGMEM = R"rawliteral(
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>ESP32 File Server v6.19</title>
+<title>ESP32 File Server v6.20</title>
 <link rel="manifest" href="/manifest.json">
 <meta name="theme-color" content="#0984e3">
 <style>
@@ -143,7 +143,7 @@ kbd{font-family:monospace;font-size:12px}
 <body>
 <div class="container">
   <header>
-    <h1>📁 ESP32 File Server <small style="font-size:11px;color:var(--text2)">v6.19</small></h1>
+    <h1>📁 ESP32 File Server <small style="font-size:11px;color:var(--text2)">v6.20</small></h1>
     <div class="header-right">
       <span id="userDisplay"></span>
       <div class="search-box">🔍<input type="text" id="searchInput" placeholder="Search..." oninput="filterFiles()"></div>
@@ -355,6 +355,8 @@ kbd{font-family:monospace;font-size:12px}
   <div class="ctx-item" onclick="ctxLock()">🔒 Lock/Unlock</div>
   <div class="ctx-sep"></div>
   <div class="ctx-item" onclick="ctxDelete()">🗑️ Delete</div>
+  <div class="ctx-sep"></div>
+  <div class="ctx-item" onclick="ctxSelectSameType()">☑️ Select All Same Type</div>
 </div>
 
 <!-- Recent Files Modal -->
@@ -486,6 +488,12 @@ kbd{font-family:monospace;font-size:12px}
 
 <script>
 let currentPath='/',files=[],selectedFiles=[],userLevel='user',sortBy='name',sortAsc=true,trashFiles=[],users=[],ctxTarget=null,csrfToken='';
+// Restore sort preference from localStorage
+(function(){
+  const s=localStorage.getItem('sort_by');
+  const o=localStorage.getItem('sort_asc');
+  if(s){sortBy=s;sortAsc=o!=='false';}
+})();
 const token=getToken();
 
 // ============== FETCH WITH RETRY =============
@@ -772,8 +780,8 @@ function renderFiles(){
   });
 }
 function filterFiles(){renderFiles();}
-function setSort(s){if(sortBy===s)sortAsc=!sortAsc;else{sortBy=s;sortAsc=true;}renderFiles();}
-function sortFiles(){const v=document.getElementById('sortSelect').value;const[p,d]=v.split('-');sortBy=p;sortAsc=d==='asc';loadFiles(currentPath);}
+function setSort(s){if(sortBy===s)sortAsc=!sortAsc;else{sortBy=s;sortAsc=true;}localStorage.setItem('sort_by',sortBy);localStorage.setItem('sort_asc',sortAsc);renderFiles();}
+function sortFiles(){const v=document.getElementById('sortSelect').value;const[p,d]=v.split('-');sortBy=p;sortAsc=d==='asc';localStorage.setItem('sort_by',sortBy);localStorage.setItem('sort_asc',sortAsc);loadFiles(currentPath);}
 function toggleSel(item){const path=item.dataset.path;if(selectedFiles.includes(path)){selectedFiles=selectedFiles.filter(f=>f!==path);item.classList.remove('selected');}else{selectedFiles.push(path);item.classList.add('selected');}updateSelBtn();}
 function updateSelBtn(){const b=document.getElementById('delSelBtn');const c=document.getElementById('copySelBtn');const m=document.getElementById('moveSelBtn');const rn=document.getElementById('renameSelBtn');const d=document.getElementById('downloadSelBtn');if(selectedFiles.length>0){b.style.display='';b.textContent='🗑️ Delete ('+selectedFiles.length+')';if(c)c.style.display='';if(m)m.style.display='';if(rn)rn.style.display='';if(d)d.style.display='';}else{b.style.display='none';if(c)c.style.display='none';if(m)m.style.display='none';if(rn)rn.style.display='none';if(d)d.style.display='none';}const sa=document.getElementById('selectAllBtn');if(sa)sa.textContent=selectedFiles.length===files.length&&files.length>0?'☐ Deselect All':'☑️ Select All';}
 function toggleSelectAll(){
@@ -817,6 +825,15 @@ function ctxLock(){
   hideCtxMenu();
 }
 function ctxDelete(){deleteItem(ctxTarget.dataset.path,ctxTarget.dataset.name);hideCtxMenu();}
+function ctxSelectSameType(){
+  if(!ctxTarget)return;
+  const ext=ctxTarget.dataset.name.split('.').pop().toLowerCase();
+  if(!ext){showToast('No extension','error');hideCtxMenu();return;}
+  selectedFiles=files.filter(f=>f.name.split('.').pop().toLowerCase()===ext).map(f=>f.path);
+  updateSelBtn();renderFiles();
+  showToast('Selected '+selectedFiles.length+' .'+ext+' files','info');
+  hideCtxMenu();
+}
 
 // ============== FILE INFO ==============
 function showFileInfo(path){
