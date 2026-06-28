@@ -575,6 +575,14 @@ void sendSecurityHeaders() {
   webServer.sendHeader("X-Permitted-Cross-Domain-Policies", "none");
   // Suppress server identity for security (don't leak ESP32/Arduino info)
   webServer.sendHeader("Server", "ESP32FS");
+  // Date header (RFC 7231 Section 7.1.1.2) — required for HTTP/1.1 compliance
+  time_t now = time(nullptr);
+  if (now > 0) {
+    struct tm *tm = gmtime(&now);
+    char dateBuf[32];
+    strftime(dateBuf, sizeof(dateBuf), "%a, %d %b %Y %H:%M:%S GMT", tm);
+    webServer.sendHeader("Date", dateBuf);
+  }
   // Allow HTTP keep-alive for fewer TCP round-trips on repeated requests
   webServer.sendHeader("Connection", "keep-alive");
   webServer.sendHeader("Keep-Alive", "timeout=5, max=100");
@@ -953,8 +961,12 @@ void handleDownload() {
   webServer.sendHeader("Content-Type", ctype);
   // Add Last-Modified header for better client caching
   if (fmtime > 0) {
-    // Format as HTTP-date (best effort — ESP32 time may not be NTP-synced)
-    webServer.sendHeader("Last-Modified", String(fmtime));
+    // Format as HTTP-date (RFC 7231): Day, DD Mon YYYY HH:MM:SS GMT
+    time_t ft = (time_t)fmtime;
+    struct tm *tm = gmtime(&ft);
+    char httpDate[32];
+    strftime(httpDate, sizeof(httpDate), "%a, %d %b %Y %H:%M:%S GMT", tm);
+    webServer.sendHeader("Last-Modified", httpDate);
   }
   webServer.streamFile(f, ctype);
   f.close();
