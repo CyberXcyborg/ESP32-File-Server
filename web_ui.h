@@ -477,7 +477,7 @@ kbd{font-family:monospace;font-size:12px}
 
 <div class="modal" id="confirmModal">
   <div class="modal-content" style="max-width:400px">
-    <div class="modal-header"><h2>Confirm</h2><span class="close-modal" onclick="closeModal('confirmModal')">&times;</span></div>
+    <div class="modal-header"><h2 id="confirmTitle">Confirm</h2><span class="close-modal" onclick="closeModal('confirmModal')">&times;</span></div>
     <div class="modal-body"><p id="confirmMsg"></p></div>
     <div class="modal-footer"><button class="btn btn-ghost" onclick="closeModal('confirmModal')">Cancel</button><button class="btn btn-danger" id="confirmBtn">Delete</button></div>
   </div>
@@ -712,6 +712,16 @@ function switchView(v,btn){
 function showToast(msg,type='info'){const t=document.getElementById('toast');t.textContent=msg;t.className='toast '+type+' show';setTimeout(()=>t.classList.remove('show'),3000);}
 function openModal(id){document.getElementById(id).style.display='flex';}
 function closeModal(id){document.getElementById(id).style.display='none';}
+// Confirm dialog: shows a message and calls onConfirm if user agrees
+function showConfirm(msg, onConfirm, title='Confirm'){
+  document.getElementById('confirmTitle').textContent=title;
+  document.getElementById('confirmMsg').textContent=msg;
+  const btn=document.getElementById('confirmBtn');
+  const newBtn=btn.cloneNode(true);
+  btn.parentNode.replaceChild(newBtn,btn);
+  newBtn.onclick=()=>{closeModal('confirmModal');onConfirm();};
+  openModal('confirmModal');
+}
 function showShortcuts(){openModal('shortcutsModal');}
 
 // ============== FILES ==============
@@ -1253,24 +1263,22 @@ function shareViaEmail(){
   window.open('mailto:?subject='+encodeURIComponent(subject)+'&body='+encodeURIComponent(body));
 }
 function deleteItem(path,name){
-  document.getElementById('confirmMsg').textContent=`Move "${name}" to trash?`;
-  document.getElementById('confirmBtn').onclick=()=>{
+  showConfirm(`Move "${name}" to trash?`, ()=>{
     fetch('/api/delete',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded','Authorization':'Bearer '+token},body:'path='+encodeURIComponent(path)+'&csrf='+encodeURIComponent(csrfToken)})
       .then(r=>{if(!r.ok)throw new Error();return r.text();})
-      .then(()=>{showToast('Moved to trash','success');closeModal('confirmModal');loadFiles(currentPath);})
-      .catch(()=>{showToast('Failed','error');closeModal('confirmModal');});};
-  openModal('confirmModal');
+      .then(()=>{showToast('Moved to trash','success');loadFiles(currentPath);})
+      .catch(()=>showToast('Failed','error'));
+  },'Delete');
 }
-  function deleteSelected(){
-    if(!selectedFiles.length)return;
-    document.getElementById('confirmMsg').textContent=`Move ${selectedFiles.length} items to trash?`;
-    document.getElementById('confirmBtn').onclick=()=>{
-      fetch('/api/batch-delete',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded','Authorization':'Bearer '+token},body:'plain='+encodeURIComponent(JSON.stringify({paths:selectedFiles}))+'&csrf='+encodeURIComponent(csrfToken)})
-        .then(r=>{if(!r.ok)throw new Error();return r.text();})
-        .then(()=>{selectedFiles=[];updateSelBtn();showToast('Moved to trash','success');closeModal('confirmModal');loadFiles(currentPath);})
-        .catch(()=>{showToast('Some failed','error');closeModal('confirmModal');loadFiles(currentPath);});};
-    openModal('confirmModal');
-  }
+function deleteSelected(){
+  if(!selectedFiles.length)return;
+  showConfirm(`Move ${selectedFiles.length} items to trash?`, ()=>{
+    fetch('/api/batch-delete',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded','Authorization':'Bearer '+token},body:'plain='+encodeURIComponent(JSON.stringify({paths:selectedFiles}))+'&csrf='+encodeURIComponent(csrfToken)})
+      .then(r=>{if(!r.ok)throw new Error();return r.text();})
+      .then(()=>{selectedFiles=[];updateSelBtn();showToast('Moved to trash','success');loadFiles(currentPath);})
+      .catch(()=>{showToast('Some failed','error');loadFiles(currentPath);});
+  },'Batch Delete');
+}
 }
 function copySelected(){
   if(!selectedFiles.length)return;
