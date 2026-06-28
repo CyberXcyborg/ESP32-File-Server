@@ -189,6 +189,7 @@ kbd{font-family:monospace;font-size:12px}
       <button class="btn" onclick="showNewFileModal()">📄 New File</button>
       <button class="btn" onclick="refreshFiles()">🔄 Refresh</button>
       <button class="btn" onclick="toggleSelectAll()" id="selectAllBtn">☑️ Select All</button>
+      <button class="btn btn-ghost" onclick="selectInverse()" id="selectInverseBtn" style="display:none">🔄 Invert</button>
       <button class="btn" onclick="downloadZip()">📦 Download ZIP</button>
       <button class="btn btn-danger" id="delSelBtn" style="display:none" onclick="deleteSelected()">🗑️ Delete Selected</button>
       <button class="btn" id="copySelBtn" style="display:none" onclick="copySelected()">📋 Copy Selected</button>
@@ -798,9 +799,14 @@ function filterFiles(){renderFiles();}
 function setSort(s){if(sortBy===s)sortAsc=!sortAsc;else{sortBy=s;sortAsc=true;}localStorage.setItem('sort_by',sortBy);localStorage.setItem('sort_asc',sortAsc);renderFiles();}
 function sortFiles(){const v=document.getElementById('sortSelect').value;const[p,d]=v.split('-');sortBy=p;sortAsc=d==='asc';localStorage.setItem('sort_by',sortBy);localStorage.setItem('sort_asc',sortAsc);loadFiles(currentPath);}
 function toggleSel(item){const path=item.dataset.path;if(selectedFiles.includes(path)){selectedFiles=selectedFiles.filter(f=>f!==path);item.classList.remove('selected');}else{selectedFiles.push(path);item.classList.add('selected');}updateSelBtn();}
-function updateSelBtn(){const b=document.getElementById('delSelBtn');const c=document.getElementById('copySelBtn');const m=document.getElementById('moveSelBtn');const rn=document.getElementById('renameSelBtn');const d=document.getElementById('downloadSelBtn');if(selectedFiles.length>0){b.style.display='';b.textContent='🗑️ Delete ('+selectedFiles.length+')';if(c)c.style.display='';if(m)m.style.display='';if(rn)rn.style.display='';if(d)d.style.display='';}else{b.style.display='none';if(c)c.style.display='none';if(m)m.style.display='none';if(rn)rn.style.display='none';if(d)d.style.display='none';}const sa=document.getElementById('selectAllBtn');if(sa)sa.textContent=selectedFiles.length===files.length&&files.length>0?'☐ Deselect All':'☑️ Select All';}
+function updateSelBtn(){const b=document.getElementById('delSelBtn');const c=document.getElementById('copySelBtn');const m=document.getElementById('moveSelBtn');const rn=document.getElementById('renameSelBtn');const d=document.getElementById('downloadSelBtn');const inv=document.getElementById('selectInverseBtn');if(selectedFiles.length>0){b.style.display='';b.textContent='🗑️ Delete ('+selectedFiles.length+')';if(c)c.style.display='';if(m)m.style.display='';if(rn)rn.style.display='';if(d)d.style.display='';if(inv)inv.style.display='';}else{b.style.display='none';if(c)c.style.display='none';if(m)m.style.display='';if(rn)rn.style.display='none';if(d)d.style.display='none';if(inv)inv.style.display='none';}const sa=document.getElementById('selectAllBtn');if(sa)sa.textContent=selectedFiles.length===files.length&&files.length>0?'☐ Deselect All':'☑️ Select All';}
 function toggleSelectAll(){
-  if(selectedFiles.length===files.length&&files.length>0){selectedFiles=[];}else{selectedFiles=files.map(f=>f.path);}
+  if(selectedFiles.length===files.length&&files.length>0){selectedFiles=[];updateSelBtn();renderFiles();}
+  else{selectedFiles=files.map(f=>f.path);updateSelBtn();renderFiles();}
+}
+function selectInverse(){
+  const allPaths=files.map(f=>f.path);
+  selectedFiles=allPaths.filter(p=>!selectedFiles.includes(p));
   updateSelBtn();renderFiles();
 }
 function renderPathNav(path){const parts=path.split('/').filter(p=>p);const isFav=favorites.includes(path);const starIcon=isFav?'⭐':'☆';const starColor=isFav?'#fdcb6e':'var(--text2)';let html=`<span class="path-part" onclick="loadFiles('/')">Root</span>`,build='/';parts.forEach(p=>{build+=p+'/';html+=`<span class="separator">/</span><span class="path-part" onclick="loadFiles('${build}')">${p}</span>`;});if(path!=='/')html+=`<span style="cursor:pointer;margin-left:6px;font-size:14px;color:${starColor}" onclick="toggleFavorite('${path}',event)" title="Bookmark this folder">${starIcon}</span>`;document.getElementById('pathNav').innerHTML=html;}
