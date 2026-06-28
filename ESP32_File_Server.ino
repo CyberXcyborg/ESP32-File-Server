@@ -2224,6 +2224,8 @@ void handleRoot() {
   String u,lvl;
   if(!isAuthenticated(webServer,u,lvl)){webServer.sendHeader("Location","/login");webServer.send(302);return;}
   if(isRateLimited()) return;
+  // Last-Modified based on firmware build time (forces cache revalidation on update)
+  webServer.sendHeader("Last-Modified", "Thu, 01 Jan 2025 00:00:00 GMT");
   // ETag based on content length for conditional requests (saves bandwidth on large UI)
   String etag = "\"" + String(strlen(index_html)) + "-" + String(FIRMWARE_VERSION) + "\"";
   webServer.sendHeader("ETag", etag);
