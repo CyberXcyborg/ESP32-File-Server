@@ -2284,13 +2284,22 @@ void handleBatchDelete() {
   deserializeJson(doc, webServer.arg("plain"));
   JsonArray paths = doc["paths"];
   int ok = 0, fail = 0;
+  // Sort paths by depth (deepest first) so we delete children before parents
+  // Simple approach: just lock and delete in order
   for (const char* ps : paths) {
     String p = ps;
     if (!SD.exists(p)) { fail++; continue; }
+    // Reject deletion of read-only files
+    if (isFileReadOnly(p)) { fail++; continue; }
     if (!acquireFileLock(p, 2000)) { fail++; continue; }
-    if (moveToTrash(p)) { ok++; logActivity("batch-delete", p, u); broadcastChange("delete", p); }
-    else fail++;
+    bool success = moveToTrash(p);
     releaseFileLock(p);
+    if (success) {
+      ok++;
+      logActivity("batch-delete", p, u);
+      broadcastChange("delete", p);
+      fireWebhook("delete", p, u);
+    } else fail++;
   }
   String result = "{\"ok\":"+String(ok)+",\"fail\":"+String(fail)+"}";
   webServer.send(200, "application/json", result);
@@ -2806,6 +2815,8 @@ void handleStats() {
   doc["sd_total"] = SD.totalBytes();
   doc["sd_used"] = SD.usedBytes();
   doc["sd_free"] = SD.totalBytes() - SD.usedBytes();
+  doc["sd_used_pct"] = (uint8_t)((SD.usedBytes() * 100) / SD.totalBytes());
+  doc["sd_free_pct"] = (uint8_t)(((SD.totalBytes() - SD.usedBytes()) * 100) / SD.totalBytes());
   doc["version"] = FIRMWARE_VERSION;
   doc["ws_clients"] = wsClientCount;
   // Add SD health stats
