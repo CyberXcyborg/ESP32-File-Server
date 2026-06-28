@@ -1307,6 +1307,100 @@ void handleUpload() {
   }
 }
 
+// ============== RESUMABLE CHUNKED UPLOAD ==============
+// Supports chunked uploads with offset tracking for resumability
+// POST /api/upload-chunk with args: path, offset, total, file (binary)
+// Query: ?path=...&offset=...&total=...&csrf=...
+void handleChunkedUpload() {
+  String u, lvl;
+  if (!isAuthenticated(webServer, u, lvl) || !checkCsrf(webServer)) {
+    webServer.send(403, "application/json", "{\"error\":\"unauthorized\"}");
+    return;
+  }
+  if (!sdOK) { webServer.send(503, "application/json", "{\"error\":\"sd-unavailable\"}"); return; }
+  if (!webServer.hasArg("path") || !webServer.hasArg("offset") || !webServer.hasArg("total")) {
+    webServer.send(400, "application/json", "{\"error\":\"missing-params\"}"); return;
+  }
+  String p = webServer.arg("path");
+  if (!p.endsWith("/")) p += "/";
+  // Sanitize filename from path arg
+  String filename = webServer.arg("filename");
+  int sl = filename.lastIndexOf('/');
+  if (sl >= 0) filename = filename.substring(sl + 1);
+  sl = filename.lastIndexOf('\\');
+  if (sl >= 0) filename = filename.substring(sl + 1);
+  filename.replace("..", "");
+  if (filename.length() == 0 || filename == "." || filename == "..") {
+    webServer.send(400, "application/json", "{\"error\":\"invalid-filename\"}"); return;
+  }
+  uint32_t offset = webServer.arg("offset").toInt();
+  uint32_t total = webServer.arg("total").toInt();
+  // Validate
+  if (total == 0 || total > MAX_UPLOAD_SIZE) {
+    webServer.send(400, "application/json", "{\"error\":\"invalid-total-size\"}"); return;
+  }
+  if (offset >= total) {
+    webServer.send(400, "application/json", "{\"error\":\"offset-out-of-range\"}"); return;
+  }
+  // Check free space
+  uint64_t free = SD.totalBytes() - SD.usedBytes();
+  uint32_t remaining = total - offset;
+  if (free < remaining + 10240) {
+    webServer.send(507, "application/json", "{\"error\":\"insufficient-space\"}"); return;
+  }
+  // Quarantine check
+  if (!isUploadSafe(filename)) {
+    webServer.send(400, "application/json", "{\"error\":\"file-type-blocked\"}"); return;
+  }
+  String fullPath = p + filename;
+  // Acquire lock
+  if (offset == 0 && !acquireFileLock(fullPath, 5000)) {
+    webServer.send(423, "application/json", "{\"error\":\"file-locked\"}"); return;
+  }
+  // Open file at offset
+  File f;
+  if (offset == 0) {
+    // First chunk: create/truncate
+    if (SD.exists(fullPath)) createVersion(fullPath);
+    f = SD.open(fullPath, FILE_WRITE);
+  } else {
+    // Subsequent chunks: append
+    f = SD.open(fullPath, FILE_WRITE);
+    if (f) f.seek(offset);
+  }
+  if (!f) {
+    releaseFileLock(fullPath);
+    webServer.send(500, "application/json", "{\"error\":\"cannot-open-file\"}"); return;
+  }
+  // Read POST body and write at offset
+  int contentLen = webServer.contentLength();
+  if (contentLen > 0) {
+    uint8_t buf[512];
+    int remaining = contentLen;
+    while (remaining > 0) {
+      int toRead = min(remaining, 512);
+      int n = webServer.client().read(buf, toRead);
+      if (n <= 0) break;
+      f.write(buf, n);
+      remaining -= n;
+    }
+  }
+  f.close();
+  // Release lock if this is the last chunk
+  if (offset + contentLen >= total) {
+    releaseFileLock(fullPath);
+    totalWriteOps++;
+    totalWriteBytes += total;
+    logActivity("upload-chunked", fullPath + " (" + String(total) + "B)", u);
+    broadcastChange("upload", fullPath);
+    storeFileCRC(fullPath);
+    broadcastStatsUpdate();
+    webServer.send(200, "application/json", "{\"ok\":true,\"path\":\"" + fullPath + "\",\"complete\":true}");
+  } else {
+    webServer.send(200, "application/json", "{\"ok\":true,\"offset\":" + String(offset + contentLen) + ",\"complete\":false}");
+  }
+}
+
 // ============== SHARE ==============
 void handleCreateShare() {
   String u, lvl;
@@ -3972,6 +4066,7 @@ void setup() {
   webServer.on("/api/copy",HTTP_POST,handleCopy);
   webServer.on("/api/upload-auth",HTTP_GET,handleUploadAuth);
   webServer.on("/api/upload",HTTP_POST,[](){if(!checkCsrf(webServer)){webServer.send(403,"text/plain","CSRF invalid");return;}webServer.send(200);},handleUpload);
+  webServer.on("/api/upload-chunk",HTTP_POST,[](){if(!checkCsrf(webServer)){webServer.send(403,"text/plain","CSRF invalid");return;}webServer.send(200);},handleChunkedUpload);
   webServer.on("/api/share",HTTP_POST,handleCreateShare);
   webServer.on("/api/zip",HTTP_POST,handleZipDownload);
   webServer.on("/api/batch-download",HTTP_POST,handleBatchDownload);
