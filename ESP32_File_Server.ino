@@ -640,7 +640,7 @@ void sendSecurityHeaders() {
   webServer.sendHeader("X-Frame-Options", "DENY");
   webServer.sendHeader("X-XSS-Protection", "1; mode=block");
   webServer.sendHeader("Referrer-Policy", "no-referrer");
-  webServer.sendHeader("Content-Security-Policy", "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; media-src 'self'; connect-src 'self' ws: wss:");
+  webServer.sendHeader("Content-Security-Policy", "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self' blob:; connect-src 'self' ws: wss:; font-src 'self' data:");
   webServer.sendHeader("Strict-Transport-Security", "max-age=31536000; includeSubDomains");
   webServer.sendHeader("Permissions-Policy", "camera=(), microphone=(), geolocation=()");
   // Additional cross-origin security headers (defense-in-depth)
@@ -1959,18 +1959,46 @@ void handleSaveSettings() {
 void handleGetLog() {
   String u, lvl;
   if (!isAuthenticated(webServer, u, lvl) || lvl != "admin") { webServer.send(403); return; }
-  DynamicJsonDocument doc(4096);
+  DynamicJsonDocument doc(8192);
   JsonArray arr = doc.createNestedArray("log");
   if (SD.exists(LOG_FILE)) {
     File f = SD.open(LOG_FILE, FILE_READ);
     if (f) {
-      String lines[50]; int count = 0; String line = "";
-      while (f.available()) { char c=f.read(); if(c=='\n'){lines[count%50]=count++;line="";} else line+=c; }
+      // Read entire file into buffer for reliable parsing
+      size_t fsize = f.size();
+      if (fsize > 65536) fsize = 65536; // Cap at 64KB to avoid OOM
+      String content = "";
+      content.reserve(fsize);
+      while (f.available() && content.length() < fsize) {
+        content += (char)f.read();
+      }
       f.close();
-      int s = count>50?count-50:0;
-      for (int i=s;i<count;i++) {
-        String l=lines[i%50]; int c1=l.indexOf(','),c2=l.indexOf(',',c1+1),c3=l.indexOf(',',c2+1);
-        if(c1>0&&c2>0&&c3>0){JsonObject e=arr.createNestedObject();e["time"]=l.substring(0,c1).toInt();e["user"]=l.substring(c1+1,c2);e["action"]=l.substring(c2+1,c3);e["path"]=l.substring(c3+1);}
+      // Parse from end to get most recent entries (max 200)
+      int lineStart = content.length();
+      int entries = 0;
+      for (int i = content.length() - 1; i >= 0 && entries < 200; i--) {
+        if (content[i] == '\n' || i == 0) {
+          int lnStart = (i == 0 && content[i] != '\n') ? 0 : i + 1;
+          if (lnStart < lineStart) {
+            String l = content.substring(lnStart, lineStart);
+            l.trim();
+            if (l.length() > 0) {
+              int c1 = l.indexOf(',');
+              int c2 = l.indexOf(',', c1 + 1);
+              int c3 = l.indexOf(',', c2 + 1);
+              if (c1 > 0 && c2 > c3 && c3 > 0) {
+                // Insert at beginning to maintain chronological order
+                JsonObject e = arr.createNestedObject();
+                e["time"] = l.substring(0, c1).toInt();
+                e["user"] = l.substring(c1 + 1, c2);
+                e["action"] = l.substring(c2 + 1, c3);
+                e["path"] = l.substring(c3 + 1);
+                entries++;
+              }
+            }
+          }
+          lineStart = i;
+        }
       }
     }
   }
@@ -2031,7 +2059,7 @@ void handleEmptyTrash() {
   String u,lvl;
   if(!isAuthenticated(webServer,u,lvl)||!checkCsrf(webServer)){webServer.send(403);return;}
   // POST body: optional "path" arg for single-item permanent delete
-  if(webServer.hasArg("path")){String path=sanitizePath(webServer.arg("path"));if(SD.exists(path)){File f=SD.open(path);if(f.isDirectory())removeDir(path);else SD.remove(path);f.close();logActivity("perm-delete",path,u);}}
+  if(webServer.hasArg("path")){String path=sanitizePath(webServer.arg("path"));if(SD.exists(path)){File f=SD.open(path);if(f.isDirectory()){f.close();removeDir(path);}else{f.close();SD.remove(path);}logActivity("perm-delete",path,u);}}
   else{if(SD.exists(TRASH_FOLDER)){removeDir(TRASH_FOLDER);SD.mkdir(TRASH_FOLDER);}logActivity("empty-trash","all",u);}
   broadcastChange("empty-trash","/");webServer.send(200,"text/plain","OK");
 }
@@ -2221,9 +2249,14 @@ void handleRobotsTxt() {
   webServer.send(200, "text/plain", "User-agent: *\nDisallow: /\n");
 }
 void handleFavicon() {
-  // Inline 1x1 transparent PNG to avoid 404
+  // Inline SVG favicon: a small folder icon in the primary theme color
   webServer.sendHeader("Cache-Control", "public, max-age=86400");
-  webServer.send(200, "image/x-icon", "");
+  String svg = "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'>";
+  svg += "<rect width='32' height='32' rx='6' fill='#0984e3'/>";
+  svg += "<rect x='4' y='9' width='12' height='3' rx='1' fill='#fff' opacity='0.9'/>";
+  svg += "<rect x='4' y='13' width='24' height='14' rx='2' fill='#fff' opacity='0.9'/>";
+  svg += "</svg>";
+  webServer.send(200, "image/svg+xml", svg);
 }
 
 // ============== SERVICE WORKER =============
@@ -3668,6 +3701,62 @@ void handleStorageBreakdown() {
   JsonObject oth = breakdown.createNestedObject("other"); oth["size"] = other; oth["formatted"] = getFileSize(other);
   JsonObject tr = breakdown.createNestedObject("trash"); tr["size"] = trash; tr["formatted"] = getFileSize(trash);
   JsonObject dr = breakdown.createNestedObject("empty"); dr["size"] = (SD.totalBytes()-SD.usedBytes()); dr["formatted"] = getFileSize((uint64_t)(SD.totalBytes()-SD.usedBytes()));
+}
+
+// ============== FOLDER SPACE USAGE ==============
+// Returns per-subfolder size breakdown for a given path
+// Helps users identify which folders consume the most SD space
+void handleFolderSpace() {
+  String u, lvl;
+  if (!isAuthenticated(webServer, u, lvl)) { sendError(401, "Not authenticated"); return; }
+  if (isRateLimited()) return;
+  if (!sdOK) { sendError(503, "SD card not available"); return; }
+  String path = webServer.hasArg("path") ? sanitizePath(webServer.arg("path")) : "/";
+  DynamicJsonDocument doc(4096);
+  JsonArray folders = doc.createNestedArray("folders");
+  File dir = SD.open(path);
+  if (!dir || !dir.isDirectory()) { sendError(400, "Invalid directory"); return; }
+  // Collect subfolder sizes (one level deep)
+  File f;
+  while (f = dir.openNextFile()) {
+    String fn = String(f.name());
+    int sl = fn.lastIndexOf('/');
+    String name = (sl >= 0) ? fn.substring(sl + 1) : fn;
+    if (f.isDirectory() && !name.startsWith(".")) {
+      uint64_t sz = getDirSize(fn);
+      JsonObject fo = folders.createNestedObject();
+      fo["name"] = name;
+      fo["path"] = fn;
+      fo["size"] = sz;
+      fo["size_formatted"] = getFileSize(sz);
+    }
+    f.close();
+  }
+  dir.close();
+  // Sort folders by size descending (selection sort)
+  int n = folders.size();
+  for (int i = 0; i < n - 1; i++) {
+    int maxIdx = i;
+    uint64_t maxSize = (uint64_t)folders[i]["size"];
+    for (int j = i + 1; j < n; j++) {
+      uint64_t sz = (uint64_t)folders[j]["size"];
+      if (sz > maxSize) { maxSize = sz; maxIdx = j; }
+    }
+    if (maxIdx != i) {
+      String nameA = folders[i]["name"].as<String>();
+      String pathA = folders[i]["path"].as<String>();
+      uint64_t sizeA = (uint64_t)folders[i]["size"];
+      String fmtA = folders[i]["size_formatted"].as<String>();
+      folders[i]["name"] = folders[maxIdx]["name"];
+      folders[i]["path"] = folders[maxIdx]["path"];
+      folders[i]["size"] = (uint64_t)folders[maxIdx]["size"];
+      folders[i]["size_formatted"] = folders[maxIdx]["size_formatted"];
+      folders[maxIdx]["name"] = nameA;
+      folders[maxIdx]["path"] = pathA;
+      folders[maxIdx]["size"] = sizeA;
+      folders[maxIdx]["size_formatted"] = fmtA;
+    }
+  }
   String out; serializeJson(doc, out);
   webServer.send(200, "application/json", out);
 }
@@ -4264,7 +4353,7 @@ void broadcastSdHealth() {
   doc["ok"] = sdOK;
   doc["free_kb"] = (uint32_t)((SD.totalBytes() - SD.usedBytes()) / 1024);
   doc["total_kb"] = (uint32_t)(SD.totalBytes() / 1024);
-  doc["used_pct"] = (uint8_t)(((SD.totalBytes() - SD.usedBytes()) * 100) / SD.totalBytes());
+  doc["used_pct"] = (uint8_t)((SD.usedBytes() * 100) / SD.totalBytes());
   doc["write_ops"] = totalWriteOps;
   doc["write_mb"] = (uint32_t)(totalWriteBytes / 1048576);
   doc["risk"] = failureRisk;
@@ -4343,6 +4432,7 @@ void setup() {
   webServer.on("/api/stats",HTTP_GET,handleStats);
   webServer.on("/api/list-filtered",HTTP_GET,handleListFilesFiltered);
   webServer.on("/api/storage",HTTP_GET,handleStorageBreakdown);
+  webServer.on("/api/folder-space",HTTP_GET,handleFolderSpace);
   webServer.on("/api/space-usage",HTTP_GET,handleSpaceUsage);
   webServer.on("/api/favorites",HTTP_GET,handleGetFavorites);
   webServer.on("/api/favorites/toggle",HTTP_POST,handleToggleFavorite);
