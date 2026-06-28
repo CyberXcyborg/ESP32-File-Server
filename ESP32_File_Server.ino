@@ -3156,6 +3156,41 @@ void handleBulkVerifyCRC() {
   sendJson(200, out);
 }
 
+// ============== STORE CRC FOR ALL FILES ==============
+// POST /api/store-crc-all?path=/&max=200 (admin only)
+// Generate and store CRC32 sidecar files for all files missing them
+void handleStoreCrcAll() {
+  String u, lvl;
+  if (!isAuthenticated(webServer, u, lvl) || lvl != "admin" || !checkCsrf(webServer)) { webServer.send(403); return; }
+  if (!sdOK) { webServer.send(503); return; }
+  String path = webServer.hasArg("path") ? sanitizePath(webServer.arg("path")) : "/";
+  bulkCrcLimit = webServer.hasArg("max") ? webServer.arg("max").toInt() : 200;
+  if (bulkCrcLimit < 1 || bulkCrcLimit > 500) bulkCrcLimit = 200;
+  if (bulkCrcLimit > BULK_CRC_MAX) bulkCrcLimit = BULK_CRC_MAX;
+  bulkCrcCount = 0;
+  collectCrcFiles(path);
+  int stored = 0;
+  int skipped = 0;
+  for (int i = 0; i < bulkCrcCount; i++) {
+    String fp = bulkCrcPaths[i];
+    String crcPath = fp + ".crc32";
+    if (SD.exists(crcPath)) { skipped++; continue; }
+    String crc = getFileCRC32(fp);
+    if (crc.length() > 0) {
+      File cf = SD.open(crcPath, FILE_WRITE);
+      if (cf) { cf.print(crc); cf.close(); stored++; }
+    }
+  }
+  logActivity("store-crc-all", path + " (" + String(stored) + " stored, " + String(skipped) + " existing)", u);
+  DynamicJsonDocument doc(256);
+  doc["ok"] = true;
+  doc["stored"] = stored;
+  doc["skipped"] = skipped;
+  doc["total"] = bulkCrcCount;
+  String out; serializeJson(doc, out);
+  sendJson(200, out);
+}
+
 // ============== DUPLICATE FILE FINDER ==============
 void handleFindDuplicates() {
   String u, lvl;
@@ -4926,6 +4961,7 @@ void setup() {
   webServer.on("/api/crc",HTTP_GET,handleFileCRC);
   webServer.on("/api/bulk-crc",HTTP_GET,handleBulkVerifyCRC);
   webServer.on("/api/config-backup",HTTP_POST,handleConfigBackup);
+  webServer.on("/api/store-crc-all",HTTP_POST,handleStoreCrcAll);
   webServer.on("/api/duplicates",HTTP_GET,handleFindDuplicates);
   webServer.on("/api/recent",HTTP_GET,handleRecentFiles);
   webServer.on("/api/export-list",HTTP_GET,handleExportFileList);
