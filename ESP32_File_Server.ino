@@ -1375,6 +1375,16 @@ void handleUpload() {
     fireWebhook("upload", upp, u);
     // Store CRC32 sidecar for integrity verification
     storeFileCRC(upp);
+    // Verify upload integrity if client sent CRC32
+    String clientCrc = webServer.hasHeader("X-CRC32") ? webServer.header("X-CRC32") : "";
+    if (clientCrc.length() > 0) {
+      String serverCrc = getFileCRC32(upp);
+      if (!serverCrc.equals(clientCrc)) {
+        logActivity("upload-crc-mismatch", upp, u);
+        webServer.send(409, "application/json", "{\"ok\":false,\"error\":\"CRC mismatch\",\"server_crc\":\"" + serverCrc + "\"}");
+        return;
+      }
+    }
     // Broadcast updated storage stats to all clients
     broadcastStatsUpdate();
     webServer.send(200, "application/json", "{\"ok\":true,\"path\":\""+upp+"\"}");
