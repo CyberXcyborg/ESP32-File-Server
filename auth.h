@@ -18,6 +18,16 @@ struct Session {
 
 Session sessions[MAX_SESSIONS];
 
+// API Key structure for programmatic access
+struct ApiKey {
+  String key;
+  String username;
+  String userLevel;
+  bool isActive;
+};
+ApiKey apiKeys[MAX_API_KEYS];
+int apiKeyCount = 0;
+
 // Login brute-force protection (per-IP)
 struct LoginAttempt {
   IPAddress ip;
@@ -313,6 +323,10 @@ bool isAuthenticated(WebServer &server, String &username, String &userLevel) {
       return true;
     }
   }
+  // Also check API key authentication
+  if (authenticateApiKey(server, username, userLevel)) {
+    return true;
+  }
   return false;
 }
 
@@ -363,9 +377,55 @@ bool validateCsrfToken(String sessionToken, String submittedToken) {
   return false;
 }
 
+// ============== API KEY AUTHENTICATION ==============
+// Generate a new API key for a user
+String generateApiKey(String username, String userLevel) {
+  if (apiKeyCount >= MAX_API_KEYS) return "";
+  String key = "";
+  const char charset[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+  for (int i = 0; i < API_KEY_LENGTH; i++) {
+    key += charset[esp_random() % 62];
+  }
+  apiKeys[apiKeyCount].key = key;
+  apiKeys[apiKeyCount].username = username;
+  apiKeys[apiKeyCount].userLevel = userLevel;
+  apiKeys[apiKeyCount].isActive = true;
+  apiKeyCount++;
+  return key;
+}
+
+// Validate an API key and return the associated username/userLevel
+bool validateApiKey(String key, String &username, String &userLevel) {
+  for (int i = 0; i < apiKeyCount; i++) {
+    if (apiKeys[i].isActive && apiKeys[i].key == key) {
+      username = apiKeys[i].username;
+      userLevel = apiKeys[i].userLevel;
+      return true;
+    }
+  }
+  return false;
+}
+
+// Authenticate via API key (X-API-Key header or api_key arg)
+bool authenticateApiKey(WebServer &server, String &username, String &userLevel) {
+  String key = "";
+  if (server.hasHeader("X-API-Key")) {
+    key = server.header("X-API-Key");
+  }
+  if (key.isEmpty() && server.hasArg("api_key")) {
+    key = server.arg("api_key");
+  }
+  if (key.isEmpty()) return false;
+  return validateApiKey(key, username, userLevel);
+}
+
 // CSRF check for WebServer requests — extracts session from cookie/header, validates csrf arg or header
 // CSRF token can be submitted via POST arg "csrf" or header "X-CSRF-Token"
+// API key authenticated requests are exempt from CSRF check
 bool checkCsrf(WebServer &server) {
+  // If authenticated via API key, skip CSRF
+  String u, lvl;
+  if (authenticateApiKey(server, u, lvl)) return true;
   String sessionTok = "";
   String csrf = server.hasArg("csrf") ? server.arg("csrf") : "";
   if (csrf.length() == 0 && server.hasHeader("X-CSRF-Token")) {

@@ -27,6 +27,8 @@ const char* ftp_password = "esp32";
 #define WEBHOOK_FILE "/.webhook.json"
 #define DEFAULT_ADMIN_USER "admin"
 #define DEFAULT_ADMIN_PASS "admin123"
+#define API_KEY_LENGTH 32
+#define MAX_API_KEYS 10
 
 #define FIRMWARE_VERSION "6.20.0"
 

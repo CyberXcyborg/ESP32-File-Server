@@ -3655,6 +3655,65 @@ void handleToggleFavorite() {
   webServer.send(200, "application/json", "{"ok":true,"favorite":"+String(exists?"false":"true")+"}");
 }
 
+// ============== API KEY MANAGEMENT ==============
+// Generate, list, and revoke API keys for programmatic/script access
+void handleApiKeyManagement() {
+  String u, lvl;
+  bool authed = isAuthenticated(webServer, u, lvl);
+  if (!authed) {
+    String apiUser, apiLvl;
+    if (authenticateApiKey(webServer, apiUser, apiLvl)) {
+      authed = true; u = apiUser; lvl = apiLvl;
+    }
+  }
+  if (!authed) { sendError(401, "Not authenticated"); return; }
+  if (webServer.method() == HTTP_GET) {
+    DynamicJsonDocument doc(2048);
+    JsonArray arr = doc.createNestedArray("api_keys");
+    for (int i = 0; i < apiKeyCount; i++) {
+      if (apiKeys[i].isActive && (lvl == "admin" || apiKeys[i].username == u)) {
+        JsonObject k = arr.createNestedObject();
+        k["key"] = apiKeys[i].key.substring(0, 8) + "..." + apiKeys[i].key.substring(API_KEY_LENGTH - 4);
+        k["username"] = apiKeys[i].username;
+        k["level"] = apiKeys[i].userLevel;
+      }
+    }
+    doc["total"] = arr.size();
+    String out; serializeJson(doc, out);
+    webServer.send(200, "application/json", out);
+  } else if (webServer.method() == HTTP_POST) {
+    if (lvl != "admin" && apiKeyCount >= 2) { sendError(403, "Non-admin limited to 2 keys"); return; }
+    String targetUser = u, targetLevel = lvl;
+    if (lvl == "admin" && webServer.hasArg("username")) {
+      targetUser = webServer.arg("username");
+      targetLevel = webServer.hasArg("level") ? webServer.arg("level") : "user";
+    }
+    String newKey = generateApiKey(targetUser, targetLevel);
+    if (newKey.isEmpty()) { sendError(507, "API key limit reached"); return; }
+    logActivity("api-key-create", targetUser, u);
+    DynamicJsonDocument doc(256);
+    doc["ok"] = true; doc["api_key"] = newKey;
+    doc["username"] = targetUser;
+    doc["note"] = "Key shown only once. Store it safely.";
+    String out; serializeJson(doc, out);
+    webServer.send(200, "application/json", out);
+  } else if (webServer.method() == HTTP_DELETE) {
+    if (!webServer.hasArg("key")) { sendError(400, "Need key to revoke"); return; }
+    String keyToRevoke = webServer.arg("key");
+    bool found = false;
+    for (int i = 0; i < apiKeyCount; i++) {
+      if (apiKeys[i].isActive && apiKeys[i].key == keyToRevoke) {
+        if (lvl == "admin" || apiKeys[i].username == u) {
+          apiKeys[i].isActive = false; found = true;
+          logActivity("api-key-revoke", apiKeys[i].username, u);
+        } else { sendError(403, "Cannot revoke another user's key"); return; }
+      }
+    }
+    if (found) webServer.send(200, "application/json", "{\"ok\":true,\"msg\":\"Key revoked\"}");
+    else sendError(404, "Key not found");
+  }
+}
+
 // ============== SESSION MANAGEMENT ==============
 void handleListSessions() {
   String u, lvl;
@@ -4231,6 +4290,9 @@ void setup() {
   webServer.on("/api/space-usage",HTTP_GET,handleSpaceUsage);
   webServer.on("/api/favorites",HTTP_GET,handleGetFavorites);
   webServer.on("/api/favorites/toggle",HTTP_POST,handleToggleFavorite);
+  webServer.on("/api/api-keys",HTTP_GET,handleApiKeyManagement);
+  webServer.on("/api/api-keys",HTTP_POST,handleApiKeyManagement);
+  webServer.on("/api/api-keys",HTTP_DELETE,handleApiKeyManagement);
   webServer.on("/api/sessions",HTTP_GET,handleListSessions);
   webServer.on("/api/sessions/kill",HTTP_POST,handleKillSession);
   webServer.on("/api/errors",HTTP_GET,handleErrorLogs);

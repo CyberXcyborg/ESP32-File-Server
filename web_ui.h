@@ -599,9 +599,22 @@ function setTheme(name){
   hideCtxMenu();
 }
 function loadTheme(){
-  const t=localStorage.getItem('theme')||'';
+  let t=localStorage.getItem('theme')||'';
+  // Auto-detect system preference if no saved theme
+  if(!t && window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches){
+    t='dark';
+  }
   document.body.className=t;
   if(t==='dark')document.getElementById('darkToggle').textContent='☀️';
+  // Listen for system theme changes
+  if(window.matchMedia){
+    window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change',e=>{
+      if(!localStorage.getItem('theme')){
+        document.body.className=e.matches?'dark':'';
+        document.getElementById('darkToggle').textContent=e.matches?'☀️':'🌙';
+      }
+    });
+  }
 }
 function showThemeMenu(){
   const m=document.getElementById('themeMenu');
