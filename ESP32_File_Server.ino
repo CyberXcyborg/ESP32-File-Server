@@ -3353,6 +3353,23 @@ void handleStorageAnalytics() {
 }
 
 // ============== SD HEALTH ENDPOINT ==============
+// ============== LIGHTWEALTH HEALTH ENDPOINT ==============
+// Unauthenticated /api/health for uptime monitoring, load balancers, heartbeats
+void handleHealth() {
+  DynamicJsonDocument doc(512);
+  doc["status"] = "ok";
+  doc["uptime_s"] = (uint32_t)(millis() / 1000UL);
+  doc["heap_free"] = ESP.getFreeHeap();
+  doc["heap_min"] = ESP.getMinFreeHeap();
+  doc["wifi_rssi"] = wifiConnected ? WiFi.RSSI() : 0;
+  doc["sd_ok"] = sdOK;
+  doc["version"] = FIRMWARE_VERSION;
+  doc["clients"] = wsClientCount;
+  String out;
+  serializeJson(doc, out);
+  webServer.send(200, "application/json", out);
+}
+
 void handleSdHealth() {
   String u, lvl;
   if (!isAuthenticated(webServer, u, lvl)) { sendError(401,"Not authenticated"); return; }
@@ -4109,6 +4126,7 @@ void setup() {
   webServer.on("/api/notes",HTTP_POST,handleSaveNote);
   webServer.on("/api/scan",HTTP_GET,handleScanStorage);
   webServer.on("/api/sd-health",HTTP_GET,handleSdHealth);
+  webServer.on("/api/health",HTTP_GET,handleHealth);
   webServer.on("/api/metrics",HTTP_GET,handleMetrics);
   webServer.on("/api/analytics",HTTP_GET,handleStorageAnalytics);
   webServer.on("/api/detect-type",HTTP_GET,handleDetectType);

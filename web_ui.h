@@ -1175,15 +1175,14 @@ function shareViaEmail(){
   window.open('mailto:?subject='+encodeURIComponent(subject)+'&body='+encodeURIComponent(body));
 }
 function deleteItem(path,name){
-  function deleteItem(path,name){
-    document.getElementById('confirmMsg').textContent=`Move "${name}" to trash?`;
-    document.getElementById('confirmBtn').onclick=()=>{
-      fetch('/api/delete',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded','Authorization':'Bearer '+token},body:'path='+encodeURIComponent(path)+'&csrf='+encodeURIComponent(csrfToken)})
-        .then(r=>{if(!r.ok)throw new Error();return r.text();})
-        .then(()=>{showToast('Moved to trash','success');closeModal('confirmModal');loadFiles(currentPath);})
-        .catch(()=>{showToast('Failed','error');closeModal('confirmModal');});};
-    openModal('confirmModal');
-  }
+  document.getElementById('confirmMsg').textContent=`Move "${name}" to trash?`;
+  document.getElementById('confirmBtn').onclick=()=>{
+    fetch('/api/delete',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded','Authorization':'Bearer '+token},body:'path='+encodeURIComponent(path)+'&csrf='+encodeURIComponent(csrfToken)})
+      .then(r=>{if(!r.ok)throw new Error();return r.text();})
+      .then(()=>{showToast('Moved to trash','success');closeModal('confirmModal');loadFiles(currentPath);})
+      .catch(()=>{showToast('Failed','error');closeModal('confirmModal');});};
+  openModal('confirmModal');
+}
   function deleteSelected(){
     if(!selectedFiles.length)return;
     document.getElementById('confirmMsg').textContent=`Move ${selectedFiles.length} items to trash?`;
@@ -1200,7 +1199,7 @@ function copySelected(){
   // Prompt user for destination
   const dest=prompt('Copy to path (e.g. /backup/):',currentPath);
   if(!dest)return;
-  fetch('/api/batch-copy',{method:'POST',headers:{'Authorization':'Bearer '+token,'Content-Type':'application/json'},body:JSON.stringify({paths:selectedFiles,dest:dest})})
+  fetch('/api/batch-copy',{method:'POST',headers:{'Authorization':'Bearer '+token,'Content-Type':'application/json','X-CSRF-Token':csrfToken},body:JSON.stringify({paths:selectedFiles,dest:dest})})
     .then(r=>r.json()).then(data=>{
       if(data.ok>0)showToast('Copied '+data.ok+' item(s)','success');
       if(data.fail>0)showToast(data.fail+' failed','error');
@@ -1212,7 +1211,7 @@ function moveSelected(){
   if(!selectedFiles.length)return;
   const dest=prompt('Move to path (e.g. /backup/):',currentPath);
   if(!dest)return;
-  fetch('/api/batch-move',{method:'POST',headers:{'Authorization':'Bearer '+token,'Content-Type':'application/json'},body:JSON.stringify({paths:selectedFiles,dest:dest})})
+  fetch('/api/batch-move',{method:'POST',headers:{'Authorization':'Bearer '+token,'Content-Type':'application/json','X-CSRF-Token':csrfToken},body:JSON.stringify({paths:selectedFiles,dest:dest})})
     .then(r=>r.json()).then(data=>{
       if(data.ok>0)showToast('Moved '+data.ok+' item(s)','success');
       if(data.fail>0)showToast(data.fail+' failed','error');
