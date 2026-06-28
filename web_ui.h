@@ -373,6 +373,7 @@ kbd{font-family:monospace;font-size:12px}
   <div class="ctx-item" onclick="ctxShare()">🔗 Share</div>
   <div class="ctx-item" onclick="ctxCopyPath()">📋 Copy Path</div>
   <div class="ctx-item" onclick="ctxLock()">🔒 Lock/Unlock</div>
+  <div class="ctx-item" onclick="ctxCompress()">📦 Compress (ZIP)</div>
   <div class="ctx-sep"></div>
   <div class="ctx-item" onclick="ctxDelete()">🗑️ Delete</div>
   <div class="ctx-sep"></div>
@@ -875,6 +876,14 @@ function ctxLock(){
       else showToast('Failed to toggle lock','error');
     }).catch(()=>showToast('Lock toggle failed','error'));
   hideCtxMenu();
+}
+function ctxCompress(){
+  const path=ctxTarget.dataset.path;
+  const name=ctxTarget.dataset.name||'download';
+  showToast('Creating ZIP...','info');
+  fetch('/api/zip',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded','Authorization':'Bearer '+token},body:'paths='+encodeURIComponent(JSON.stringify([path]))+'&name='+encodeURIComponent(name)+'&csrf='+encodeURIComponent(csrfToken)})
+    .then(r=>{if(r.ok){hideCtxMenu();showToast('ZIP created: '+name+'.zip','success');loadFiles(currentPath);}else showToast('Compress failed (file too large?)','error');})
+    .catch(()=>showToast('Compress failed','error'));
 }
 function ctxDelete(){deleteItem(ctxTarget.dataset.path,ctxTarget.dataset.name);hideCtxMenu();}
 function ctxSelectSameType(){
