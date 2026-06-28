@@ -1065,6 +1065,18 @@ void handleDownloadGzip() {
   if (!f) { webServer.send(500); return; }
   String name = path.substring(path.lastIndexOf('/')+1);
   String contentType = getContentType(name);
+  // ETag for gzip download: based on file size + mtime (skip re-compression if unchanged)
+  unsigned long fsize = f.size();
+  unsigned long fmtime = f.fileTime();
+  String etag = "\"" + String(fsize) + "-" + String(fmtime) + "-gz\"";
+  webServer.sendHeader("ETag", etag);
+  webServer.sendHeader("Cache-Control", "public, max-age=300");
+  if (webServer.hasHeader("If-None-Match") && webServer.header("If-None-Match") == etag) {
+    f.close();
+    webServer.send(304, "text/plain", "Not Modified");
+    logActivity("download-gzip-304", path, u);
+    return;
+  }
   // Only compress text files > 10KB
   if (!shouldCompress(name) || f.size() < 10240) {
     // Regular download for non-compressible or small files
@@ -4410,6 +4422,167 @@ void handleFileDiff() {
   logActivity("diff", pathA+" vs "+pathB, u);
 }
 
+// ============== VERSION LIST & RESTORE ==============
+// List all versions stored for a given file path
+void handleListVersions() {
+  String u, lvl;
+  if (!isAuthenticated(webServer, u, lvl)) { sendError(401, "Not authenticated"); return; }
+  if (!sdOK) { sendError(503, "SD card not available"); return; }
+  if (!webServer.hasArg("path")) { sendError(400, "Need path"); return; }
+  String path = webServer.arg("path");
+  String verDir = VERSIONS_FOLDER + path;
+  int slash = verDir.lastIndexOf('/');
+  String parentDir = (slash > 0) ? verDir.substring(0, slash) : VERSIONS_FOLDER;
+  String baseName = path.substring(path.lastIndexOf('/') + 1);
+  int dot = baseName.lastIndexOf('.');
+  String namePrefix = (dot > 0) ? baseName.substring(0, dot) + "_" : baseName + "_";
+  DynamicJsonDocument doc(4096);
+  doc["path"] = path;
+  JsonArray arr = doc.createNestedArray("versions");
+  File dir = SD.open(parentDir);
+  if (dir && dir.isDirectory()) {
+    File f;
+    while (f = dir.openNextFile()) {
+      if (!f.isDirectory()) {
+        String fn = String(f.name());
+        int sl = fn.lastIndexOf('/');
+        String name = (sl >= 0) ? fn.substring(sl+1) : fn;
+        if (name.startsWith(namePrefix)) {
+          // Extract timestamp from filename (between last _ and .ext)
+          int us = name.lastIndexOf('_');
+          int dt = name.lastIndexOf('.');
+          if (us > 0 && dt > us) {
+            String tsStr = name.substring(us+1, dt);
+            unsigned long ts = tsStr.toInt();
+            if (ts > 0) {
+              JsonObject v = arr.createNestedObject();
+              v["file"] = fn;
+              v["timestamp"] = ts;
+              v["size"] = f.size();
+              v["sizeFormatted"] = getFileSize((uint64_t)f.size());
+            }
+          }
+        }
+      }
+      f.close();
+    }
+    dir.close();
+  }
+  doc["count"] = arr.size();
+  String out; serializeJson(doc, out);
+  webServer.send(200, "application/json", out);
+  logActivity("list-versions", path, u);
+}
+
+// Restore a specific version (copy version file back to original path)
+void handleRestoreVersion() {
+  String u, lvl;
+  if (!isAuthenticated(webServer, u, lvl) || !checkCsrf(webServer)) { webServer.send(403); return; }
+  if (!sdOK) { sendError(503, "SD card not available"); return; }
+  if (!webServer.hasArg("path") || !webServer.hasArg("version")) { sendError(400, "Need path and version"); return; }
+  String origPath = webServer.arg("path");
+  String verFile = webServer.arg("version"); // Full path to version file
+  // Security: ensure version file is inside VERSIONS_FOLDER
+  if (!verFile.startsWith(VERSIONS_FOLDER)) { sendError(403, "Invalid version path"); return; }
+  if (!SD.exists(verFile)) { sendError(404, "Version not found"); return; }
+  // Create a new version of current file before overwriting
+  if (SD.exists(origPath)) {
+    if (!acquireFileLock(origPath, 3000)) { sendError(423, "File is locked"); return; }
+    createVersion(origPath);
+    // Copy version over original
+    File src = SD.open(verFile, FILE_READ);
+    File dst = SD.open(origPath, FILE_WRITE);
+    if (!src || !dst) {
+      if (src) src.close();
+      if (dst) dst.close();
+      releaseFileLock(origPath);
+      sendError(500, "Cannot restore version");
+      return;
+    }
+    uint8_t buf[512];
+    while (src.available()) { int n = src.read(buf, 512); dst.write(buf, n); }
+    src.close(); dst.close();
+    releaseFileLock(origPath);
+    totalWriteOps++;
+    totalWriteBytes += SD.open(origPath, FILE_READ).size();
+    logActivity("restore-version", origPath + " <- " + verFile, u);
+    broadcastChange("restore-version", origPath);
+    storeFileCRC(origPath);
+    webServer.send(200, "application/json", "{\"ok\":true}");
+  } else {
+    // Original doesn't exist, just copy version to original location
+    int sl = origPath.lastIndexOf('/');
+    if (sl > 0) createDirRecursive(origPath.substring(0, sl));
+    File src = SD.open(verFile, FILE_READ);
+    File dst = SD.open(origPath, FILE_WRITE);
+    if (!src || !dst) {
+      if (src) src.close();
+      if (dst) dst.close();
+      sendError(500, "Cannot restore version");
+      return;
+    }
+    uint8_t buf[512];
+    while (src.available()) { int n = src.read(buf, 512); dst.write(buf, n); }
+    src.close(); dst.close();
+    logActivity("restore-version-new", origPath + " <- " + verFile, u);
+    broadcastChange("restore-version", origPath);
+    webServer.send(200, "application/json", "{\"ok\":true}");
+  }
+}
+
+// ============== AUTO TRASH SIZE LIMIT ==============
+// When trash folder exceeds TRASH_MAX_MB, auto-purge oldest items first
+#define TRASH_MAX_MB 100 // Auto-purge when trash exceeds 100MB
+void autoTrashSizeLimit() {
+  static unsigned long lastTrashSizeCheck = 0;
+  if (millis() - lastTrashSizeCheck < 600000UL) return; // Check every 10 min
+  lastTrashSizeCheck = millis();
+  if (!sdOK || !SD.exists(TRASH_FOLDER)) return;
+  uint64_t trashSize = getDirSize(TRASH_FOLDER);
+  uint64_t maxBytes = (uint64_t)TRASH_MAX_MB * 1048576ULL;
+  if (trashSize <= maxBytes) return;
+  Serial.println("Trash size limit exceeded (" + String((uint32_t)(trashSize/1048576)) + "MB), purging oldest...");
+  // Collect trash files with timestamps, sort oldest first, delete until under limit
+  struct TrashItem { String path; unsigned long mtime; uint64_t size; };
+  TrashItem items[100];
+  int count = 0;
+  File dir = SD.open(TRASH_FOLDER);
+  if (!dir || !dir.isDirectory()) { if(dir) dir.close(); return; }
+  File f;
+  while (f = dir.openNextFile() && count < 100) {
+    if (!f.isDirectory()) {
+      items[count].path = String(f.name());
+      items[count].mtime = f.fileTime();
+      items[count].size = f.size();
+      count++;
+    }
+    f.close();
+  }
+  dir.close();
+  // Sort by mtime ascending (oldest first)
+  for (int i = 0; i < count - 1; i++) {
+    for (int j = 0; j < count - i - 1; j++) {
+      if (items[j].mtime > items[j+1].mtime) {
+        TrashItem tmp = items[j]; items[j] = items[j+1]; items[j+1] = tmp;
+      }
+    }
+  }
+  // Delete oldest until under 80% of max
+  uint64_t targetBytes = (maxBytes * 80) / 100;
+  int purged = 0;
+  for (int i = 0; i < count && trashSize > targetBytes; i++) {
+    if (SD.remove(items[i].path)) {
+      trashSize -= items[i].size;
+      purged++;
+    }
+  }
+  if (purged > 0) {
+    Serial.println("Auto-purged " + String(purged) + " trash items to free space");
+    logActivity("trash-size-purge", String(purged) + " items", "system");
+    broadcastChange("empty-trash", "/");
+  }
+}
+
 // ============== AUTO TRASH EXPIRY ==============
 // Periodically purge trash items older than TRASH_EXPIRY_DAYS to prevent SD fill
 #define TRASH_EXPIRY_DAYS 30
@@ -4642,6 +4815,8 @@ void setup() {
   webServer.on("/api/edit",HTTP_POST,handleFileEdit);
   webServer.on("/api/md-preview",HTTP_GET,handleMarkdownPreview);
   webServer.on("/api/time",HTTP_GET,handleServerTime);
+  webServer.on("/api/versions",HTTP_GET,handleListVersions);
+  webServer.on("/api/restore-version",HTTP_POST,handleRestoreVersion);
   webServer.on("/api/users",HTTP_GET,handleGetUsers);
   webServer.on("/api/users",HTTP_POST,handleAddUser);
   webServer.on("/api/users/",HTTP_PUT,handleUpdateUser);
@@ -4776,6 +4951,7 @@ void loop() {
   checkSD();
   broadcastSdHealth(); // Push SD health to WebSocket clients every 30s
   autoExpireTrash();   // Auto-purge old trash items every hour
+  autoTrashSizeLimit(); // Auto-purge trash when size exceeds TRASH_MAX_MB
   // ============== OOM PROTECTION ==============
   // If free heap drops below 8KB, reject new connections and log warning
   // ESP32 has ~320KB; below 8KB means critical memory pressure
