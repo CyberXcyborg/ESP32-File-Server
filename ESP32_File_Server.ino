@@ -1262,10 +1262,17 @@ void handleCopy() {
   String path = webServer.arg("path"), dest = webServer.arg("dest");
   if (!SD.exists(path)) { webServer.send(404); return; }
   String dp;
-  File dd = SD.open(dest);
-  if (dd && dd.isDirectory()) { String n = path.substring(path.lastIndexOf('/')+1); dp = dest + (dest.endsWith("/")?"":"/") + n; dd.close(); }
-  else dp = dest;
-  if (copyFile(path, dp)) { logActivity("copy", path+" -> "+dp, u); broadcastChange("copy", dp); webServer.send(200, "text/plain", "OK"); }
+  {
+    File dd = SD.open(dest);
+    if (dd && dd.isDirectory()) { String n = path.substring(path.lastIndexOf('/')+1); dp = dest + (dest.endsWith("/")?"":"/") + n; dd.close(); }
+    else dp = dest;
+  }
+  // Use recursive copy for directories, single-file copy for files
+  bool ok;
+  File srcObj = SD.open(path);
+  if (srcObj && srcObj.isDirectory()) { srcObj.close(); ok = copyDir(path, dp); }
+  else { ok = copyFile(path, dp); }
+  if (ok) { logActivity("copy", path+" -> "+dp, u); broadcastChange("copy", dp); webServer.send(200, "text/plain", "OK"); }
   else webServer.send(500, "text/plain", "Failed");
 }
 
@@ -1731,6 +1738,7 @@ void handleVideoThumbnail() {
   String etag = "\"" + String(fsize) + "-" + String(fmtime) + "\"";
   webServer.sendHeader("ETag", etag);
   webServer.sendHeader("Cache-Control", "public, max-age=3600");
+  webServer.sendHeader("X-Accel-Buffering", "no"); // Disable proxy buffering for smooth streaming
   // If client sends matching If-None-Match, return 304
   if (webServer.hasHeader("If-None-Match") && webServer.header("If-None-Match") == etag) {
     f.close();
@@ -4395,12 +4403,52 @@ bool applyMethodOverride() {
   return false;
 }
 
+// Clean up stale lock files left by crashed reboots
+void cleanupStaleLocks() {
+  int cleaned = 0;
+  File dir = SD.open("/");
+  if (!dir) return;
+  File f;
+  while (f = dir.openNextFile()) {
+    String name = String(f.name());
+    f.close();
+    if (name.endsWith(".lock")) {
+      String lockPath = name.startsWith("/") ? name : "/" + name;
+      // Lock files are only 4 bytes (timestamp); anything larger is corrupt
+      if (SD.exists(lockPath) && SD.open(lockPath).size() <= 4) {
+        // Check if lock is stale (>1 hour old) — no valid process holds it
+        File lf = SD.open(lockPath, FILE_READ);
+        if (lf) {
+          unsigned long lockTime = 0;
+          if (lf.available() >= 4) {
+            lockTime = (unsigned long)lf.read() | ((unsigned long)lf.read() << 8) |
+                       ((unsigned long)lf.read() << 16) | ((unsigned long)lf.read() << 24);
+          }
+          lf.close();
+          if (lockTime > 0 && (millis() - lockTime) > 3600000UL) {
+            SD.remove(lockPath);
+            cleaned++;
+          }
+        }
+      } else if (SD.exists(lockPath)) {
+        SD.remove(lockPath); // Corrupt lock file, remove it
+        cleaned++;
+      }
+    }
+  }
+  dir.close();
+  if (cleaned > 0) Serial.println("Cleaned " + String(cleaned) + " stale lock file(s)");
+}
+
 void setup() {
   Serial.begin(115200);
   Serial.println("\nESP32 File Server v"+String(FIRMWARE_VERSION));
   sdOK = initSDCard();
   if(!sdOK) Serial.println("SD Card failed!");
-  else Serial.println("SD OK: "+String((uint32_t)(SD.totalBytes()/1048576UL))+"MB");
+  else {
+    Serial.println("SD OK: "+String((uint32_t)(SD.totalBytes()/1048576UL))+"MB");
+    cleanupStaleLocks(); // Remove stale .lock files from previous crashed sessions
+  }
   loadSettings();
   loadQuotas();
   setupAuthentication();

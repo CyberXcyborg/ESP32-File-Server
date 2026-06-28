@@ -232,6 +232,32 @@ bool copyFile(String src, String dst) {
   return true;
 }
 
+// Recursively copy a directory tree (src -> dst)
+bool copyDir(String src, String dst) {
+  if (!SD.exists(src)) return false;
+  createDirRecursive(dst);
+  File dir = SD.open(src);
+  if (!dir || !dir.isDirectory()) { if (dir) dir.close(); return false; }
+  File f;
+  while (f = dir.openNextFile()) {
+    String name = String(f.name());
+    // Extract just the filename from full path
+    int li = name.lastIndexOf('/');
+    if (li >= 0) name = name.substring(li + 1);
+    String srcPath = src + (src.endsWith("/") ? "" : "/") + name;
+    String dstPath = dst + (dst.endsWith("/") ? "" : "/") + name;
+    if (f.isDirectory()) {
+      f.close();
+      if (!copyDir(srcPath, dstPath)) return false;
+    } else {
+      f.close();
+      if (!copyFile(srcPath, dstPath)) return false;
+    }
+  }
+  dir.close();
+  return true;
+}
+
 // ============== ACTIVITY LOG ==============
 void logActivity(String action, String path, String username) {
   // Truncate log to last 1000 entries to prevent SD fill
