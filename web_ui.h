@@ -177,6 +177,7 @@ kbd{font-family:monospace;font-size:12px}
     <button class="nav-tab" onclick="switchView('trash',this)">🗑️ Trash</button>
     <button class="nav-tab admin-only" onclick="switchView('users',this)">👥 Users</button>
     <button class="nav-tab admin-only" onclick="switchView('settings',this)">⚙️ Settings</button>
+    <button class="nav-tab admin-only" onclick="switchView('apikeys',this)">🔑 API Keys</button>
     <button class="nav-tab admin-only" onclick="switchView('log',this)">📋 Activity</button>
     <button class="nav-tab" onclick="switchView('analytics',this)">📊 Analytics</button>
   </div>
@@ -191,6 +192,7 @@ kbd{font-family:monospace;font-size:12px}
       <button class="btn" onclick="toggleSelectAll()" id="selectAllBtn">☑️ Select All</button>
       <button class="btn btn-ghost" onclick="selectInverse()" id="selectInverseBtn" style="display:none">🔄 Invert</button>
       <button class="btn" onclick="downloadZip()">📦 Download ZIP</button>
+      <button class="btn btn-ghost" onclick="exportFileList()" title="Export file list">📋 Export</button>
       <button class="btn btn-danger" id="delSelBtn" style="display:none" onclick="deleteSelected()">🗑️ Delete Selected</button>
       <button class="btn" id="copySelBtn" style="display:none" onclick="copySelected()">📋 Copy Selected</button>
       <button class="btn" id="moveSelBtn" style="display:none" onclick="moveSelected()">📦 Move Selected</button>
@@ -309,6 +311,16 @@ kbd{font-family:monospace;font-size:12px}
     <div style="margin-top:12px">
       <button class="btn" onclick="saveSettings()">💾 Save Settings</button>
       <button class="btn btn-ghost" onclick="loadSettings()">🔄 Refresh</button>
+    </div>
+  </div>
+
+  <!-- API KEYS VIEW -->
+  <div id="apiKeysView" class="view">
+    <div class="settings-section" style="margin-top:10px">
+      <h3>🔑 API Keys</h3>
+      <p style="font-size:13px;color:var(--text2);margin-bottom:10px">API keys allow programmatic access without a browser session. Use the <code>X-API-Key</code> header or <code>api_key</code> query parameter.</p>
+      <div id="apiKeyList" style="margin-bottom:10px"><p style="color:var(--text2)">Loading...</p></div>
+      <button class="btn btn-sm" onclick="createApiKey()">+ Generate New Key</button>
     </div>
   </div>
 
@@ -694,7 +706,7 @@ function switchView(v,btn){
   document.querySelectorAll('.view').forEach(t=>t.classList.remove('active'));
   if(btn)btn.classList.add('active');else event.target.classList.add('active');
   document.getElementById(v+'View').classList.add('active');
-  if(v==='trash')loadTrash();if(v==='users')loadUsers();if(v==='log')loadLog();if(v==='settings')loadSettings();
+  if(v==='trash')loadTrash();if(v==='users')loadUsers();if(v==='log')loadLog();if(v==='settings')loadSettings();if(v==='apikeys')loadApiKeys();
 }
 function showToast(msg,type='info'){const t=document.getElementById('toast');t.textContent=msg;t.className='toast '+type+' show';setTimeout(()=>t.classList.remove('show'),3000);}
 function openModal(id){document.getElementById(id).style.display='flex';}
@@ -708,6 +720,12 @@ function downloadZip(){
     .then(r=>{if(!r.ok)throw new Error();return r.blob();})
     .then(blob=>{const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='folder.zip';a.click();})
     .catch(()=>showToast('Failed to create ZIP','error'));}
+}
+function exportFileList(){
+  const fmt=prompt("Export format: json or csv?","json");
+  if(!fmt||!["json","csv"].includes(fmt))return;
+  window.location.href='/api/export-list?format='+fmt+'&path='+encodeURIComponent(currentPath)+'&token='+token;
+}
 function downloadSelected(){
   if(selectedFiles.length===0)return;
   showToast('Creating ZIP...','info');
@@ -1409,6 +1427,37 @@ function setQuota(){
     .catch(()=>showToast('Failed to set quota','error'));
 }
 function formatUptime(s){const h=Math.floor(s/3600),m=Math.floor((s%3600)/60);return h+'h '+m+'m';}
+function loadApiKeys(){
+  fetch('/api/api-keys',{headers:{'Authorization':'Bearer '+token}})
+    .then(r=>r.json()).then(data=>{
+      const list=data.api_keys||[];
+      if(!list.length){document.getElementById('apiKeyList').innerHTML='<p style="color:var(--text2)">No API keys yet</p>';return;}
+      let html='<div style="display:flex;flex-direction:column;gap:6px">';
+      list.forEach(k=>{
+        html+=`<div style="display:flex;align-items:center;gap:8px;background:var(--bg);padding:8px;border-radius:6px">
+          <code style="flex:1;font-size:12px;overflow:hidden;text-overflow:ellipsis">${k.key}</code>
+          <span style="font-size:12px;color:var(--text2)">${k.username} (${k.level})</span>
+          <button class="btn btn-sm btn-danger" onclick="revokeApiKey('${k.key}')">Revoke</button>
+        </div>`;
+      });
+      html+='</div>';
+      document.getElementById('apiKeyList').innerHTML=html;
+    }).catch(()=>{document.getElementById('apiKeyList').innerHTML='<p style="color:var(--danger)">Failed to load</p>';});
+}
+function createApiKey(){
+  if(!confirm('Generate a new API key? It will only be shown once.'))return;
+  fetch('/api/api-keys',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded','Authorization':'Bearer '+token},body:'csrf='+encodeURIComponent(csrfToken)})
+    .then(r=>r.json()).then(data=>{
+      if(data.api_key){prompt('Copy your API key (shown only once):',data.api_key);loadApiKeys();}
+      else showToast(data.error||'Failed','error');
+    }).catch(()=>showToast('Failed to create key','error'));
+}
+function revokeApiKey(key){
+  if(!confirm('Revoke this key? Applications using it will lose access.'))return;
+  fetch('/api/api-keys',{method:'DELETE',headers:{'Content-Type':'application/x-www-form-urlencoded','Authorization':'Bearer '+token},body:'key='+encodeURIComponent(key)+'&csrf='+encodeURIComponent(csrfToken)})
+    .then(r=>r.json()).then(data=>{if(data.ok){showToast('Key revoked','success');loadApiKeys();}else showToast('Failed','error');})
+    .catch(()=>showToast('Failed to revoke','error'));
+}
 function saveSettings(){
   const body={
     wifi_ssid:document.getElementById('setWifiSsid').value,

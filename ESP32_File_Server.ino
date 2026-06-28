@@ -2800,6 +2800,52 @@ void handleAccessStats() {
   webServer.send(200, "application/json", content);
 }
 
+// ============== EXPORT FILE LIST ==============
+// Export file listing as CSV or JSON for backup/inventory
+void handleExportFileList() {
+  String u, lvl;
+  if (!isAuthenticated(webServer, u, lvl)) { sendError(401, "Not authenticated"); return; }
+  String format = webServer.hasArg("format") ? webServer.arg("format") : "json";
+  String path = webServer.hasArg("path") ? sanitizePath(webServer.arg("path")) : "/";
+  
+  if (format == "csv") {
+    // CSV export with header
+    webServer.setContentLength(CONTENT_LENGTH_UNKNOWN);
+    webServer.sendHeader("Content-Disposition", "attachment; filename=\"filelist.csv\"");
+    webServer.send(200, "text/csv", "name,path,size,type,mtime\n");
+    // Recursively collect files
+    DynamicJsonDocument doc(4096);
+    JsonArray files = doc.createNestedArray("files");
+    collectFiles(path, files);
+    for (JsonObject f : files) {
+      String name = f["name"] | "";
+      String p = f["path"] | "";
+      uint64_t size = f["size"] | 0;
+      // Detect type from extension
+      String ext = name.substring(name.lastIndexOf('.') + 1);
+      String type = "file";
+      if (ext == "jpg" || ext == "png" || ext == "gif" || ext == "svg") type = "image";
+      else if (ext == "mp4" || ext == "avi" || ext == "mkv") type = "video";
+      else if (ext == "mp3" || ext == "wav" || ext == "ogg") type = "audio";
+      else if (ext == "txt" || ext == "md" || ext == "html" || ext == "css" || ext == "js" || ext == "json") type = "text";
+      else if (ext == "zip" || ext == "gz" || ext == "rar") type = "archive";
+      webServer.sendContent("\"" + name + "\",\"" + p + "\"," + String(size) + ",\"" + type + "\",\n");
+    }
+  } else {
+    // JSON export
+    DynamicJsonDocument doc(8192);
+    JsonArray files = doc.createNestedArray("files");
+    collectFiles(path, files);
+    doc["total"] = files.size();
+    doc["path"] = path;
+    doc["exported"] = millis();
+    String out; serializeJson(doc, out);
+    webServer.sendHeader("Content-Disposition", "attachment; filename=\"filelist.json\"");
+    webServer.send(200, "application/json", out);
+  }
+  logActivity("export-list", path + " (" + format + ")", u);
+}
+
 // ============== TOGGLE FILE READ-ONLY =============
 void handleSetReadOnly() {
   String u, lvl;
@@ -4308,6 +4354,7 @@ void setup() {
   webServer.on("/api/crc",HTTP_GET,handleFileCRC);
   webServer.on("/api/duplicates",HTTP_GET,handleFindDuplicates);
   webServer.on("/api/recent",HTTP_GET,handleRecentFiles);
+  webServer.on("/api/export-list",HTTP_GET,handleExportFileList);
   webServer.on("/api/access-stats",HTTP_GET,handleAccessStats);
   webServer.on("/api/readonly",HTTP_POST,handleSetReadOnly);
   webServer.on("/api/webhook",HTTP_GET,handleWebhookConfig);
