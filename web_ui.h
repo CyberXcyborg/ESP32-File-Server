@@ -141,6 +141,13 @@ kbd{font-family:monospace;font-size:12px}
 </style>
 </head>
 <body>
+<!-- Global drag overlay -->
+<div id="globalDragOverlay" style="display:none;position:fixed;inset:0;background:rgba(9,132,227,0.15);border:3px dashed var(--primary);z-index:9999;align-items:center;justify-content:center;pointer-events:none">
+  <div style="background:var(--card);padding:32px 48px;border-radius:16px;box-shadow:var(--shadow);text-align:center">
+    <div style="font-size:48px;margin-bottom:8px">📥</div>
+    <div style="font-size:18px;font-weight:600;color:var(--text)">Drop files to upload</div>
+  </div>
+</div>
 <div class="container">
   <header>
     <h1>📁 ESP32 File Server <small style="font-size:11px;color:var(--text2)">v6.20</small></h1>
@@ -572,6 +579,13 @@ document.addEventListener('DOMContentLoaded',()=>{
 function getToken(){
   const p=new URLSearchParams(window.location.search);const t=p.get('token');
   if(t){document.cookie='session_token='+t+';path=/;max-age=1800';return t;}
+
+// Global drag-and-drop: show overlay when files dragged anywhere on page
+let gDragCounter=0;
+document.addEventListener('dragenter',e=>{e.preventDefault();gDragCounter++;document.getElementById('globalDragOverlay').style.display='flex';});
+document.addEventListener('dragleave',e=>{e.preventDefault();gDragCounter--;if(gDragCounter<=0){gDragCounter=0;document.getElementById('globalDragOverlay').style.display='none';}});
+document.addEventListener('dragover',e=>e.preventDefault());
+document.addEventListener('drop',e=>{e.preventDefault();gDragCounter=0;document.getElementById('globalDragOverlay').style.display='none';handleFiles(e.dataTransfer.files);});
   const c=document.cookie.split(';');
   for(let x of c){const[n,v]=x.trim().split('=');if(n==='session_token')return v;}
   return '';
