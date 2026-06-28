@@ -13,6 +13,7 @@ struct Session {
   bool isActive;
   String userLevel;
   String csrfToken;  // Per-session CSRF token
+  IPAddress ip;      // Client IP for session binding
 };
 
 Session sessions[MAX_SESSIONS];
@@ -149,6 +150,7 @@ void setupAuthentication() {
   }
   for (int i = 0; i < MAX_SESSIONS; i++) {
     sessions[i].isActive = false;
+    sessions[i].ip = IPAddress(0,0,0,0);
   }
 }
 
@@ -174,9 +176,30 @@ void createDefaultUsersFile() {
   file.close();
 }
 
-String createSession(String username, String userLevel) {
+#define MAX_SESSIONS_PER_IP 3
+
+String createSession(String username, String userLevel, IPAddress clientIp = IPAddress(0,0,0,0)) {
   unsigned long currentTime = millis();
   String token = generateSessionToken();
+  // Per-IP session limit: prevent single IP from exhausting session table
+  if (clientIp != IPAddress(0,0,0,0)) {
+    int ipCount = 0;
+    for (int i = 0; i < MAX_SESSIONS; i++) {
+      if (sessions[i].isActive && sessions[i].ip == clientIp) ipCount++;
+    }
+    if (ipCount >= MAX_SESSIONS_PER_IP) {
+      // Evict oldest session from this IP
+      unsigned long oldest = currentTime;
+      int evictIdx = -1;
+      for (int i = 0; i < MAX_SESSIONS; i++) {
+        if (sessions[i].isActive && sessions[i].ip == clientIp && sessions[i].lastActivity < oldest) {
+          oldest = sessions[i].lastActivity;
+          evictIdx = i;
+        }
+      }
+      if (evictIdx >= 0) sessions[evictIdx].isActive = false;
+    }
+  }
   int oldestIndex = -1;
   unsigned long oldestTime = currentTime;
   for (int i = 0; i < MAX_SESSIONS; i++) {
@@ -192,6 +215,7 @@ String createSession(String username, String userLevel) {
   sessions[oldestIndex].lastActivity = currentTime;
   sessions[oldestIndex].isActive = true;
   sessions[oldestIndex].userLevel = userLevel;
+  sessions[oldestIndex].ip = clientIp;
   // Auto-generate CSRF token on session creation
   generateCsrfForSession(token);
   return token;

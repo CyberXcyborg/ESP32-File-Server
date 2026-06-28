@@ -2075,7 +2075,7 @@ void handleLogin() {
       if(authenticateUser(u,p,lvl)){
         auditRequest("login-ok", u);
         resetLoginRateLimit(webServer.client().remoteIP()); // Clear rate limit on success
-        String tok=createSession(u,lvl);
+        String tok=createSession(u,lvl,webServer.client().remoteIP());
         webServer.sendHeader("Set-Cookie","session_token="+tok+"; Path=/; Max-Age=1800; SameSite=Strict; HttpOnly");
         String r=webServer.hasArg("redirect")?webServer.arg("redirect"):"/";
         webServer.sendHeader("Location",r+"?token="+tok,true);webServer.send(302,"text/plain","");return;
