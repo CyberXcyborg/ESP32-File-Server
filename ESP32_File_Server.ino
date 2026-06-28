@@ -2472,7 +2472,7 @@ bool checkUserQuota(String username, uint64_t additionalBytes) {
 // Handle quota config API
 void handleQuotaConfig() {
   String u, lvl;
-  if (!isAuthenticated(webServer, u, lvl) || lvl != "admin") { webServer.send(403); return; }
+  if (!isAuthenticated(webServer, u, lvl) || lvl != "admin" || !checkCsrf(webServer)) { webServer.send(403); return; }
   if (webServer.method() == HTTP_GET) {
     DynamicJsonDocument doc(1024);
     JsonArray arr = doc.to<JsonArray>();
@@ -2986,7 +2986,7 @@ void handleSetReadOnly() {
 // ============== WEBHOOK CONFIG =============
 void handleWebhookConfig() {
   String u, lvl;
-  if (!isAuthenticated(webServer, u, lvl) || lvl != "admin") { webServer.send(403); return; }
+  if (!isAuthenticated(webServer, u, lvl) || lvl != "admin" || !checkCsrf(webServer)) { webServer.send(403); return; }
   if (webServer.method() == HTTP_GET) {
     if (!SD.exists(WEBHOOK_FILE)) { webServer.send(200, "application/json", "{\"enabled\":false,\"url\":\"\"}"); return; }
     File f = SD.open(WEBHOOK_FILE, FILE_READ);
@@ -3035,6 +3035,83 @@ void handleFileCRC() {
   doc["match"] = crcStored.length() == 0 || crcStored == crcComputed;
   String out; serializeJson(doc, out);
   webServer.send(200, "application/json", out);
+}
+
+// ============== BULK CRC STATE ==============
+// Shared state for recursive CRC bulk verification scan
+#define BULK_CRC_MAX 200
+String bulkCrcPaths[BULK_CRC_MAX];
+int bulkCrcCount = 0;
+int bulkCrcLimit = 200;
+
+// Recursively collect file paths for bulk CRC check
+void collectCrcFiles(String dir) {
+  File d = SD.open(dir);
+  if (!d) return;
+  File f;
+  while (f = d.openNextFile()) {
+    if (bulkCrcCount >= bulkCrcLimit) { f.close(); break; }
+    String fp = String(f.name());
+    if (f.isDirectory()) {
+      f.close();
+      collectCrcFiles(fp);
+    } else {
+      if (!fp.endsWith(".crc32") && !fp.endsWith(".lock") && !fp.startsWith("/.")) {
+        bulkCrcPaths[bulkCrcCount++] = fp;
+      }
+      f.close();
+    }
+  }
+  d.close();
+}
+
+// ============== BULK CRC VERIFICATION ==============
+// GET /api/bulk-crc?path=/&max=200
+// Verify stored CRC sidecars for all files in a directory tree
+void handleBulkVerifyCRC() {
+  String u, lvl;
+  if (!isAuthenticated(webServer, u, lvl)) { webServer.send(401); return; }
+  if (!sdOK) { webServer.send(503); return; }
+  String path = webServer.hasArg("path") ? sanitizePath(webServer.arg("path")) : "/";
+  bulkCrcLimit = webServer.hasArg("max") ? webServer.arg("max").toInt() : 200;
+  if (bulkCrcLimit < 1 || bulkCrcLimit > 500) bulkCrcLimit = 200;
+  if (bulkCrcLimit > BULK_CRC_MAX) bulkCrcLimit = BULK_CRC_MAX;
+  bulkCrcCount = 0;
+  collectCrcFiles(path);
+  // Verify each file's CRC against its sidecar
+  DynamicJsonDocument doc(8192);
+  doc["path"] = path;
+  doc["checked"] = bulkCrcCount;
+  JsonArray mismatched = doc.createNestedArray("mismatched");
+  JsonArray missing = doc.createNestedArray("missing");
+  int matchCount = 0;
+  for (int i = 0; i < bulkCrcCount; i++) {
+    String fp = bulkCrcPaths[i];
+    String crcPath = fp + ".crc32";
+    String crcComputed = getFileCRC32(fp);
+    if (SD.exists(crcPath)) {
+      File cf = SD.open(crcPath, FILE_READ);
+      if (cf) {
+        String crcStored = cf.readString().trim();
+        cf.close();
+        if (crcStored == crcComputed) { matchCount++; }
+        else {
+          JsonObject e = mismatched.createNestedObject();
+          e["path"] = fp;
+          e["expected"] = crcStored;
+          e["actual"] = crcComputed;
+        }
+      }
+    } else {
+      JsonObject e = missing.createNestedObject();
+      e["path"] = fp;
+      e["computed"] = crcComputed;
+    }
+  }
+  doc["matched"] = matchCount;
+  logActivity("bulk-crc", path + " (" + String(matchCount) + "/" + String(bulkCrcCount) + " ok)", u);
+  String out; serializeJson(doc, out);
+  sendJson(200, out);
 }
 
 // ============== DUPLICATE FILE FINDER ==============
@@ -4803,6 +4880,7 @@ void setup() {
   webServer.on("/api/analytics",HTTP_GET,handleStorageAnalytics);
   webServer.on("/api/detect-type",HTTP_GET,handleDetectType);
   webServer.on("/api/crc",HTTP_GET,handleFileCRC);
+  webServer.on("/api/bulk-crc",HTTP_GET,handleBulkVerifyCRC);
   webServer.on("/api/duplicates",HTTP_GET,handleFindDuplicates);
   webServer.on("/api/recent",HTTP_GET,handleRecentFiles);
   webServer.on("/api/export-list",HTTP_GET,handleExportFileList);

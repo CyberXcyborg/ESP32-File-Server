@@ -30,7 +30,7 @@ const char* ftp_password = "esp32";
 #define API_KEY_LENGTH 32
 #define MAX_API_KEYS 10
 
-#define FIRMWARE_VERSION "6.23.0"
+#define FIRMWARE_VERSION "6.29.0"
 
 // Maximum single upload size (16 MB — adjust for your SD card capacity)
 #define MAX_UPLOAD_SIZE (16UL * 1024UL * 1024UL)
