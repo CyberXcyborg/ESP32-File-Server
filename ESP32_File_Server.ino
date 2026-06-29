@@ -1080,6 +1080,21 @@ void handleHealth() {
   webServer.send(200, "application/json", out);
 }
 
+// ============== PING / UPTIME MONITOR ==============
+// Returns simple text status for external uptime monitors (Uptime Kuma, etc.)
+// Responds with "OK" or "ERROR" plus basic stats in plain text
+void handlePing() {
+  bool healthy = sdOK && wifiConnected;
+  String response = healthy ? "OK" : "ERROR";
+  response += " | v" + String(FIRMWARE_VERSION);
+  response += " | up:" + String(millis() / 1000) + "s";
+  response += " | heap:" + String(ESP.getFreeHeap());
+  response += " | sd:" + String(sdOK ? "ok" : "fail");
+  response += " | rssi:" + String(WiFi.RSSI()) + "dBm";
+  response += " | boot:" + String(bootCount);
+  webServer.send(healthy ? 200 : 503, "text/plain", response);
+}
+
 // ============== REBOOT ==============
 void handleReboot() {
   String u, lvl;
@@ -5527,6 +5542,8 @@ void setup() {
   webServer.on("/login",handleLogin);
   webServer.on("/logout",handleLogout);
   webServer.on("/health",handleHealth);
+  // Simple text status for uptime monitors (Uptime Kuma, Ping, etc.)
+  webServer.on("/ping",handlePing);
   webServer.on("/server-info",handleServerInfo);
   webServer.on("/users",handleUserManagementPage);
   webServer.on("/trash",handleTrashPage);
