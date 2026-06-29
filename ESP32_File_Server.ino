@@ -1099,9 +1099,21 @@ void handlePing() {
 void handleReboot() {
   String u, lvl;
   if (!isAuthenticated(webServer, u, lvl) || lvl != "admin" || !checkCsrf(webServer)) { webServer.send(403); return; }
-  logActivity("reboot", "remote", u);
-  webServer.send(200, "text/plain", "Rebooting...");
-  delay(500);
+  // Optional delay parameter (seconds, max 60) for deferred reboot
+  int delaySec = 0;
+  if (webServer.hasArg("delay")) {
+    delaySec = webServer.arg("delay").toInt();
+    if (delaySec < 0) delaySec = 0;
+    if (delaySec > 60) delaySec = 60;
+  }
+  logActivity("reboot", "remote" + String(delaySec > 0 ? " (delay " + String(delaySec) + "s)" : ""), u);
+  webServer.send(200, "application/json", "{\"ok\":true,\"msg\":\"Rebooting" + String(delaySec > 0 ? " in " + String(delaySec) + "s" : "") + "\"}");
+  if (delaySec > 0) {
+    // Schedule reboot via timer — don't block the response
+    delay(delaySec * 1000);
+  } else {
+    delay(500);
+  }
   ESP.restart();
 }
 
@@ -2414,9 +2426,11 @@ void handleSaveSettings() {
   String fu=doc["ftp_user"]|String(ftp_user), fp=doc["ftp_pass"]|String(ftp_password);
   uint16_t newPort = doc["web_port"] | webServerPort;
   if (newPort < 80 || newPort > 65535) newPort = 80; // Validate
+  uint16_t oldPort = webServerPort;
+  webServerPort = newPort; // Apply port before saving so settings file has correct value
   if (saveSettings(ws,wp,as_,ap,fu,fp)) {
     logActivity("settings","updated",u);
-    if (newPort != webServerPort) {
+    if (newPort != oldPort) {
       webServer.send(200,"application/json","{\"ok\":true,\"msg\":\"Saved. Rebooting for port change.\",\"reboot\":true}");
       delay(1500);
       ESP.restart();
@@ -5654,6 +5668,27 @@ void setup() {
   webServer.on("/api/users",HTTP_POST,handleAddUser);
   webServer.on("/api/users/",HTTP_PUT,handleUpdateUser);
   webServer.on("/api/users/",HTTP_DELETE,handleDeleteUser);
+
+  // Factory reset: wipe all config files and reboot to defaults
+  webServer.on("/api/factory-reset",HTTP_POST,[](){
+    String u, lvl;
+    if (!isAuthenticated(webServer, u, lvl) || lvl != "admin" || !checkCsrf(webServer)) { webServer.send(403); return; }
+    if (!webServer.hasArg("confirm") || webServer.arg("confirm") != "yes") {
+      webServer.send(400, "application/json", "{\"error\":\"Add confirm=yes to factory reset\"}");
+      return;
+    }
+    // Remove all config files
+    SD.remove(USERS_FILE);
+    SD.remove(SETTINGS_FILE);
+    SD.remove(SHARES_FILE);
+    SD.remove(WEBHOOK_FILE);
+    SD.remove(ACCESS_META_FILE);
+    SD.remove(LOG_FILE);
+    logActivity("factory-reset", "all configs wiped", u);
+    webServer.send(200, "application/json", "{\"ok\":true,\"msg\":\"Factory reset complete. Rebooting.\"}");
+    delay(1000);
+    ESP.restart();
+  });
 
   // Add security headers to all responses
   // CORS preflight handler: respond to OPTIONS on /api/* with proper CORS headers

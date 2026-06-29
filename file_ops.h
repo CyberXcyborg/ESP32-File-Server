@@ -681,33 +681,7 @@ int autoCleanTrash(int maxAgeDays) {
   return cleaned;
 }
 
-// ============== COUNT FILES & DIRS IN DIR ==============
-int countFiles(String path) {
-  int count = 0;
-  File dir = SD.open(path);
-  if (!dir || !dir.isDirectory()) return 0;
-  File file;
-  while (file = dir.openNextFile()) {
-    if (!file.isDirectory()) count++;
-    else count += countFiles(String(file.path()));
-    file.close();
-  }
-  dir.close();
-  return count;
-}
-
-int countDirs(String path) {
-  int count = 0;
-  File dir = SD.open(path);
-  if (!dir || !dir.isDirectory()) return 0;
-  File file;
-  while (file = dir.openNextFile()) {
-    if (file.isDirectory()) { count++; count += countDirs(String(file.path())); }
-    file.close();
-  }
-  dir.close();
-  return count;
-}
+// countFiles and countDirs already defined above (lines 610-637)
 
 // Aliases for backward compatibility
 #define countFilesInDir countFiles
