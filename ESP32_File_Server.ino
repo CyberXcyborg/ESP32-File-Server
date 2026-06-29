@@ -378,6 +378,48 @@ void endUploadProgress(String filename) {
   }
 }
 
+// ============== SERVER-SIDE CLIPBOARD ==============
+// Shared clipboard for copy/paste operations across sessions
+struct ClipboardEntry {
+  String path;
+  String action; // "copy" or "move"
+  unsigned long timestamp;
+  String username;
+};
+#define MAX_CLIPBOARD_ENTRIES 16
+ClipboardEntry clipboard[MAX_CLIPBOARD_ENTRIES];
+int clipboardCount = 0;
+
+void addToClipboard(String path, String action, String username) {
+  // Shift entries if full
+  if (clipboardCount >= MAX_CLIPBOARD_ENTRIES) {
+    for (int i = 0; i < MAX_CLIPBOARD_ENTRIES - 1; i++) {
+      clipboard[i] = clipboard[i + 1];
+    }
+    clipboardCount = MAX_CLIPBOARD_ENTRIES - 1;
+  }
+  clipboard[clipboardCount].path = path;
+  clipboard[clipboardCount].action = action;
+  clipboard[clipboardCount].timestamp = millis();
+  clipboard[clipboardCount].username = username;
+  clipboardCount++;
+}
+
+void broadcastClipboardUpdate() {
+  DynamicJsonDocument doc(2048);
+  doc["event"] = "clipboard-update";
+  JsonArray arr = doc.createNestedArray("items");
+  for (int i = 0; i < clipboardCount; i++) {
+    JsonObject e = arr.createNestedObject();
+    e["path"] = clipboard[i].path;
+    e["action"] = clipboard[i].action;
+    e["user"] = clipboard[i].username;
+    e["time"] = clipboard[i].timestamp;
+  }
+  String msg; serializeJson(doc, msg);
+  webSocket.broadcastTXT(msg);
+}
+
 // ============== COLLABORATIVE EDITING NOTIFICATIONS ==============
 // Track which files are currently being edited by which users
 struct EditSession {
@@ -793,6 +835,42 @@ void onWebSocketEvent(uint8_t num, WStype_t type, uint8_t * payload, size_t leng
             if (num < WS_MAX_CLIENTS && wsClients[num].authenticated) {
               lastExternalScan = 0; // Reset timer so next loop iteration triggers scan
               webSocket.sendTXT(num, "{\"event\":\"rescan-ok\"}");
+            }
+          } else if (cmd == "clipboard-add") {
+            // Add a file path to the server clipboard
+            if (num < WS_MAX_CLIENTS && wsClients[num].authenticated) {
+              String cbPath = doc["path"] | "";
+              String cbAction = doc["action"] | "copy"; // "copy" or "move"
+              if (cbPath.length() > 0) {
+                addToClipboard(cbPath, cbAction, wsClients[num].username);
+                broadcastClipboardUpdate();
+                webSocket.sendTXT(num, "{\"event\":\"clipboard-added\"}");
+              } else {
+                webSocket.sendTXT(num, "{\"error\":\"missing-path\"}");
+              }
+            }
+          } else if (cmd == "clipboard-get") {
+            // Return current clipboard contents
+            if (num < WS_MAX_CLIENTS && wsClients[num].authenticated) {
+              DynamicJsonDocument resp(2048);
+              resp["event"] = "clipboard-contents";
+              JsonArray arr = resp.createNestedArray("items");
+              for (int i = 0; i < clipboardCount; i++) {
+                JsonObject e = arr.createNestedObject();
+                e["path"] = clipboard[i].path;
+                e["action"] = clipboard[i].action;
+                e["user"] = clipboard[i].username;
+                e["time"] = clipboard[i].timestamp;
+              }
+              String msg; serializeJson(resp, msg);
+              webSocket.sendTXT(num, msg);
+            }
+          } else if (cmd == "clipboard-clear") {
+            // Clear the server clipboard
+            if (num < WS_MAX_CLIENTS && wsClients[num].authenticated) {
+              clipboardCount = 0;
+              broadcastClipboardUpdate();
+              webSocket.sendTXT(num, "{\"event\":\"clipboard-cleared\"}");
             }
           } else if (cmd == "stats") {
             // Return immediate stats snapshot via WebSocket
@@ -3197,6 +3275,13 @@ void handleServiceWorker() {
   sendSecurityHeaders();
   webServer.sendHeader("Cache-Control", "public, max-age=86400");
   webServer.sendHeader("Content-Type", "application/javascript");
+  // ETag based on version for cache validation
+  String swEtag = "\"sw-" + String(FIRMWARE_VERSION) + "\"";
+  webServer.sendHeader("ETag", swEtag);
+  if (webServer.hasHeader("If-None-Match") && webServer.header("If-None-Match") == swEtag) {
+    webServer.send(304, "text/plain", "");
+    return;
+  }
   String sw = "const CACHE='esp32fs-v6.14';const SHELL=['/', '/manifest.json'];\\n";
   sw += "self.addEventListener('install',e=>{e.waitUntil(caches.open(CACHE).then(c=>c.addAll(SHELL)));self.skipWaiting();});\n";
   sw += "self.addEventListener('activate',e=>{e.waitUntil(caches.keys().then(ks=>Promise.all(ks.filter(k=>k!==CACHE).map(k=>caches.delete(k)))));self.clients.claim();});\n";
