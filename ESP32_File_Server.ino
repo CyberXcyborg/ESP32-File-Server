@@ -475,6 +475,81 @@ void onWebSocketEvent(uint8_t num, WStype_t type, uint8_t * payload, size_t leng
                 webSocket.sendTXT(num, "{\"error\":\"mkdir-failed\"}");
               }
             }
+          } else if (cmd == "preview") {
+            // WebSocket command: get file preview content directly via WS
+            if (num < WS_MAX_CLIENTS && wsClients[num].authenticated) {
+              String prevPath = doc["path"] | "/";
+              prevPath = sanitizePath(prevPath);
+              if (sdOK && SD.exists(prevPath) && shouldCompress(prevPath)) {
+                File pf = SD.open(prevPath, FILE_READ);
+                if (pf && pf.size() <= 65536) {
+                  String content = "";
+                  content.reserve((size_t)pf.size());
+                  uint8_t buf[512];
+                  while (pf.available()) {
+                    int n = pf.read(buf, 512);
+                    for (int i = 0; i < n; i++) {
+                      char c = buf[i];
+                      if (c >= 32 && c < 127) content += c;
+                      else if (c == '\n') content += '\n';
+                      else if (c == '\t') content += '\t';
+                      else content += '.';
+                    }
+                  }
+                  pf.close();
+                  // Build language detection
+                  String name = prevPath.substring(prevPath.lastIndexOf('/')+1);
+                  String ext = name.substring(name.lastIndexOf('.')+1);
+                  ext.toLowerCase();
+                  DynamicJsonDocument resp(665536);
+                  resp["event"] = "file-preview";
+                  resp["path"] = prevPath;
+                  resp["name"] = name;
+                  resp["size"] = (uint32_t)SD.open(prevPath, FILE_READ).size();
+                  resp["language"] = ext;
+                  resp["content"] = content;
+                  String msg;
+                  serializeJson(resp, msg);
+                  webSocket.sendTXT(num, msg);
+                } else {
+                  pf.close();
+                  webSocket.sendTXT(num, "{\"error\":\"file-too-large\"}");
+                }
+              } else {
+                webSocket.sendTXT(num, "{\"error\":\"not-previewable\"}");
+              }
+            }
+          } else if (cmd == "write") {
+            // WebSocket command: write file content in real-time
+            if (num < WS_MAX_CLIENTS && wsClients[num].authenticated) {
+              String wPath = doc["path"] | "";
+              wPath = sanitizePath(wPath);
+              String wContent = doc["content"] | "";
+              if (wPath.length() > 0 && wContent.length() <= 65536 && !isFileReadOnly(wPath)) {
+                if (acquireFileLock(wPath, 3000)) {
+                  createVersion(wPath);
+                  File wf = SD.open(wPath, FILE_WRITE);
+                  if (wf) {
+                    size_t written = wf.print(wContent);
+                    wf.close();
+                    releaseFileLock(wPath);
+                    totalWriteOps++;
+                    totalWriteBytes += written;
+                    storeFileCRC(wPath);
+                    logActivity("ws-write", wPath + " (" + String(written) + "B)", wsClients[num].username);
+                    broadcastChange("edit", wPath);
+                    webSocket.sendTXT(num, "{\"event\":\"write-ok\",\"path\":\"" + wPath + "\",\"bytes\":" + String(written) + "}");
+                  } else {
+                    releaseFileLock(wPath);
+                    webSocket.sendTXT(num, "{\"error\":\"write-failed\"}");
+                  }
+                } else {
+                  webSocket.sendTXT(num, "{\"error\":\"file-locked\"}");
+                }
+              } else {
+                webSocket.sendTXT(num, "{\"error\":\"invalid-params\"}");
+              }
+            }
           }
         }
       }
