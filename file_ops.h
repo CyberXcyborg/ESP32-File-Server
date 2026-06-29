@@ -5,6 +5,7 @@
 #include "config.h"
 #include <WiFiClient.h>
 #include <ArduinoJson.h>
+#include <functional>
 
 bool initSDCard() {
   SPI.begin(SPI_SCK, SPI_MISO, SPI_MOSI, SD_CS);
@@ -210,6 +211,55 @@ String getContentType(String fileName) {
   if (ext=="md"||ext=="markdown") return "text/markdown";
   if (ext=="xml") return "application/xml";
   return "application/octet-stream";
+}
+
+// ============== SD OPERATION RETRY ==============
+// Retry SD operations with exponential backoff for flaky cards
+bool sdRetry(std::function<bool()> op, int maxRetries = 3, int baseDelayMs = 10) {
+  for (int attempt = 0; attempt <= maxRetries; attempt++) {
+    if (op()) return true;
+    if (attempt < maxRetries) {
+      delay(baseDelayMs * (1 << attempt)); // 10ms, 20ms, 40ms
+      // Reinitialize SPI bus between attempts
+      if (attempt == maxRetries - 1) {
+        SPI.begin(SPI_SCK, SPI_MISO, SPI_MOSI, SD_CS);
+        SD.begin(SD_CS);
+      }
+    }
+  }
+  return false;
+}
+
+// Verify file copy by comparing CRC32 of source and destination
+bool verifyCopy(String src, String dst) {
+  if (!SD.exists(src) || !SD.exists(dst)) return false;
+  // Quick check: sizes must match
+  File s = SD.open(src, FILE_READ);
+  File d = SD.open(dst, FILE_READ);
+  if (!s || !d) { if (s) s.close(); if (d) d.close(); return false; }
+  bool ok = (s.size() == d.size());
+  if (ok) {
+    // CRC compare (streaming to avoid OOM)
+    uint32_t crc_s = 0xFFFFFFFF, crc_d = 0xFFFFFFFF;
+    uint8_t buf[256];
+    while (s.available()) {
+      int n = s.read(buf, 256);
+      for (int i = 0; i < n; i++) {
+        crc_s ^= buf[i];
+        for (int k = 0; k < 8; k++) crc_s = (crc_s >> 1) ^ (0xEDB88320 & (-(crc_s & 1)));
+      }
+    }
+    while (d.available()) {
+      int n = d.read(buf, 256);
+      for (int i = 0; i < n; i++) {
+        crc_d ^= buf[i];
+        for (int k = 0; k < 8; k++) crc_d = (crc_d >> 1) ^ (0xEDB88320 & (-(crc_d & 1)));
+      }
+    }
+    ok = ((crc_s ^ 0xFFFFFFFF) == (crc_d ^ 0xFFFFFFFF));
+  }
+  s.close(); d.close();
+  return ok;
 }
 
 bool copyFile(String src, String dst) {

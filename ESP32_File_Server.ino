@@ -266,6 +266,25 @@ void broadcastChange(String action, String path) {
   }
 }
 
+// ============== USER PRESENCE BROADCAST ==============
+// Notify all WebSocket clients when a user connects or disconnects
+void broadcastUserPresence(String username, String level, bool joined) {
+  DynamicJsonDocument doc(256);
+  doc["event"] = joined ? "user-joined" : "user-left";
+  doc["user"] = username;
+  doc["level"] = level;
+  doc["time"] = millis();
+  // Count current online users
+  int online = 0;
+  for (int i = 0; i < WS_MAX_CLIENTS; i++) {
+    if (wsClients[i].authenticated) online++;
+  }
+  doc["online_count"] = online;
+  String msg;
+  serializeJson(doc, msg);
+  webSocket.broadcastTXT(msg);
+}
+
 // ============== LOG BROADCAST ==============
 // Push log events in real-time to all authenticated admin WebSocket clients
 void broadcastLogEvent(String action, String path, String username) {
@@ -444,7 +463,11 @@ void onWebSocketEvent(uint8_t num, WStype_t type, uint8_t * payload, size_t leng
   switch(type) {
     case WStype_DISCONNECTED:
       Serial.printf("[%u] WS Disconnected\n", num);
-      if (num < WS_MAX_CLIENTS && wsClients[num].authenticated) wsClientCount--;
+      if (num < WS_MAX_CLIENTS && wsClients[num].authenticated) {
+        // Broadcast user leaving before clearing
+        broadcastUserPresence(wsClients[num].username, wsClients[num].userLevel, false);
+        wsClientCount--;
+      }
       clearWsClient(num);
       break;
     case WStype_CONNECTED:
@@ -492,6 +515,8 @@ void onWebSocketEvent(uint8_t num, WStype_t type, uint8_t * payload, size_t leng
               String msg;
               serializeJson(status, msg);
               webSocket.sendTXT(num, msg);
+              // Broadcast user presence to all other clients
+              broadcastUserPresence(wsUser, wsLvl, true);
             } else {
               webSocket.sendTXT(num, "{\"event\":\"auth-failed\"}");
               webSocket.disconnect(num);
@@ -1688,7 +1713,19 @@ void handleCopy() {
   File srcObj = SD.open(path);
   if (srcObj && srcObj.isDirectory()) { srcObj.close(); ok = copyDir(path, dp); }
   else { ok = copyFile(path, dp); }
-  if (ok) { logActivity("copy", path+" -> "+dp, u); broadcastChange("copy", dp); webServer.send(200, "text/plain", "OK"); }
+  if (ok) {
+    // Verify copy integrity for single files (CRC32 check)
+    File sf = SD.open(path, FILE_READ);
+    if (sf && !sf.isDirectory()) {
+      sf.close();
+      if (!verifyCopy(path, dp)) {
+        logActivity("copy-failed-verify", path+" -> "+dp, u);
+        webServer.send(500, "application/json", "{\"error\":\"Copy verification failed (CRC mismatch)\"}");
+        return;
+      }
+    } else if (sf) { sf.close(); }
+    logActivity("copy", path+" -> "+dp, u); broadcastChange("copy", dp); webServer.send(200, "text/plain", "OK");
+  }
   else webServer.send(500, "text/plain", "Failed");
 }
 
@@ -2298,6 +2335,28 @@ void handleChanges() {
   doc["changed"] = changed;
   String out; serializeJson(doc, out);
   webServer.send(200, "application/json", out);
+}
+
+// ============== ONLINE USERS ENDPOINT ==============
+// Returns list of currently connected WebSocket users
+void handleOnlineUsers() {
+  String u, lvl;
+  if (!isAuthenticated(webServer, u, lvl)) { webServer.send(401); return; }
+  DynamicJsonDocument doc(1024);
+  doc["count"] = wsClientCount;
+  JsonArray arr = doc.createNestedArray("users");
+  for (int i = 0; i < WS_MAX_CLIENTS; i++) {
+    if (wsClients[i].authenticated) {
+      JsonObject o = arr.createNestedObject();
+      o["user"] = wsClients[i].username;
+      o["level"] = wsClients[i].userLevel;
+      o["ip"] = wsClients[i].ip.toString();
+      o["connected_s"] = (millis() - wsClients[i].connectTime) / 1000;
+      o["idle_ms"] = (millis() - wsClients[i].lastActivity);
+    }
+  }
+  String out; serializeJson(doc, out);
+  sendJson(200, out);
 }
 
 // ============== OTA ==============
@@ -5956,6 +6015,7 @@ void setup() {
   webServer.on("/api/notifications/clear",HTTP_POST,handleClearNotifications);
   webServer.on("/api/export-list",HTTP_GET,handleExportFileList);
   webServer.on("/api/access-stats",HTTP_GET,handleAccessStats);
+  webServer.on("/api/online",HTTP_GET,handleOnlineUsers);
   webServer.on("/api/readonly",HTTP_POST,handleSetReadOnly);
   webServer.on("/api/batch-readonly",HTTP_POST,handleBatchSetReadOnly);
   webServer.on("/api/webhook",HTTP_GET,handleWebhookConfig);
