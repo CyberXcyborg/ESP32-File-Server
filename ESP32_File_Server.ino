@@ -3496,6 +3496,59 @@ void handleExportFileList() {
 }
 
 // ============== TOGGLE FILE READ-ONLY =============
+// ============== BATCH SET READ-ONLY ==============
+// Apply read-only flag to a file or recursively to a directory tree
+// POST /api/batch-readonly with path, readonly (0/1), csrf
+void handleBatchSetReadOnly() {
+  String u, lvl;
+  if (!isAuthenticated(webServer, u, lvl) || lvl != "admin" || !checkCsrf(webServer)) { webServer.send(403); return; }
+  if (!webServer.hasArg("path")) { sendError(400, "Missing path"); return; }
+  String path = sanitizePath(webServer.hasArg("path") ? webServer.arg("path") : "/");
+  bool readOnly = webServer.hasArg("readonly") && webServer.arg("readonly") == "1";
+  int affected = 0;
+  // If path is a file, just set it
+  File f = SD.open(path, FILE_READ);
+  if (!f) { sendError(404, "Path not found"); return; }
+  bool isDir = f.isDirectory();
+  f.close();
+  if (!isDir) {
+    if (setFileReadOnly(path, readOnly)) affected = 1;
+  } else {
+    // Recursive: apply to all files in directory tree
+    // Collect files first to avoid modifying during iteration
+    struct { String paths[50]; int count; } fileList;
+    fileList.count = 0;
+    // Simple recursive collection (limited to 50 files for ESP32 memory)
+    collectFilesReadOnly(path, fileList.paths, fileList.count, 50);
+    for (int i = 0; i < fileList.count; i++) {
+      if (setFileReadOnly(fileList.paths[i], readOnly)) affected++;
+    }
+  }
+  logActivity(readOnly ? "batch-lock" : "batch-unlock", path + " (" + String(affected) + " files)", u);
+  webServer.send(200, "application/json", "{\"ok\":true,\"affected\":" + String(affected) + "}");
+}
+
+// Helper: collect file paths recursively (max limit)
+void collectFilesReadOnly(String path, String paths[], int &count, int maxCount) {
+  if (count >= maxCount) return;
+  File dir = SD.open(path);
+  if (!dir || !dir.isDirectory()) { if (dir) dir.close(); return; }
+  File f;
+  while (f = dir.openNextFile()) {
+    if (f.isDirectory()) {
+      f.close();
+      collectFilesReadOnly(String(f.name()), paths, count, maxCount);
+    } else {
+      if (count < maxCount) {
+        paths[count] = String(f.name());
+        count++;
+      }
+      f.close();
+    }
+  }
+  dir.close();
+}
+
 void handleSetReadOnly() {
   String u, lvl;
   if (!isAuthenticated(webServer, u, lvl) || lvl != "admin" || !checkCsrf(webServer)) { webServer.send(403); return; }
@@ -5809,6 +5862,7 @@ void setup() {
   webServer.on("/api/export-list",HTTP_GET,handleExportFileList);
   webServer.on("/api/access-stats",HTTP_GET,handleAccessStats);
   webServer.on("/api/readonly",HTTP_POST,handleSetReadOnly);
+  webServer.on("/api/batch-readonly",HTTP_POST,handleBatchSetReadOnly);
   webServer.on("/api/webhook",HTTP_GET,handleWebhookConfig);
   webServer.on("/api/webhook",HTTP_POST,handleWebhookConfig);
   webServer.on("/api/thumb",HTTP_GET,handleImageThumb);
