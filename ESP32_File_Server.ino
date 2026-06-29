@@ -46,6 +46,7 @@ struct WsClientInfo {
 #define WS_RATE_WINDOW_MS 10000UL   // 10-second window
 #define WS_RATE_MAX_MSGS 50         // Max 50 messages per window
 #define WS_MAX_CLIENTS 8
+#define WS_MAX_PER_IP 3 // Max WebSocket connections per IP address
 WsClientInfo wsClients[WS_MAX_CLIENTS];
 
 // Initialize WS client on connect
@@ -548,6 +549,17 @@ void onWebSocketEvent(uint8_t num, WStype_t type, uint8_t * payload, size_t leng
       {
         IPAddress ip = webSocket.remoteIP(num);
         Serial.printf("[%u] WS Connected from %s (pending auth)\n", num, ip.toString().c_str());
+        // Enforce per-IP connection limit
+        int ipCount = 0;
+        for (int i = 0; i < WS_MAX_CLIENTS; i++) {
+          if (i != (int)num && wsClients[i].ip == ip) ipCount++;
+        }
+        if (ipCount >= WS_MAX_PER_IP) {
+          Serial.printf("[%u] WS rejected: IP %s has %d connections (max %d)\n", num, ip.toString().c_str(), ipCount, WS_MAX_PER_IP);
+          webSocket.sendTXT(num, "{\"error\":\"too-many-connections\",\"max_per_ip\":" + String(WS_MAX_PER_IP) + "}");
+          webSocket.disconnect(num);
+          break;
+        }
         initWsClient(num, ip);
         // Send challenge — client must respond with {"cmd":"auth","token":"..."}
         webSocket.sendTXT(num, "{\"event\":\"auth-required\"}");
@@ -1270,8 +1282,28 @@ void sendError(int code, String msg) {
 }
 
 // Send JSON response with Content-Length header for HTTP compliance
+// Auto-compresses large JSON responses (>2KB) if client supports gzip
 void sendJson(int code, String json) {
   sendSecurityHeaders();
+  bool clientWantsGzip = webServer.hasHeader("Accept-Encoding") && webServer.header("Accept-Encoding").indexOf("gzip") >= 0;
+  if (clientWantsGzip && json.length() > 2048) {
+    // Compress large JSON response
+    size_t compCap = (size_t)(json.length() + json.length()/100 + 1024);
+    uint8_t *compBuf = new uint8_t[compCap];
+    if (compBuf) {
+      size_t compSize = gzipCompress((const uint8_t*)json.c_str(), json.length(), compBuf, compCap);
+      if (compSize > 0) {
+        webServer.sendHeader("Content-Encoding", "gzip");
+        webServer.sendHeader("Content-Type", "application/json");
+        webServer.setContentLength(compSize);
+        webServer.send(code, "application/gzip", "");
+        webServer.sendContent((const char*)compBuf, compSize);
+        delete[] compBuf;
+        return;
+      }
+      delete[] compBuf;
+    }
+  }
   webServer.sendHeader("Content-Length", String(json.length()));
   webServer.send(code, "application/json", json);
 }
