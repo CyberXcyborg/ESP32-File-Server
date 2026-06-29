@@ -2908,7 +2908,7 @@ void handleCompleteSetup() {
 void handleExportLog() {
   String u, lvl;
   if (!isAuthenticated(webServer, u, lvl) || lvl != "admin") { sendError(403,"Admin only"); return; }
-  String format = webServer.hasArg("format") ? webServer.hasArg("format") : "json";
+  String format = webServer.hasArg("format") ? webServer.arg("format") : "json";
   if (format == "csv") {
     webServer.setContentLength(CONTENT_LENGTH_UNKNOWN);
     webServer.send(200, "text/csv", "timestamp,username,action,path\n");
@@ -4885,6 +4885,23 @@ void setup() {
   else {
     Serial.println("SD OK: "+String((uint32_t)(SD.totalBytes()/1048576UL))+"MB");
     cleanupStaleLocks(); // Remove stale .lock files from previous crashed sessions
+    // Startup self-test: write+read+CRC a small test file to verify SD integrity
+    if (sdOK) {
+      bool selfTestOk = false;
+      File tf = SD.open("/.selftest", FILE_WRITE);
+      if (tf) {
+        tf.write((const uint8_t*)"ESP32FS_SELFTEST_V1", 19);
+        tf.close();
+        String crc = getFileCRC32("/.selftest");
+        SD.remove("/.selftest");
+        selfTestOk = (crc.length() > 0);
+      }
+      if (selfTestOk) Serial.println("SD self-test: PASS");
+      else {
+        Serial.println("SD self-test: FAIL (write/read/CRC broken)");
+        sdOK = false;
+      }
+    }
   }
   loadSettings();
   loadQuotas();
@@ -5199,6 +5216,18 @@ void loop() {
         idempotencyCache[i].response = "";
       }
       idempotencyCount = 0;
+      // Broadcast low-heap alert to admin WebSocket clients
+      DynamicJsonDocument alert(256);
+      alert["event"] = "system-alert";
+      alert["type"] = "low-heap";
+      alert["heap"] = freeHeap;
+      alert["action"] = "session-evicted";
+      String msg; serializeJson(alert, msg);
+      for (int i = 0; i < WS_MAX_CLIENTS; i++) {
+        if (wsClients[i].authenticated && wsClients[i].userLevel == "admin") {
+          webSocket.sendTXT(i, msg);
+        }
+      }
     }
   }
   // Periodic session cleanup (every 5 minutes)
