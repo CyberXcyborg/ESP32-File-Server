@@ -1324,7 +1324,11 @@ void handleDownload() {
   File f = SD.open(path, FILE_READ);
   if (!f) { webServer.send(500); return; }
   String name = path.substring(path.lastIndexOf('/')+1);
-  String ctype = getContentType(name);
+  // Use magic bytes to detect correct MIME type (handles wrong/missing extensions)
+  String ctype = detectFileTypeByContent(path);
+  if (ctype == "application/octet-stream") {
+    ctype = getContentType(name); // Fall back to extension-based detection
+  }
   // ETag based on file size + modification time for caching
   unsigned long fsize = f.size();
   unsigned long fmtime = f.fileTime();
@@ -2884,7 +2888,22 @@ void handleServiceWorker() {
   webServer.send(200, "application/javascript", sw);
 }
 
-// ============== BATCH OPERATIONS ==============
+// ============== BATCH OPERATIONS PROGRESS ==============
+// Sends incremental progress updates to WS clients for batch operations
+// Prevents clients from timing out waiting for large multi-file operations
+void broadcastBatchProgress(String op, int current, int total, String currentFile) {
+  DynamicJsonDocument doc(256);
+  doc["event"] = "batch-progress";
+  doc["op"] = op;
+  doc["current"] = current;
+  doc["total"] = total;
+  doc["pct"] = (total > 0) ? (current * 100 / total) : 0;
+  doc["file"] = currentFile;
+  String msg; serializeJson(doc, msg);
+  webSocket.broadcastTXT(msg);
+}
+
+// ============== BATCH DELETE ==============
 void handleBatchDelete() {
   String u, lvl;
   if (!isAuthenticated(webServer, u, lvl) || !checkCsrf(webServer)) { webServer.send(403); return; }
@@ -2894,10 +2913,15 @@ void handleBatchDelete() {
   deserializeJson(doc, webServer.arg("plain"));
   JsonArray paths = doc["paths"];
   int ok = 0, fail = 0;
+  int total = paths.size();
   // Sort paths by depth (deepest first) so we delete children before parents
   // Simple approach: just lock and delete in order
+  int idx = 0;
   for (const char* ps : paths) {
     String p = ps;
+    // Broadcast progress every 5 items to avoid flooding
+    if (idx % 5 == 0) broadcastBatchProgress("delete", idx, total, p);
+    idx++;
     if (!SD.exists(p)) { fail++; continue; }
     // Reject deletion of read-only files
     if (isFileReadOnly(p)) { fail++; continue; }
@@ -2911,6 +2935,7 @@ void handleBatchDelete() {
       fireWebhook("delete", p, u);
     } else fail++;
   }
+  broadcastBatchProgress("delete", total, total, "complete");
   String result = "{\"ok\":"+String(ok)+",\"fail\":"+String(fail)+"}";
   webServer.send(200, "application/json", result);
 }
@@ -4084,6 +4109,56 @@ void handleMarkdownPreview() {
 }
 
 // ============== FILE PREVIEW ==============
+// ============== FILE AUTO-DETECT BY MAGIC BYTES ==============
+// Detect file type by content signature (first bytes) instead of relying on extension
+// Returns MIME type string or "application/octet-stream" if unknown
+String detectFileTypeByContent(String path) {
+  File f = SD.open(path, FILE_READ);
+  if (!f) return "application/octet-stream";
+  uint8_t hdr[16];
+  if (f.read(hdr, 12) < 12) { f.close(); return "application/octet-stream"; }
+  f.close();
+  
+  // Magic byte signatures
+  if (hdr[0]==0x89 && hdr[1]==0x50 && hdr[2]==0x4E && hdr[3]==0x47) return "image/png";
+  if (hdr[0]==0xFF && hdr[1]==0xD8 && hdr[2]==0xFF) return "image/jpeg";
+  if (hdr[0]==0x47 && hdr[1]==0x49 && hdr[2]==0x46) return "image/gif";
+  if (hdr[0]==0x42 && hdr[1]==0x4D) return "image/bmp";
+  if (hdr[0]==0x50 && hdr[1]==0x4B && hdr[2]==0x03 && hdr[3]==0x04) {
+    // ZIP-based: could be docx/xlsx/pptx/odt — check for specific sub-signatures
+    // For simplicity, return application/zip; deeper inspection would require reading [Content_Types].xml
+    return "application/zip";
+  }
+  if (hdr[0]==0x25 && hdr[1]==0x50 && hdr[2]==0x44 && hdr[3]==0x46) return "application/pdf";
+  if (hdr[0]==0x1F && hdr[1]==0x8B) return "application/gzip";
+  if (hdr[0]==0x52 && hdr[1]==0x61 && hdr[2]==0x72 && hdr[3]==0x21) return "application/x-rar";
+  if (hdr[0]==0x49 && hdr[1]==0x44 && hdr[2]==0x33) return "audio/mpeg"; // ID3 tag
+  if (hdr[0]==0x66 && hdr[1]==0x74 && hdr[2]==0x79 && hdr[3]==0x70) return "video/mp4";
+  if (hdr[0]==0x4F && hdr[1]==0x67 && hdr[2]==0x67 && hdr[3]==0x53) return "audio/ogg";
+  if (hdr[0]==0x52 && hdr[1]==0x49 && hdr[2]==0x46 && hdr[3]==0x46) {
+    // RIFF container: could be WEBP or WAV
+    if (hdr[8]==0x57 && hdr[9]==0x45 && hdr[10]==0x42 && hdr[11]==0x50) return "image/webp";
+    if (hdr[8]==0x57 && hdr[9]==0x41 && hdr[10]==0x56 && hdr[11]==0x45) return "audio/wav";
+    return "application/octet-stream";
+  }
+  // Text detection: check if first 512 bytes are all printable ASCII or UTF-8
+  {
+    File tf = SD.open(path, FILE_READ);
+    if (tf) {
+      uint8_t buf[512];
+      int n = tf.read(buf, 512);
+      tf.close();
+      bool isText = true;
+      for (int i = 0; i < n; i++) {
+        if (buf[i] == 0) { isText = false; break; }
+        if (buf[i] < 0x09 || (buf[i] > 0x0D && buf[i] < 0x20)) { isText = false; break; }
+      }
+      if (isText && n > 0) return "text/plain";
+    }
+  }
+  return "application/octet-stream";
+}
+
 // ============== FILE TYPE DETECTION API ==============
 void handleDetectType() {
   String u, lvl;
