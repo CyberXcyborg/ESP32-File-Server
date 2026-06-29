@@ -41,6 +41,7 @@ struct WsClientInfo {
   uint32_t msgCount;  // Messages received from this client
   unsigned long rateWindowStart;  // Rate limiting window
   uint32_t rateMsgCount;          // Messages in current window
+  String watchPath;   // Path prefix filter — only events for paths starting with this prefix are sent (empty = all)
 };
 #define WS_RATE_WINDOW_MS 10000UL   // 10-second window
 #define WS_RATE_MAX_MSGS 50         // Max 50 messages per window
@@ -59,6 +60,7 @@ void initWsClient(uint8_t num, IPAddress remoteIp) {
   wsClients[num].msgCount = 0;
   wsClients[num].rateWindowStart = millis();
   wsClients[num].rateMsgCount = 0;
+  wsClients[num].watchPath = ""; // Empty = receive all events
 }
 
 // Check WebSocket rate limit for a client; returns true if within budget
@@ -246,13 +248,22 @@ void handleMetrics() {
 // ============== WE BROADCAST ==============
 void broadcastChange(String action, String path) {
   // Broadcast file change event to all connected WebSocket clients
+  // Respects per-client watchPath filter — only sends events for matching paths
   DynamicJsonDocument doc(256);
   doc["event"] = action; // "upload", "delete", "rename", "mkdir", "move"
   doc["path"] = path;
   doc["time"] = millis();
   String msg;
   serializeJson(doc, msg);
-  webSocket.broadcastTXT(msg);
+  for (int i = 0; i < WS_MAX_CLIENTS; i++) {
+    if (wsClients[i].authenticated) {
+      // Apply path filter: if watchPath is set, only send matching events
+      if (wsClients[i].watchPath.length() > 0 && !path.startsWith(wsClients[i].watchPath)) {
+        continue; // Skip — event path doesn't match client's watch filter
+      }
+      webSocket.sendTXT(i, msg);
+    }
+  }
 }
 
 // ============== LOG BROADCAST ==============
@@ -639,6 +650,15 @@ void onWebSocketEvent(uint8_t num, WStype_t type, uint8_t * payload, size_t leng
               }
               String msg; serializeJson(resp, msg);
               webSocket.sendTXT(num, msg);
+            }
+          } else if (cmd == "watch") {
+            // Subscribe to events for a specific path prefix
+            // Client sends {"cmd":"watch","path":"/docs/"} to only get events for /docs/*
+            // Send {"cmd":"watch","path":""} to clear filter and receive all events
+            if (num < WS_MAX_CLIENTS && wsClients[num].authenticated) {
+              String watchPath = doc["path"] | "";
+              wsClients[num].watchPath = watchPath;
+              webSocket.sendTXT(num, "{\"event\":\"watch-set\",\"path\":\"" + watchPath + "\"}");
             }
           }
         }
