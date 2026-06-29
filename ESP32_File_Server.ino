@@ -347,6 +347,63 @@ void endUploadProgress(String filename) {
   }
 }
 
+// ============== COLLABORATIVE EDITING NOTIFICATIONS ==============
+// Track which files are currently being edited by which users
+struct EditSession {
+  String path;
+  String username;
+  unsigned long startTime;
+  bool active;
+};
+#define MAX_EDIT_SESSIONS 8
+EditSession editSessions[MAX_EDIT_SESSIONS];
+
+void broadcastEditStart(String path, String username) {
+  // Mark edit session
+  for (int i = 0; i < MAX_EDIT_SESSIONS; i++) {
+    if (!editSessions[i].active) {
+      editSessions[i].path = path;
+      editSessions[i].username = username;
+      editSessions[i].startTime = millis();
+      editSessions[i].active = true;
+      break;
+    }
+  }
+  // Notify all other clients
+  DynamicJsonDocument doc(256);
+  doc["event"] = "edit-start";
+  doc["path"] = path;
+  doc["user"] = username;
+  doc["time"] = millis();
+  String msg; serializeJson(doc, msg);
+  for (int i = 0; i < WS_MAX_CLIENTS; i++) {
+    if (wsClients[i].authenticated && wsClients[i].username != username) {
+      webSocket.sendTXT(i, msg);
+    }
+  }
+}
+
+void broadcastEditEnd(String path, String username) {
+  // Remove edit session
+  for (int i = 0; i < MAX_EDIT_SESSIONS; i++) {
+    if (editSessions[i].active && editSessions[i].path == path && editSessions[i].username == username) {
+      editSessions[i].active = false;
+      break;
+    }
+  }
+  // Notify all other clients
+  DynamicJsonDocument doc(256);
+  doc["event"] = "edit-end";
+  doc["path"] = path;
+  doc["user"] = username;
+  String msg; serializeJson(doc, msg);
+  for (int i = 0; i < WS_MAX_CLIENTS; i++) {
+    if (wsClients[i].authenticated && wsClients[i].username != username) {
+      webSocket.sendTXT(i, msg);
+    }
+  }
+}
+
 // ============== BROADCAST STATS UPDATE ==============
 // Pushes live system health to all WebSocket clients (heap, RSSI, active sessions)
 unsigned long lastLiveStatsBroadcast = 0;
@@ -538,6 +595,7 @@ void onWebSocketEvent(uint8_t num, WStype_t type, uint8_t * payload, size_t leng
                     storeFileCRC(wPath);
                     logActivity("ws-write", wPath + " (" + String(written) + "B)", wsClients[num].username);
                     broadcastChange("edit", wPath);
+                    broadcastEditEnd(wPath, wsClients[num].username);
                     webSocket.sendTXT(num, "{\"event\":\"write-ok\",\"path\":\"" + wPath + "\",\"bytes\":" + String(written) + "}");
                   } else {
                     releaseFileLock(wPath);
@@ -549,6 +607,37 @@ void onWebSocketEvent(uint8_t num, WStype_t type, uint8_t * payload, size_t leng
               } else {
                 webSocket.sendTXT(num, "{\"error\":\"invalid-params\"}");
               }
+            }
+          } else if (cmd == "edit-start") {
+            // Notify others that this user is editing a file
+            if (num < WS_MAX_CLIENTS && wsClients[num].authenticated) {
+              String ePath = doc["path"] | "";
+              ePath = sanitizePath(ePath);
+              broadcastEditStart(ePath, wsClients[num].username);
+            }
+          } else if (cmd == "edit-end") {
+            // Notify others that this user stopped editing
+            if (num < WS_MAX_CLIENTS && wsClients[num].authenticated) {
+              String ePath = doc["path"] | "";
+              ePath = sanitizePath(ePath);
+              broadcastEditEnd(ePath, wsClients[num].username);
+            }
+          } else if (cmd == "who-editing") {
+            // Return list of files currently being edited and by whom
+            if (num < WS_MAX_CLIENTS && wsClients[num].authenticated) {
+              DynamicJsonDocument resp(1024);
+              resp["event"] = "editing-now";
+              JsonArray arr = resp.createNestedArray("sessions");
+              for (int i = 0; i < MAX_EDIT_SESSIONS; i++) {
+                if (editSessions[i].active) {
+                  JsonObject s = arr.createNestedObject();
+                  s["path"] = editSessions[i].path;
+                  s["user"] = editSessions[i].username;
+                  s["since"] = (millis() - editSessions[i].startTime) / 1000;
+                }
+              }
+              String msg; serializeJson(resp, msg);
+              webSocket.sendTXT(num, msg);
             }
           }
         }
@@ -3930,6 +4019,7 @@ void handleFileEdit() {
   if (written == content.length()) {
     logActivity("edit", path + " (" + String(written) + "B)", u);
     broadcastChange("edit", path);
+    broadcastEditEnd(path, u); // Notify collaborative editing clients
     broadcastStatsUpdate();
     trackWriteActivity(path); // Track wear leveling
     // Recompute CRC sidecar after edit
@@ -5643,6 +5733,13 @@ void loop() {
       if (sessions[i].isActive && (now - sessions[i].lastActivity > SESSION_TIMEOUT)) {
         sessions[i].isActive = false;
         Serial.println("Session expired: " + sessions[i].username);
+      }
+    }
+    // Clean up stale edit sessions (older than 30 minutes with no activity)
+    for (int i = 0; i < MAX_EDIT_SESSIONS; i++) {
+      if (editSessions[i].active && (now - editSessions[i].startTime > 1800000UL)) {
+        editSessions[i].active = false;
+        Serial.println("Edit session expired: " + editSessions[i].path);
       }
     }
   }
