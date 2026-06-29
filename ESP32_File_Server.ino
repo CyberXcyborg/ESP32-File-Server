@@ -122,6 +122,7 @@ bool checkRateLimit(IPAddress ip) {
 
 bool wifiConnected = false;
 bool accessPointMode = false;
+bool ntpSynced = false; // NTP time sync status
 String server_ip = "";
 unsigned long lastWiFiCheck = 0;
 bool sdOK = true;
@@ -446,6 +447,20 @@ bool connectToWiFi() {
       Serial.println("\nIP: " + WiFi.localIP().toString());
       server_ip = WiFi.localIP().toString();
       wifiConnected = true; accessPointMode = false;
+      // Sync time via NTP for accurate file timestamps
+      configTime(0, 0, "pool.ntp.org", "time.nist.gov");
+      Serial.print("NTP sync");
+      for (int i = 0; i < 10 && time(nullptr) < 1000000000UL; i++) {
+        delay(500); Serial.print(".");
+      }
+      time_t now = time(nullptr);
+      if (now > 1000000000UL) {
+        Serial.println(" OK (" + String(ctime(&now)) + ")");
+        ntpSynced = true;
+      } else {
+        Serial.println(" FAILED (timestamps will be relative)");
+        ntpSynced = false;
+      }
       if (MDNS.begin("esp32files")) { MDNS.addService("http", "tcp", webServerPort); }
       return true;
     }
@@ -3725,7 +3740,8 @@ void handleServerTime() {
   doc["epoch"] = (unsigned long)now;
   doc["millis"] = millis();
   doc["timezone"] = "UTC";
-  if (now > 0) {
+  doc["ntp_synced"] = ntpSynced;
+  if (now > 1000000000UL) {
     struct tm *tm = gmtime(&now);
     char buf[32];
     strftime(buf, sizeof(buf), "%Y-%m-%dT%H:%M:%SZ", tm);

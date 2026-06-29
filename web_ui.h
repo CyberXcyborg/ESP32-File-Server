@@ -294,6 +294,7 @@ kbd{font-family:monospace;font-size:12px}
       <div class="info-row"><span class="info-label">Mode</span><span id="sysMode"></span></div>
       <div class="info-row"><span class="info-label">Uptime</span><span id="sysUptime"></span></div>
       <div class="info-row"><span class="info-label">Free Memory</span><span id="sysHeap"></span></div>
+      <div class="info-row"><span class="info-label">Time Sync</span><span id="sysNtp">--</span></div>
     </div>
     <div class="settings-section">
       <h3>📦 Storage Quotas</h3>
@@ -1453,6 +1454,16 @@ function loadSettings(){
       document.getElementById('sysMode').textContent=data.mode||'';
       document.getElementById('sysUptime').textContent=formatUptime(data.uptime||0);
       document.getElementById('sysHeap').textContent=formatSize(data.free_heap||0);
+      // Fetch NTP sync status
+      fetch('/api/time',{headers:{'Authorization':'Bearer '+token}})
+        .then(r=>r.json()).then(t=>{
+          const el=document.getElementById('sysNtp');
+          if(el){
+            if(t.ntp_synced){el.textContent='✅ Synced';el.style.color='#00b894';}
+            else if(t.epoch>1000000){el.textContent='⏳ Syncing...';el.style.color='#fdcb6e';}
+            else {el.textContent='❌ Not synced';el.style.color='#d63031';}
+          }
+        }).catch(()=>{const el=document.getElementById('sysNtp');if(el)el.textContent='Unknown';});
     });
   // Load quota list
   fetch('/api/quota',{headers:{'Authorization':'Bearer '+token}})
