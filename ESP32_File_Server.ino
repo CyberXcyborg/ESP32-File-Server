@@ -724,6 +724,28 @@ void onWebSocketEvent(uint8_t num, WStype_t type, uint8_t * payload, size_t leng
                 webSocket.sendTXT(num, "{\"error\":\"invalid-params\"}");
               }
             }
+          } else if (cmd == "sync") {
+            // Quick sync: client sends last known state, server responds if changed
+            // Client sends {"cmd":"sync","path":"/","sd_used":12345,"fc":10}
+            // Server responds {"event":"sync-ok","changed":true/false,...}
+            // This avoids expensive full list polling — just check if anything changed
+            if (num < WS_MAX_CLIENTS && wsClients[num].authenticated) {
+              String syncPath = doc["path"] | "/";
+              uint32_t clientUsed = doc["sd_used"] | 0;
+              int clientFc = doc["fc"] | 0;
+              uint32_t serverUsed = (uint32_t)SD.usedBytes();
+              int serverFc = countFiles(syncPath);
+              bool changed = (clientUsed != serverUsed) || (clientFc != serverFc);
+              DynamicJsonDocument resp(512);
+              resp["event"] = "sync-ok";
+              resp["changed"] = changed;
+              resp["sd_used"] = serverUsed;
+              resp["sd_free"] = (uint32_t)(SD.totalBytes() - SD.usedBytes());
+              resp["fc"] = serverFc;
+              resp["dc"] = countDirs(syncPath);
+              String msg; serializeJson(resp, msg);
+              webSocket.sendTXT(num, msg);
+            }
           } else if (cmd == "watch") {
             // Subscribe to events for a specific path prefix
             // Client sends {"cmd":"watch","path":"/docs/"} to only get events for /docs/*
