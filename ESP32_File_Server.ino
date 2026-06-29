@@ -810,12 +810,15 @@ void checkSD() {
             if (storedCrc.length() > 0 && computedCrc.length() > 0 && storedCrc != computedCrc) {
               crcSpotCheckErrors++;
               Serial.println("CRC SPOT-CHECK MISMATCH: " + checkPath + " stored=" + storedCrc + " current=" + computedCrc);
+              // Attempt auto-repair from version backup
+              bool repaired = autoRepairFile(checkPath);
               // Broadcast corruption alert via WebSocket
               DynamicJsonDocument alert(256);
-              alert["event"] = "crc-mismatch";
+              alert["event"] = repaired ? "crc-repaired" : "crc-mismatch";
               alert["path"] = checkPath;
               alert["stored_crc"] = storedCrc;
               alert["current_crc"] = computedCrc;
+              alert["repaired"] = repaired;
               alert["spot_errors"] = crcSpotCheckErrors;
               String msg;
               serializeJson(alert, msg);
@@ -2675,6 +2678,66 @@ void handleUpdateUser() {
   f=SD.open(USERS_FILE,FILE_WRITE);if(!f){webServer.send(500);return;}
   serializeJson(ex,f);f.close();webServer.send(200,"text/plain","OK");
 }
+// ============== CHANGE OWN PASSWORD ==============
+// Any authenticated user can change their own password
+// POST /api/change-password with args: currentPassword, newPassword, csrf
+void handleChangePassword() {
+  String u, lvl;
+  if (!isAuthenticated(webServer, u, lvl)) { webServer.send(401); return; }
+  if (!checkCsrf(webServer)) { webServer.send(403); return; }
+  if (!webServer.hasArg("currentPassword") || !webServer.hasArg("newPassword")) {
+    sendError(400, "Missing currentPassword or newPassword"); return;
+  }
+  String curPass = webServer.arg("currentPassword");
+  String newPass = webServer.arg("newPassword");
+  // Validate new password strength
+  if (newPass.length() < 6) { sendError(400, "New password too short (min 6)"); return; }
+  bool hasLetter = false, hasDigit = false;
+  for (unsigned int i = 0; i < newPass.length(); i++) {
+    if (isalpha(newPass[i])) hasLetter = true;
+    if (isdigit(newPass[i])) hasDigit = true;
+  }
+  if (!hasLetter || !hasDigit) { sendError(400, "Password must contain letters and digits"); return; }
+  // Verify current password against stored hash
+  if (!SD.exists(USERS_FILE)) { sendError(500, "Users file missing"); return; }
+  File f = SD.open(USERS_FILE, FILE_READ);
+  if (!f) { sendError(500, "Cannot open users file"); return; }
+  String content;
+  while (f.available()) content += (char)f.read();
+  f.close();
+  DynamicJsonDocument doc(2048);
+  if (deserializeJson(doc, content)) { sendError(500, "Corrupt users file"); return; }
+  JsonArray users = doc["users"];
+  if (users.isNull()) { sendError(500, "Invalid users file"); return; }
+  bool found = false;
+  for (JsonObject user : users) {
+    if (String(user["username"]|"").equals(u)) {
+      String stored = String(user["password"]|"");
+      // Verify current password (support both hashed and legacy plaintext)
+      bool match = false;
+      if (isHashedPassword(stored)) {
+        match = hashPasswordForStorage(u, curPass).equals(stored);
+      } else {
+        match = stored.equals(curPass);
+      }
+      if (!match) { sendError(403, "Current password incorrect"); return; }
+      // Hash and set new password
+      user["password"] = hashPasswordForStorage(u, newPass);
+      found = true;
+      break;
+    }
+  }
+  if (!found) { sendError(403, "User not found"); return; }
+  // Persist updated users file
+  backupConfigFile(USERS_FILE);
+  File wf = SD.open(USERS_FILE, FILE_WRITE);
+  if (!wf) { sendError(500, "Cannot write users file"); return; }
+  serializeJson(doc, wf);
+  wf.close();
+  logActivity("password-change", u, u);
+  webServer.send(200, "application/json", "{\"ok\":true}");
+}
+
 void handleDeleteUser() {
   String u,lvl;
   if(!isAuthenticated(webServer,u,lvl)||lvl!="admin"||!checkCsrf(webServer)){webServer.send(403);return;}
@@ -4119,6 +4182,83 @@ void handleFileEdit() {
   }
 }
 
+// ============== FILE INTEGRITY AUTO-REPAIR ==============
+// Attempts to restore a corrupted file from its latest version backup
+// Called automatically when CRC mismatch is detected during health checks
+bool autoRepairFile(String path) {
+  if (!SD.exists(VERSIONS_FOLDER)) return false;
+  // Find the latest version of this file
+  String verDir = VERSIONS_FOLDER + path;
+  int slash = verDir.lastIndexOf('/');
+  String verParent = (slash > 0) ? verDir.substring(0, slash) : "/versions";
+  String verName = verDir.substring(slash + 1);
+  int dot = verName.lastIndexOf('.');
+  String verBase = (dot > 0) ? verName.substring(0, dot) : verName;
+  String verExt = (dot > 0) ? verName.substring(dot) : "";
+  // Scan versions directory for matching version files
+  File dir = SD.open(verParent);
+  if (!dir || !dir.isDirectory()) return false;
+  String latestVer = "";
+  unsigned long latestTime = 0;
+  File f;
+  while (f = dir.openNextFile()) {
+    String fn = String(f.name());
+    int li = fn.lastIndexOf('/');
+    String name = (li >= 0) ? fn.substring(li + 1) : fn;
+    // Check if this is a version of our file: base_<timestamp>.ext
+    if (name.startsWith(verBase + "_") && name.endsWith(verExt)) {
+      // Extract timestamp from filename
+      String tsStr = name.substring(verBase.length() + 1, name.length() - verExt.length());
+      unsigned long ts = tsStr.toInt();
+      if (ts > latestTime) {
+        latestTime = ts;
+        latestVer = fn;
+      }
+    }
+    f.close();
+  }
+  dir.close();
+  if (latestVer.length() == 0) return false;
+  // Verify the version file's own CRC before restoring
+  String verCrcPath = latestVer + ".crc32";
+  if (SD.exists(verCrcPath)) {
+    String storedVerCrc = "";
+    File cf = SD.open(verCrcPath, FILE_READ);
+    if (cf) { storedVerCrc = cf.readString().trim(); cf.close(); }
+    if (storedVerCrc.length() > 0) {
+      String computedVerCrc = getFileCRC32(latestVer);
+      if (storedVerCrc != computedVerCrc) {
+        Serial.println("Auto-repair: version file also corrupted, skipping");
+        return false;
+      }
+    }
+  }
+  // Restore: copy version over corrupted file
+  if (!acquireFileLock(path, 5000)) return false;
+  // Backup corrupted file to trash before overwriting
+  if (!SD.exists(TRASH_FOLDER)) createDirRecursive(TRASH_FOLDER);
+  String corruptBackup = TRASH_FOLDER + path + ".corrupt_" + String(millis());
+  int sl = corruptBackup.lastIndexOf('/');
+  if (sl > 0) createDirRecursive(corruptBackup.substring(0, sl));
+  copyFile(path, corruptBackup);
+  // Copy version over original
+  bool ok = copyFile(latestVer, path);
+  releaseFileLock(path);
+  if (ok) {
+    storeFileCRC(path);
+    Serial.println("Auto-repair: restored " + path + " from " + latestVer);
+    logActivity("auto-repair", path + " from " + latestVer, "system");
+    // Notify via WebSocket
+    DynamicJsonDocument alert(256);
+    alert["event"] = "file-repaired";
+    alert["path"] = path;
+    alert["source"] = latestVer;
+    String msg; serializeJson(alert, msg);
+    webSocket.broadcastTXT(msg);
+  }
+  return ok;
+}
+
 // ============== SERVER TIME ENDPOINT ==============
 // Returns current device time for client clock synchronization
 // Helps browser display correct timestamps when device NTP sync is unavailable
@@ -5412,6 +5552,23 @@ void autoExpireTrash() {
 
 // ============== PERIODIC SD HEALTH BROADCAST ==============
 unsigned long lastHealthBroadcast = 0;
+// ============== AUTO DAILY CONFIG BACKUP ==============
+// Backs up all config files once per 24h to prevent data loss from accidental deletion
+unsigned long lastAutoBackup = 0;
+#define AUTO_BACKUP_INTERVAL (86400000UL) // 24 hours
+
+void autoDailyBackup() {
+  if (millis() - lastAutoBackup < AUTO_BACKUP_INTERVAL) return;
+  lastAutoBackup = millis();
+  if (!sdOK) return;
+  Serial.println("Auto daily backup: backing up config files");
+  backupConfigFile(USERS_FILE);
+  backupConfigFile(SETTINGS_FILE);
+  if (SD.exists(SHARES_FILE)) backupConfigFile(SHARES_FILE);
+  if (SD.exists(WEBHOOK_FILE)) backupConfigFile(WEBHOOK_FILE);
+  logActivity("auto-backup", "daily config backup", "system");
+}
+
 void broadcastSdHealth() {
   if (millis() - lastHealthBroadcast < 30000UL) return; // Every 30s max
   lastHealthBroadcast = millis();
@@ -5668,6 +5825,23 @@ void setup() {
   webServer.on("/api/users",HTTP_POST,handleAddUser);
   webServer.on("/api/users/",HTTP_PUT,handleUpdateUser);
   webServer.on("/api/users/",HTTP_DELETE,handleDeleteUser);
+  webServer.on("/api/change-password",HTTP_POST,handleChangePassword);
+
+  // Manual file repair: POST /api/repair?path=...&csrf=...
+  webServer.on("/api/repair",HTTP_POST,[](){
+    String u, lvl;
+    if (!isAuthenticated(webServer, u, lvl) || lvl != "admin" || !checkCsrf(webServer)) { webServer.send(403); return; }
+    if (!webServer.hasArg("path")) { sendError(400, "Missing path"); return; }
+    String path = sanitizePath(webServer.arg("path"));
+    if (!SD.exists(path)) { sendError(404, "File not found"); return; }
+    bool ok = autoRepairFile(path);
+    if (ok) {
+      logActivity("manual-repair", path, u);
+      webServer.send(200, "application/json", "{\"ok\":true,\"msg\":\"File repaired from version backup\"}");
+    } else {
+      sendError(500, "Repair failed — no valid version backup found");
+    }
+  });
 
   // Factory reset: wipe all config files and reboot to defaults
   webServer.on("/api/factory-reset",HTTP_POST,[](){
@@ -5863,6 +6037,7 @@ void loop() {
   broadcastSdHealth(); // Push SD health to WebSocket clients every 30s
   autoExpireTrash();   // Auto-purge old trash items every hour
   autoTrashSizeLimit(); // Auto-purge trash when size exceeds TRASH_MAX_MB
+  autoDailyBackup();   // Auto-backup config files every 24h
   // Periodic live stats broadcast to all WS clients (5s interval)
   if (wsClientCount > 0 && millis() - lastLiveStatsBroadcast > LIVE_STATS_INTERVAL) {
     broadcastStatsUpdate();
