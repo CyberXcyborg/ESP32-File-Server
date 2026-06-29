@@ -16,6 +16,8 @@
 #include <ArduinoJson.h>
 #include <Update.h>
 #include <time.h>
+#include <esp_ota_ops.h>
+#include <esp_partition.h>
 
 #include "config.h"
 #include "auth.h"
@@ -1961,6 +1963,41 @@ void handleOtaStatus() {
   doc["chip"] = ESP.getChipModel();
   String out; serializeJson(doc, out);
   webServer.send(200, "application/json", out);
+}
+
+// ============== OTA ROLLBACK ==============
+// Allows reverting to the previous firmware partition after a bad update
+// ESP32 OTA with dual partitions: mark current as invalid, boot previous
+void handleOtaRollback() {
+  String u, lvl;
+  if (!isAuthenticated(webServer, u, lvl) || lvl != "admin" || !checkCsrf(webServer)) { webServer.send(403); return; }
+  const esp_partition_t *running = esp_ota_get_running_partition();
+  const esp_partition_t *next = esp_ota_get_next_update_partition(running);
+  if (!running || !next) { sendError(500, "Cannot determine OTA partitions"); return; }
+  // The previous firmware is the partition that is NOT running and NOT the next update target
+  // Mark current firmware as invalid (ESP_OTA_IMG_INVALID) so bootloader boots previous
+  esp_err_t err = esp_ota_mark_app_invalid_rollback_and_reboot();
+  if (err != ESP_OK) {
+    // Fallback: just revert to previous partition
+    const esp_partition_t *prev = (next->address > running->address) ?
+      esp_partition_find_first(ESP_PARTITION_TYPE_APP, ESP_PARTITION_SUBTYPE_APP_OTA_0, NULL) :
+      esp_partition_find_first(ESP_PARTITION_TYPE_APP, ESP_PARTITION_SUBTYPE_APP_OTA_1, NULL);
+    if (prev && prev != running) {
+      err = esp_ota_set_boot_partition(prev);
+      if (err == ESP_OK) {
+        logActivity("ota-rollback", "reverted to partition 0x" + String(prev->address, HEX), u);
+        webServer.send(200, "application/json", "{\"ok\":true,\"rebooting\":true}");
+        delay(500);
+        ESP.restart();
+      }
+    }
+    sendError(500, "Rollback failed: " + String(esp_err_to_name(err)));
+    return;
+  }
+  logActivity("ota-rollback", "marked invalid, rebooting to previous firmware", u);
+  webServer.send(200, "application/json", "{\"ok\":true,\"rebooting\":true}");
+  delay(500);
+  ESP.restart();
 }
 
 // ============== CSRF TOKEN ENDPOINT ==============
@@ -4994,6 +5031,7 @@ void setup() {
   webServer.on("/api/csrf",HTTP_GET,handleCsrfToken);
   webServer.on("/api/ota-status",HTTP_GET,handleOtaStatus);
   webServer.on("/api/ota-upload",HTTP_POST,[](){if(!checkCsrf(webServer)){webServer.send(403,"text/plain","CSRF invalid");return;}webServer.send(200);},handleOtaUpload);
+  webServer.on("/api/ota-rollback",HTTP_POST,handleOtaRollback);
   webServer.on("/api/reboot",HTTP_POST,handleReboot);
   webServer.on("/api/export-log",HTTP_GET,handleExportLog);
   webServer.on("/api/stats",HTTP_GET,handleStats);

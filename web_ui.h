@@ -310,6 +310,17 @@ kbd{font-family:monospace;font-size:12px}
         <div class="form-group"><label>Web Server Port</label><input type="number" id="setWebPort" min="80" max="65535" value="80"></div>
       </div>
     </div>
+    <div class="settings-section">
+      <h3>🔄 Firmware Update</h3>
+      <p style="font-size:13px;color:var(--text2);margin-bottom:8px">Upload a new .bin firmware file or rollback to the previous version.</p>
+      <input type="file" id="otaFile" accept=".bin" style="margin-bottom:8px;font-size:13px">
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <button class="btn btn-sm" onclick="uploadFirmware()">⬆️ Upload & Install</button>
+        <button class="btn btn-sm btn-ghost" onclick="checkFirmwareStatus()">📋 Check Status</button>
+        <button class="btn btn-sm btn-danger" onclick="rollbackFirmware()">⏪ Rollback to Previous</button>
+      </div>
+      <div id="otaProgress" style="margin-top:8px;font-size:13px;color:var(--text2)"></div>
+    </div>
     <div style="margin-top:12px">
       <button class="btn" onclick="saveSettings()">💾 Save Settings</button>
       <button class="btn btn-ghost" onclick="loadSettings()">🔄 Refresh</button>
@@ -1507,6 +1518,33 @@ function saveSettings(){
       else showToast(data.msg||'Settings saved','success');
     })
     .catch(()=>showToast('Failed to save','error'));
+}
+// Firmware OTA functions
+function uploadFirmware(){
+  const file=document.getElementById('otaFile').files[0];
+  if(!file)return showToast('Select a .bin file first','error');
+  if(!file.name.endsWith('.bin'))return showToast('Only .bin firmware files allowed','error');
+  if(!confirm('Install new firmware: '+file.name+'? Device will reboot.'))return;
+  const fd=new FormData(); fd.append('file',file);
+  document.getElementById('otaProgress').textContent='Uploading...';
+  fetch('/api/ota-upload',{method:'POST',headers:{'Authorization':'Bearer '+token,'X-CSRF-Token':csrfToken},body:fd})
+    .then(r=>{if(r.ok){showToast('Firmware uploaded, rebooting...','success');document.getElementById('otaProgress').textContent='Rebooting...';}else{r.text().then(t=>{document.getElementById('otaProgress').textContent='Error: '+t;showToast('Upload failed','error');});}})
+    .catch(()=>{document.getElementById('otaProgress').textContent='Upload failed';showToast('Upload failed','error');});
+}
+function checkFirmwareStatus(){
+  fetch('/api/ota-status',{headers:{'Authorization':'Bearer '+token}})
+    .then(r=>r.json()).then(d=>{
+      const el=document.getElementById('otaProgress');
+      el.innerHTML='<div>Version: '+d.version+'</div><div>Sketch: '+(d.sketch_size/1024).toFixed(0)+'KB / '+(d.free_space/1024).toFixed(0)+'KB free</div><div>Chip: '+d.chip+'</div><div>Heap: '+(d.heap/1024).toFixed(1)+'KB</div>';
+    }).catch(()=>showToast('Failed to check status','error'));
+}
+function rollbackFirmware(){
+  if(!confirm('Rollback to previous firmware? Device will reboot.'))return;
+  fetch('/api/ota-rollback',{method:'POST',headers:{'Authorization':'Bearer '+token,'X-CSRF-Token':csrfToken}})
+    .then(r=>r.json()).then(d=>{
+      if(d.ok){showToast('Rolling back, rebooting...','success');}
+      else showToast('Rollback failed: '+(d.error||'unknown'),'error');
+    }).catch(()=>showToast('Rollback failed','error'));
 }
 
 // ============== ACTIVITY LOG ==============
