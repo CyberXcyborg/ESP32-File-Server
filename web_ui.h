@@ -150,9 +150,11 @@ kbd{font-family:monospace;font-size:12px}
 </div>
 <div class="container">
   <header>
-    <h1>📁 ESP32 File Server <small style="font-size:11px;color:var(--text2)">v6.20</small></h1>
+    <h1>📁 ESP32 File Server <small style="font-size:11px;color:var(--text2)" id="headerVersion">v6.32</small></h1>
     <div class="header-right">
       <span id="userDisplay"></span>
+      <span id="wsStatus" style="font-size:11px;padding:2px 6px;border-radius:4px;background:var(--bg);color:var(--text2)" title="WebSocket connection">●</span>
+      <span id="rssiBadge" style="font-size:11px;padding:2px 6px;border-radius:4px;background:var(--bg);color:var(--text2)" title="WiFi signal">📶 --</span>
       <div class="search-box">🔍<input type="text" id="searchInput" placeholder="Search..." oninput="filterFiles()"></div>
       <button class="btn btn-ghost btn-sm" id="themeBtn" onclick="showThemeMenu()" title="Change theme">🎨</button>
       <button class="btn btn-ghost btn-sm" id="darkToggle" onclick="toggleDark()">🌙</button>
@@ -651,13 +653,13 @@ function initWebSocket(){
   const proto=location.protocol==='https:'?'wss':'ws';
   const ws=new WebSocket(proto+'://'+location.hostname+':81/');
   ws.onopen=()=>{wsReconnectDelay=1000;console.log('WS connected, sending auth');ws.send(JSON.stringify({cmd:'auth',token:token}));};
-  ws.onclose=()=>{wsConnected=false;console.log('WS closed, reconnect in '+wsReconnectDelay+'ms');setTimeout(initWebSocket,wsReconnectDelay);wsReconnectDelay=Math.min(wsReconnectDelay*2,30000);};
+  ws.onclose=()=>{wsConnected=false;document.getElementById('wsStatus').style.color='#d63031';console.log('WS closed, reconnect in '+wsReconnectDelay+'ms');setTimeout(initWebSocket,wsReconnectDelay);wsReconnectDelay=Math.min(wsReconnectDelay*2,30000);};
   ws.onerror=()=>{ws.close();};
   ws.onmessage=(e)=>{
     try{
       const d=JSON.parse(e.data);
       if(d.event==='auth-required'){ws.send(JSON.stringify({cmd:'auth',token:token}));return;}
-      if(d.event==='auth-ok'){wsConnected=true;console.log('WS auth OK as '+d.user);return;}
+      if(d.event==='auth-ok'){wsConnected=true;document.getElementById('wsStatus').style.color='#00b894';console.log('WS auth OK as '+d.user);return;}
       if(d.event==='auth-failed'){console.log('WS auth failed');ws.close();return;}
       if(d.event&&d.event!=='pong'&&d.event!=='connected'){
         // Update storage bar on stats updates
@@ -666,7 +668,21 @@ function initWebSocket(){
           const bar=document.getElementById('storageBar');
           if(bar){bar.style.width=pct+'%';bar.className='storage-bar-fill '+getStorageColor(pct);}
           const lbl=document.getElementById('storageLabel');
-          if(lbl)lbl.textContent=d.sd_free+' KB free';
+          if(lbl)lbl.textContent=Math.round(d.sd_free/1024)+' MB free';
+          // Update live RSSI badge
+          if(d.rssi!==undefined){
+            const rssi=d.rssi; let color='#d63031';
+            if(rssi>-50)color='#00b894';
+            else if(rssi>-65)color='#00b894';
+            else if(rssi>-75)color='#fdcb6e';
+            const badge=document.getElementById('rssiBadge');
+            if(badge){badge.style.color=color;badge.textContent='📶 '+rssi+'dBm';}
+          }
+          // Update WS status with client count
+          if(d.ws_clients!==undefined){
+            const ws=document.getElementById('wsStatus');
+            if(ws)ws.title=d.ws_clients+' client'+(d.ws_clients!==1?'s':'')+' connected';
+          }
         }
         // Update SD health panel
         if(d.event==='sd-health'&&d.ok!==undefined){

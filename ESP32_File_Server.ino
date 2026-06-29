@@ -345,17 +345,27 @@ void endUploadProgress(String filename) {
 }
 
 // ============== BROADCAST STATS UPDATE ==============
+// Pushes live system health to all WebSocket clients (heap, RSSI, active sessions)
+unsigned long lastLiveStatsBroadcast = 0;
+#define LIVE_STATS_INTERVAL 5000UL // Push live stats every 5 seconds
 void broadcastStatsUpdate() {
-  DynamicJsonDocument doc(256);
+  DynamicJsonDocument doc(512);
   doc["event"] = "stats-update";
   doc["sd_free"] = (uint32_t)((SD.totalBytes() - SD.usedBytes()) / 1024);
   doc["sd_used"] = (uint32_t)(SD.usedBytes() / 1024);
   doc["sd_total"] = (uint32_t)(SD.totalBytes() / 1024);
   doc["write_ops"] = totalWriteOps;
   doc["write_mb"] = (uint32_t)(totalWriteBytes / 1048576UL);
+  doc["heap"] = ESP.getFreeHeap();
+  doc["rssi"] = WiFi.RSSI();
+  int activeSess = 0;
+  for (int i = 0; i < MAX_SESSIONS; i++) if (sessions[i].isActive) activeSess++;
+  doc["active_sessions"] = activeSess;
+  doc["ws_clients"] = wsClientCount;
   String msg;
   serializeJson(doc, msg);
   webSocket.broadcastTXT(msg);
+  lastLiveStatsBroadcast = millis();
 }
 
 void onWebSocketEvent(uint8_t num, WStype_t type, uint8_t * payload, size_t length) {
@@ -5206,6 +5216,10 @@ void loop() {
   broadcastSdHealth(); // Push SD health to WebSocket clients every 30s
   autoExpireTrash();   // Auto-purge old trash items every hour
   autoTrashSizeLimit(); // Auto-purge trash when size exceeds TRASH_MAX_MB
+  // Periodic live stats broadcast to all WS clients (5s interval)
+  if (wsClientCount > 0 && millis() - lastLiveStatsBroadcast > LIVE_STATS_INTERVAL) {
+    broadcastStatsUpdate();
+  }
   // ============== OOM PROTECTION ==============
   // If free heap drops below 8KB, reject new connections and log warning
   // ESP32 has ~320KB; below 8KB means critical memory pressure
