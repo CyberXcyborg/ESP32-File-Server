@@ -4896,7 +4896,24 @@ void setup() {
         SD.remove("/.selftest");
         selfTestOk = (crc.length() > 0);
       }
-      if (selfTestOk) Serial.println("SD self-test: PASS");
+      if (selfTestOk) {
+        Serial.println("SD self-test: PASS");
+        // Quick sequential write speed test (fake SD card detection)
+        unsigned long wt = millis();
+        File wf = SD.open("/.speedtest", FILE_WRITE);
+        if (wf) {
+          uint8_t buf[512];
+          memset(buf, 0xAA, 512);
+          for (int i = 0; i < 20; i++) wf.write(buf, 512); // 10KB
+          wf.close();
+          unsigned long elapsed = millis() - wt;
+          SD.remove("/.speedtest");
+          Serial.println("SD write speed: " + String(10000UL / max((unsigned long)1, elapsed)) + " B/s (" + String(elapsed) + "ms for 10KB)");
+          if (elapsed > 5000) {
+            Serial.println("WARNING: SD write speed very slow — possible counterfeit card");
+          }
+        }
+      }
       else {
         Serial.println("SD self-test: FAIL (write/read/CRC broken)");
         sdOK = false;
