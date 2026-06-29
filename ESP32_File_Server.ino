@@ -435,6 +435,38 @@ void broadcastEditEnd(String path, String username) {
   }
 }
 
+// ============== EXTERNAL CHANGE DETECTOR ==============
+// Detects file changes made outside the web UI (e.g., via FTP) and broadcasts them
+unsigned long lastExternalScan = 0;
+uint32_t lastExternalUsed = 0;
+int lastExternalCount = 0;
+#define EXTERNAL_SCAN_INTERVAL 15000UL // Scan every 15 seconds
+void detectExternalChanges() {
+  if (millis() - lastExternalScan < EXTERNAL_SCAN_INTERVAL) return;
+  lastExternalScan = millis();
+  if (!sdOK) return;
+  uint32_t currentUsed = (uint32_t)SD.usedBytes();
+  int currentCount = countFiles("/");
+  if (lastExternalUsed == 0) {
+    // First scan, just record baseline
+    lastExternalUsed = currentUsed;
+    lastExternalCount = currentCount;
+    return;
+  }
+  if (currentUsed != lastExternalUsed || currentCount != lastExternalCount) {
+    // Change detected — broadcast to all WS clients so they can refresh
+    DynamicJsonDocument doc(256);
+    doc["event"] = "external-change";
+    doc["sd_used"] = currentUsed;
+    doc["file_count"] = currentCount;
+    doc["time"] = millis();
+    String msg; serializeJson(doc, msg);
+    webSocket.broadcastTXT(msg);
+    lastExternalUsed = currentUsed;
+    lastExternalCount = currentCount;
+  }
+}
+
 // ============== BROADCAST STATS UPDATE ==============
 // Pushes live system health to all WebSocket clients (heap, RSSI, active sessions)
 unsigned long lastLiveStatsBroadcast = 0;
@@ -754,6 +786,29 @@ void onWebSocketEvent(uint8_t num, WStype_t type, uint8_t * payload, size_t leng
               String watchPath = doc["path"] | "";
               wsClients[num].watchPath = watchPath;
               webSocket.sendTXT(num, "{\"event\":\"watch-set\",\"path\":\"" + watchPath + "\"}");
+            }
+          } else if (cmd == "rescan") {
+            // Force an immediate external change detection scan
+            // Client sends {"cmd":"rescan"} to trigger SD re-check
+            if (num < WS_MAX_CLIENTS && wsClients[num].authenticated) {
+              lastExternalScan = 0; // Reset timer so next loop iteration triggers scan
+              webSocket.sendTXT(num, "{\"event\":\"rescan-ok\"}");
+            }
+          } else if (cmd == "stats") {
+            // Return immediate stats snapshot via WebSocket
+            if (num < WS_MAX_CLIENTS && wsClients[num].authenticated) {
+              DynamicJsonDocument resp(512);
+              resp["event"] = "stats-snapshot";
+              resp["sd_free"] = (uint32_t)((SD.totalBytes() - SD.usedBytes()) / 1024);
+              resp["sd_used"] = (uint32_t)(SD.usedBytes() / 1024);
+              resp["sd_total"] = (uint32_t)(SD.totalBytes() / 1024);
+              resp["heap"] = ESP.getFreeHeap();
+              resp["rssi"] = WiFi.RSSI();
+              resp["uptime_s"] = millis() / 1000;
+              resp["write_ops"] = totalWriteOps;
+              resp["failure_risk"] = failureRisk;
+              String msg; serializeJson(resp, msg);
+              webSocket.sendTXT(num, msg);
             }
           }
         }
@@ -3095,6 +3150,12 @@ void handleRoot() {
   String etag = "\"" + String(strlen(index_html)) + "-" + String(FIRMWARE_VERSION) + "\"";
   webServer.sendHeader("ETag", etag);
   webServer.sendHeader("Cache-Control", "no-cache");
+  // If-Modified-Since support: if client's cached version is fresh, return 304
+  if (webServer.hasHeader("If-Modified-Since")) {
+    // Build time is fixed; if client says it has this version, skip sending
+    webServer.send(304, "text/plain", "");
+    return;
+  }
   if (webServer.hasHeader("If-None-Match") && webServer.header("If-None-Match") == etag) {
     webServer.send(304, "text/plain", "");
     return;
@@ -3114,6 +3175,10 @@ void handleManifest() {
 }
 void handleRobotsTxt() {
   webServer.send(200, "text/plain", "User-agent: *\nDisallow: /\n");
+}
+void handleVersion() {
+  // Public endpoint returning current firmware version (for auto-updaters / scripts)
+  webServer.send(200, "application/json", "{\"version\":\"" + String(FIRMWARE_VERSION) + "\"}");
 }
 void handleFavicon() {
   // Inline SVG favicon: a small folder icon in the primary theme color
@@ -6120,6 +6185,7 @@ void setup() {
   webServer.on("/ota",handleOtaPage);
   webServer.on("/manifest.json",handleManifest);
   webServer.on("/robots.txt",handleRobotsTxt);
+  webServer.on("/version",handleVersion);
   webServer.on("/favicon.ico",handleFavicon);
   webServer.on("/sw.js",handleServiceWorker);
   webServer.on("/setup",handleSetupPage);
@@ -6439,6 +6505,7 @@ void loop() {
   autoExpireTrash();   // Auto-purge old trash items every hour
   autoTrashSizeLimit(); // Auto-purge trash when size exceeds TRASH_MAX_MB
   autoDailyBackup();   // Auto-backup config files every 24h
+  detectExternalChanges(); // Detect FTP/external file changes, broadcast to WS
   // Periodic live stats broadcast to all WS clients (5s interval)
   if (wsClientCount > 0 && millis() - lastLiveStatsBroadcast > LIVE_STATS_INTERVAL) {
     broadcastStatsUpdate();
