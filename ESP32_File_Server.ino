@@ -922,9 +922,11 @@ void checkSD() {
       }
       // ============== STORAGE WARNING ==============
       // Broadcast alert when storage usage crosses 90% threshold
+      // Auto-reclaim space when disk is critically full (>95%)
       {
         uint32_t usedPct = (uint32_t)((SD.usedBytes() * 100) / SD.totalBytes());
         static bool storageWarned = false;
+        static bool storageCritical = false;
         if (usedPct >= 90 && !storageWarned) {
           storageWarned = true;
           DynamicJsonDocument warn(256);
@@ -937,6 +939,48 @@ void checkSD() {
           Serial.println("STORAGE WARNING: " + String(usedPct) + "% used");
         } else if (usedPct < 85) {
           storageWarned = false; // Reset threshold with hysteresis
+        }
+        // Critical: auto-reclaim space when >95% full
+        if (usedPct >= 95 && !storageCritical) {
+          storageCritical = true;
+          Serial.println("STORAGE CRITICAL: auto-reclaiming space...");
+          addNotification("critical", "Storage " + String(usedPct) + "% full — auto-reclaiming space");
+          // Step 1: Empty expired trash (>7 days old instead of normal 30)
+          int cleaned = autoCleanTrash(7);
+          // Step 2: If still critical, purge oldest versions
+          if (SD.exists(VERSIONS_FOLDER)) {
+            uint64_t afterTrash = (SD.usedBytes() * 100) / SD.totalBytes();
+            if (afterTrash >= 95) {
+              // Remove versions older than 7 days
+              unsigned long cutoff = millis() - (7UL * 86400000UL);
+              File vdir = SD.open(VERSIONS_FOLDER);
+              if (vdir && vdir.isDirectory()) {
+                File vf;
+                while (vf = vdir.openNextFile()) {
+                  if (!vf.isDirectory() && vf.fileTime() < cutoff) {
+                    String vfp = String(vf.name());
+                    vf.close();
+                    SD.remove(vfp);
+                    SD.remove(vfp + ".crc32");
+                  } else {
+                    vf.close();
+                  }
+                }
+                vdir.close();
+              }
+            }
+          }
+          uint32_t afterPct = (uint32_t)((SD.usedBytes() * 100) / SD.totalBytes());
+          DynamicJsonDocument reclaim(256);
+          reclaim["event"] = "storage-reclaimed";
+          reclaim["used_pct_before"] = usedPct;
+          reclaim["used_pct_after"] = afterPct;
+          reclaim["trash_cleaned"] = cleaned;
+          String rmsg; serializeJson(reclaim, rmsg);
+          webSocket.broadcastTXT(rmsg);
+          addNotification("info", "Auto-reclaim complete: " + String(usedPct) + "% -> " + String(afterPct) + "%");
+        } else if (usedPct < 90) {
+          storageCritical = false;
         }
       }
       // ============== HEALTH ALERT WEBHOOK ==============
