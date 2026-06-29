@@ -837,6 +837,7 @@ void checkSD() {
           warn["free_kb"] = (uint32_t)((SD.totalBytes() - SD.usedBytes()) / 1024);
           String msg; serializeJson(warn, msg);
           webSocket.broadcastTXT(msg);
+          addNotification("warning", "Storage " + String(usedPct) + "% full — free up space");
           Serial.println("STORAGE WARNING: " + String(usedPct) + "% used");
         } else if (usedPct < 85) {
           storageWarned = false; // Reset threshold with hysteresis
@@ -849,6 +850,7 @@ void checkSD() {
         if (failureRisk >= 50 && !healthAlertFired) {
           healthAlertFired = true;
           fireWebhook("sd-health-alert", "failure_risk=" + String(failureRisk) + "%", "system");
+          addNotification("critical", "SD card failure risk at " + String(failureRisk) + "% — backup data immediately");
           Serial.println("HEALTH ALERT WEBHOOK fired: risk=" + String(failureRisk) + "%");
         } else if (failureRisk < 30) {
           healthAlertFired = false; // Reset with hysteresis
@@ -5282,6 +5284,60 @@ void autoTrashSizeLimit() {
   }
 }
 
+// ============== PERSISTENT NOTIFICATION QUEUE ==============
+// Stores system notifications that survive reboots and can be fetched via API
+#define NOTIFICATIONS_FILE "/.notifications.json"
+#define MAX_NOTIFICATIONS 50
+
+void addNotification(String type, String message) {
+  // type: "info", "warning", "error", "critical"
+  DynamicJsonDocument doc(4096);
+  if (SD.exists(NOTIFICATIONS_FILE)) {
+    File f = SD.open(NOTIFICATIONS_FILE, FILE_READ);
+    if (f) { deserializeJson(doc, f); f.close(); }
+  }
+  JsonArray arr = doc.isNull() ? doc.to<JsonArray>() : doc.as<JsonArray>();
+  // Add new notification at beginning
+  JsonObject n = arr.createNestedObject(0);
+  n["type"] = type;
+  n["message"] = message;
+  n["time"] = millis();
+  n["boot"] = bootCount;
+  // Trim to max size
+  while (arr.size() > MAX_NOTIFICATIONS) {
+    arr.remove(arr.size() - 1);
+  }
+  File wf = SD.open(NOTIFICATIONS_FILE, FILE_WRITE);
+  if (wf) { serializeJson(doc, wf); wf.close(); }
+  // Also broadcast to connected WS clients
+  DynamicJsonDocument alert(256);
+  alert["event"] = "notification";
+  alert["type"] = type;
+  alert["message"] = message;
+  alert["time"] = millis();
+  String msg; serializeJson(alert, msg);
+  webSocket.broadcastTXT(msg);
+}
+
+void handleGetNotifications() {
+  String u, lvl;
+  if (!isAuthenticated(webServer, u, lvl)) { webServer.send(401); return; }
+  if (!SD.exists(NOTIFICATIONS_FILE)) { webServer.send(200, "application/json", "[]"); return; }
+  File f = SD.open(NOTIFICATIONS_FILE, FILE_READ);
+  if (!f) { webServer.send(500); return; }
+  String content;
+  while (f.available()) content += (char)f.read();
+  f.close();
+  webServer.send(200, "application/json", content);
+}
+
+void handleClearNotifications() {
+  String u, lvl;
+  if (!isAuthenticated(webServer, u, lvl) || lvl != "admin" || !checkCsrf(webServer)) { webServer.send(403); return; }
+  if (SD.exists(NOTIFICATIONS_FILE)) SD.remove(NOTIFICATIONS_FILE);
+  webServer.send(200, "application/json", "{\"ok\":true}");
+}
+
 // ============== AUTO TRASH EXPIRY ==============
 // Periodically purge trash items older than TRASH_EXPIRY_DAYS to prevent SD fill
 #define TRASH_EXPIRY_DAYS 30
@@ -5560,6 +5616,8 @@ void setup() {
   webServer.on("/api/store-crc-all",HTTP_POST,handleStoreCrcAll);
   webServer.on("/api/duplicates",HTTP_GET,handleFindDuplicates);
   webServer.on("/api/recent",HTTP_GET,handleRecentFiles);
+  webServer.on("/api/notifications",HTTP_GET,handleGetNotifications);
+  webServer.on("/api/notifications/clear",HTTP_POST,handleClearNotifications);
   webServer.on("/api/export-list",HTTP_GET,handleExportFileList);
   webServer.on("/api/access-stats",HTTP_GET,handleAccessStats);
   webServer.on("/api/readonly",HTTP_POST,handleSetReadOnly);
