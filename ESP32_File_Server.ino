@@ -127,6 +127,7 @@ String server_ip = "";
 unsigned long lastWiFiCheck = 0;
 bool sdOK = true;
 bool sdWriteProtected = false; // Physical write-protect switch detection
+uint32_t bootCount = 0; // Persistent boot counter for reliability tracking
 
 // ============== REQUEST SIZE LIMITER =============
 // Reject POST/PUT bodies larger than this to prevent OOM
@@ -823,7 +824,7 @@ void checkSD() {
           }
         }
       }
-      // ============== STORAGE WARNING =============
+      // ============== STORAGE WARNING ==============
       // Broadcast alert when storage usage crosses 90% threshold
       {
         uint32_t usedPct = (uint32_t)((SD.usedBytes() * 100) / SD.totalBytes());
@@ -839,6 +840,18 @@ void checkSD() {
           Serial.println("STORAGE WARNING: " + String(usedPct) + "% used");
         } else if (usedPct < 85) {
           storageWarned = false; // Reset threshold with hysteresis
+        }
+      }
+      // ============== HEALTH ALERT WEBHOOK ==============
+      // Fire external webhook when SD failure risk exceeds 50%
+      {
+        static bool healthAlertFired = false;
+        if (failureRisk >= 50 && !healthAlertFired) {
+          healthAlertFired = true;
+          fireWebhook("sd-health-alert", "failure_risk=" + String(failureRisk) + "%", "system");
+          Serial.println("HEALTH ALERT WEBHOOK fired: risk=" + String(failureRisk) + "%");
+        } else if (failureRisk < 30) {
+          healthAlertFired = false; // Reset with hysteresis
         }
       }
     }
@@ -3313,6 +3326,7 @@ void handleStats() {
   doc["sd_crc_spot_checks"] = crcSpotChecksDone;
   doc["sd_crc_spot_errors"] = crcSpotCheckErrors;
   doc["max_upload_size"] = MAX_UPLOAD_SIZE;
+  doc["boot_count"] = bootCount;
   String out; serializeJson(doc, out);
   webServer.send(200, "application/json", out);
 }
@@ -3453,6 +3467,50 @@ void handleFileCRC() {
   doc["crc32"] = crcComputed;
   doc["stored_crc32"] = crcStored.length() > 0 ? crcStored : (char*)nullptr;
   doc["match"] = crcStored.length() == 0 || crcStored == crcComputed;
+  String out; serializeJson(doc, out);
+  webServer.send(200, "application/json", out);
+}
+
+// ============== FILE HMAC-SHA256 HASH ==============
+// Returns HMAC-SHA256 of file content using hardware SHA accelerator
+// Useful for integrity verification and duplicate detection
+void handleFileHash() {
+  String u, lvl;
+  if (!isAuthenticated(webServer, u, lvl)) { webServer.send(401); return; }
+  if (!sdOK) { webServer.send(503); return; }
+  if (!webServer.hasArg("path")) { webServer.send(400); return; }
+  String path = sanitizePath(webServer.arg("path"));
+  if (!SD.exists(path)) { webServer.send(404); return; }
+  File f = SD.open(path, FILE_READ);
+  if (!f) { webServer.send(500); return; }
+  // Compute HMAC-SHA256 of file content in chunks (low memory)
+  mbedtls_md_context_t ctx;
+  mbedtls_md_type_t md_type = MBEDTLS_MD_SHA256;
+  mbedtls_md_init(&ctx);
+  if (mbedtls_md_setup(&ctx, mbedtls_md_info_from_type(md_type), 1) != 0) {
+    mbedtls_md_free(&ctx); f.close(); webServer.send(500); return;
+  }
+  // Derive per-file key from path for unique hashing
+  String key = "ESP32FS_FILE_HASH_" + path;
+  mbedtls_md_hmac_starts(&ctx, (const uint8_t*)key.c_str(), key.length());
+  uint8_t buf[512];
+  while (f.available()) {
+    int n = f.read(buf, 512);
+    if (n > 0) mbedtls_md_hmac_update(&ctx, buf, n);
+  }
+  f.close();
+  uint8_t hashResult[32];
+  mbedtls_md_hmac_finish(&ctx, hashResult);
+  mbedtls_md_free(&ctx);
+  String hashStr = "";
+  for (int i = 0; i < 32; i++) {
+    if (hashResult[i] < 0x10) hashStr += "0";
+    hashStr += String(hashResult[i], HEX);
+  }
+  DynamicJsonDocument doc(512);
+  doc["path"] = path;
+  doc["hmac_sha256"] = hashStr;
+  doc["algorithm"] = "HMAC-SHA256";
   String out; serializeJson(doc, out);
   webServer.send(200, "application/json", out);
 }
@@ -5391,6 +5449,21 @@ void setup() {
   }
   loadSettings();
   loadQuotas();
+  // Load persistent boot counter from settings, increment, and save
+  {
+    DynamicJsonDocument doc(512);
+    if (SD.exists(SETTINGS_FILE)) {
+      File sf = SD.open(SETTINGS_FILE, FILE_READ);
+      if (sf) { deserializeJson(doc, sf); sf.close(); }
+    }
+    bootCount = doc["boot_count"] | 0;
+    bootCount++;
+    doc["boot_count"] = bootCount;
+    doc["last_boot"] = millis();
+    File wf = SD.open(SETTINGS_FILE, FILE_WRITE);
+    if (wf) { serializeJson(doc, wf); wf.close(); }
+    Serial.println("Boot #" + String(bootCount));
+  }
   setupAuthentication();
   connectToWiFi();
 
@@ -5481,6 +5554,7 @@ void setup() {
   webServer.on("/api/analytics",HTTP_GET,handleStorageAnalytics);
   webServer.on("/api/detect-type",HTTP_GET,handleDetectType);
   webServer.on("/api/crc",HTTP_GET,handleFileCRC);
+  webServer.on("/api/file-hash",HTTP_GET,handleFileHash);
   webServer.on("/api/bulk-crc",HTTP_GET,handleBulkVerifyCRC);
   webServer.on("/api/config-backup",HTTP_POST,handleConfigBackup);
   webServer.on("/api/store-crc-all",HTTP_POST,handleStoreCrcAll);
