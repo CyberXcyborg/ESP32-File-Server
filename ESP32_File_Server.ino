@@ -1402,6 +1402,21 @@ void handleDownload() {
       }
     }
   }
+  // Add integrity header: X-CRC32 for download verification
+  // Clients can compare this against their locally computed CRC32 after download
+  {
+    String crcPath = path + ".crc32";
+    if (SD.exists(crcPath)) {
+      File cf = SD.open(crcPath, FILE_READ);
+      if (cf) {
+        String storedCrc = cf.readString().trim();
+        cf.close();
+        if (storedCrc.length() > 0) {
+          webServer.sendHeader("X-CRC32", storedCrc);
+        }
+      }
+    }
+  }
   // Auto-detect gzip support from Accept-Encoding header
   bool clientWantsGzip = webServer.hasHeader("Accept-Encoding") && webServer.header("Accept-Encoding").indexOf("gzip") >= 0;
   bool canCompress = shouldCompress(name) && f.size() >= 10240 && f.size() <= 524288ULL;
