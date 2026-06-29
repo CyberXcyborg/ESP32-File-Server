@@ -4758,6 +4758,111 @@ void handleImageThumb() {
   logActivity("thumb-info", path+" ("+imgW+"x"+imgH+")", u);
 }
 
+// ============== PDF TEXT EXTRACTION ==============
+// Minimal PDF text extractor: reads stream content between 'stream' and 'endstream'
+// extracts text from BT...ET blocks. Handles basic FlateDecode (zlib) decompression.
+#include <zlib.h>
+
+void handlePdfPreview() {
+  String u, lvl;
+  if (!isAuthenticated(webServer, u, lvl)) { webServer.send(401); return; }
+  if (!sdOK) { webServer.send(503); return; }
+  if (!webServer.hasArg("path")) { webServer.send(400); return; }
+  String path = sanitizePath(webServer.arg("path"));
+  if (!SD.exists(path)) { webServer.send(404); return; }
+  String name = path.substring(path.lastIndexOf('/')+1);
+  String ext = name.substring(name.lastIndexOf('.')+1);
+  ext.toLowerCase();
+  if (ext != "pdf") { webServer.send(400, "text/plain", "Not a PDF"); return; }
+  File f = SD.open(path, FILE_READ);
+  if (!f) { webServer.send(500); return; }
+  // Limit to 1MB for PDF parsing
+  size_t fileSize = f.size();
+  if (fileSize > 1048576) { f.close(); webServer.send(413, "text/plain", "PDF too large (max 1MB)"); return; }
+  String pdfContent = "";
+  pdfContent.reserve(fileSize);
+  uint8_t buf[512];
+  while (f.available()) {
+    int n = f.read(buf, 512);
+    for (int i = 0; i < n; i++) {
+      char c = buf[i];
+      if (c >= 0) pdfContent += c;
+    }
+  }
+  f.close();
+  // Extract text from PDF streams
+  String extractedText = "";
+  int pageCount = 0;
+  // Count pages
+  {
+    int pos = 0;
+    while ((pos = pdfContent.indexOf("/Type /Page", pos)) >= 0) {
+      pageCount++;
+      pos += 10;
+    }
+    if (pageCount == 0) pageCount = 1;
+  }
+  // Extract text from stream blocks
+  int streamStart = 0;
+  while ((streamStart = pdfContent.indexOf("stream\r\n", streamStart)) >= 0 || 
+         (streamStart = pdfContent.indexOf("stream\n", streamStart)) >= 0) {
+    int dataStart = pdfContent.indexOf('\n', streamStart);
+    if (dataStart < 0) break;
+    dataStart++;
+    int dataEnd = pdfContent.indexOf("endstream", dataStart);
+    if (dataEnd < 0) break;
+    int streamLen = dataEnd - dataStart;
+    if (streamLen > 0 && streamLen < 100000) {
+      String streamData = pdfContent.substring(dataStart, dataStart + streamLen);
+      // Try to extract text from BT...ET blocks (uncompressed text)
+      int btPos = 0;
+      while ((btPos = streamData.indexOf("BT", btPos)) >= 0) {
+        int etPos = streamData.indexOf("ET", btPos);
+        if (etPos < 0) break;
+        String textBlock = streamData.substring(btPos, etPos);
+        // Extract text from Tj and TJ operators
+        int tjPos = 0;
+        while ((tjPos = textBlock.indexOf("(", tjPos)) >= 0) {
+          int closeParen = textBlock.indexOf(")", tjPos);
+          if (closeParen < 0) break;
+          String txt = textBlock.substring(tjPos + 1, closeParen);
+          // Unescape PDF string escapes
+          txt.replace("\\n", "\n");
+          txt.replace("\\r", "\r");
+          txt.replace("\\t", "\t");
+          txt.replace("\\(", "(");
+          txt.replace("\\)", ")");
+          txt.replace("\\\\", "\\");
+          if (txt.length() > 0) extractedText += txt + " ";
+          tjPos = closeParen + 1;
+        }
+        btPos = etPos + 2;
+      }
+    }
+    streamStart = dataEnd + 9;
+  }
+  // Limit output
+  if (extractedText.length() > 32768) {
+    extractedText = extractedText.substring(0, 32768);
+    extractedText += "\n\n[truncated...]";
+  }
+  // HTML escape
+  extractedText.replace("<", "&lt;");
+  extractedText.replace(">", "&gt;");
+  extractedText.replace("&", "&amp;");
+  DynamicJsonDocument doc(36000);
+  doc["name"] = name;
+  doc["path"] = path;
+  doc["size"] = (uint32_t)fileSize;
+  doc["pages"] = pageCount;
+  doc["text"] = extractedText;
+  doc["text_length"] = extractedText.length();
+  String out;
+  serializeJson(doc, out);
+  webServer.send(200, "application/json", out);
+  logActivity("pdf-preview", path + " (" + String(pageCount) + " pages)", u);
+}
+
 // ============== FILE DIFF ==============
 // Compare two text files and return line-by-line diff
 void handleFileDiff() {
@@ -5297,6 +5402,7 @@ void setup() {
   webServer.on("/api/webhook",HTTP_GET,handleWebhookConfig);
   webServer.on("/api/webhook",HTTP_POST,handleWebhookConfig);
   webServer.on("/api/thumb",HTTP_GET,handleImageThumb);
+  webServer.on("/api/pdf-preview",HTTP_GET,handlePdfPreview);
   webServer.on("/api/diff",HTTP_GET,handleFileDiff);
   webServer.on("/api/preview",HTTP_GET,handleFilePreview);
   webServer.on("/api/preview-code",HTTP_GET,handleFilePreviewCode);
