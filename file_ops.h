@@ -87,8 +87,8 @@ bool moveFile(String src, String dst) {
     createDirRecursive(parent);
   }
   // Try rename first (same partition), fallback to copy+delete
-  if (SD.rename(src, dst)) return true;
-  // Copy + delete
+  if (sdRetry([&](){ return SD.rename(src, dst); }, 2)) return true;
+  // Copy + delete with retry on read
   File in = SD.open(src, FILE_READ);
   if (!in) return false;
   File out = SD.open(dst, FILE_WRITE);
@@ -99,7 +99,7 @@ bool moveFile(String src, String dst) {
     out.write(buf, n);
   }
   in.close(); out.close();
-  return SD.remove(src);
+  return sdRetry([&](){ return SD.remove(src); }, 2);
 }
 
 // ============== GZIP COMPRESSION ==============
