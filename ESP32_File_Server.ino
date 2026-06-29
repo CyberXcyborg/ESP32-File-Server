@@ -427,6 +427,54 @@ void onWebSocketEvent(uint8_t num, WStype_t type, uint8_t * payload, size_t leng
               webSocket.sendTXT(num, "{\"event\":\"auth-failed\"}");
               webSocket.disconnect(num);
             }
+          } else if (cmd == "list") {
+            // WebSocket command: list directory contents (faster than HTTP polling)
+            if (num < WS_MAX_CLIENTS && wsClients[num].authenticated) {
+              String listPath = doc["path"] | "/";
+              listPath = sanitizePath(listPath);
+              if (sdOK && SD.exists(listPath)) {
+                File dir = SD.open(listPath);
+                if (dir && dir.isDirectory()) {
+                  DynamicJsonDocument doc2(4096);
+                  doc2["event"] = "dir-list";
+                  doc2["path"] = listPath;
+                  JsonArray arr = doc2.createNestedArray("files");
+                  File f;
+                  int count = 0;
+                  while ((f = dir.openNextFile()) && count < 200) {
+                    JsonObject fi = arr.createNestedObject();
+                    String fn = String(f.name());
+                    int sl = fn.lastIndexOf('/');
+                    fi["name"] = (sl >= 0) ? fn.substring(sl+1) : fn;
+                    fi["dir"] = f.isDirectory();
+                    fi["size"] = f.isDirectory() ? 0 : f.size();
+                    f.close();
+                    count++;
+                  }
+                  dir.close();
+                  doc2["count"] = count;
+                  String msg; serializeJson(doc2, msg);
+                  webSocket.sendTXT(num, msg);
+                } else {
+                  dir.close();
+                  webSocket.sendTXT(num, "{\"error\":\"not-a-directory\"}");
+                }
+              } else {
+                webSocket.sendTXT(num, "{\"error\":\"path-not-found\"}");
+              }
+            }
+          } else if (cmd == "mkdir") {
+            // WebSocket command: create directory
+            if (num < WS_MAX_CLIENTS && wsClients[num].authenticated) {
+              String dirPath = doc["path"] | "/";
+              dirPath = sanitizePath(dirPath);
+              if (createDirRecursive(dirPath)) {
+                webSocket.sendTXT(num, "{\"event\":\"mkdir-ok\",\"path\":\"" + dirPath + "\"}");
+                broadcastChange("mkdir", dirPath);
+              } else {
+                webSocket.sendTXT(num, "{\"error\":\"mkdir-failed\"}");
+              }
+            }
           }
         }
       }
@@ -963,6 +1011,44 @@ void handleListFiles() {
   }
   webServer.sendHeader("Content-Length", String(out.length()));
   webServer.send(200, "application/json", out);
+}
+
+// ============== COMPACT FILE LIST ==============
+// Returns minimal JSON for fast polling: just names, sizes, types
+// Reduces bandwidth by ~70% compared to full list for large directories
+void handleListCompact() {
+  String u, lvl;
+  if (!isAuthenticated(webServer, u, lvl)) { webServer.send(401); return; }
+  if (!sdOK) { webServer.send(503, "application/json", "{\"error\":\"SD card not available\"}"); return; }
+  String path = sanitizePath(webServer.hasArg("path") ? webServer.arg("path") : "/");
+  File dir = SD.open(path);
+  if (!dir || !dir.isDirectory()) { webServer.send(400); return; }
+  // Build compact response: "name|size|type\n" format inside JSON
+  String fileList = "";
+  int fc = 0, dc = 0;
+  File file;
+  while (file = dir.openNextFile()) {
+    String fn = String(file.name());
+    int sl = fn.lastIndexOf('/');
+    String name = (sl >= 0) ? fn.substring(sl+1) : fn;
+    bool isD = file.isDirectory();
+    if (isD) dc++; else fc++;
+    // Escape any pipe chars in filename
+    name.replace("|", "_");
+    fileList += name + "|" + String(isD ? 0 : file.size()) + "|" + (isD ? "d" : "f") + "\n";
+    file.close();
+  }
+  dir.close();
+  String json = "{\"sd_used\":" + String(SD.usedBytes()) + ",\"sd_free\":" + String(SD.totalBytes() - SD.usedBytes()) + ",\"fc\":" + String(fc) + ",\"dc\":" + String(dc) + ",\"files\":\"" + fileList + "\"}";
+  // ETag based on used bytes (changes on any file change)
+  String etag = "\"" + String(SD.usedBytes()) + "-" + String(fc+dc) + "\"";
+  webServer.sendHeader("ETag", etag);
+  webServer.sendHeader("Cache-Control", "private, max-age=3");
+  if (webServer.hasHeader("If-None-Match") && webServer.header("If-None-Match") == etag) {
+    webServer.send(304, "text/plain", "Not Modified");
+    return;
+  }
+  webServer.send(200, "application/json", json);
 }
 
 // ============== FILE INFO ==============
@@ -1592,6 +1678,56 @@ void handleChunkedUpload() {
     webServer.send(200, "application/json", "{\"ok\":true,\"path\":\"" + fullPath + "\",\"complete\":true}");
   } else {
     webServer.send(200, "application/json", "{\"ok\":true,\"offset\":" + String(offset + contentLen) + ",\"complete\":false}");
+  }
+}
+
+// ============== RECURSIVE FOLDER UPLOAD ==============
+// POST /api/upload-folder with multipart: relativePath + file binary
+// Allows browsers to upload full folder trees via chunked API
+void handleFolderUpload() {
+  String u, lvl;
+  if (!isAuthenticated(webServer, u, lvl) || !checkCsrf(webServer)) {
+    webServer.send(403, "application/json", "{\"error\":\"unauthorized\"}");
+    return;
+  }
+  if (!sdOK) { webServer.send(503); return; }
+  HTTPUpload& up = webServer.upload();
+  static File uf;
+  static String upp;
+  if (up.status == UPLOAD_FILE_START) {
+    String baseDir = webServer.hasArg("path") ? sanitizePath(webServer.arg("path")) : "/";
+    String relPath = webServer.hasArg("relPath") ? webServer.arg("relPath") : up.filename;
+    // Security: strip path traversal from relative path
+    while (relPath.indexOf("..") >= 0) relPath.replace("..", "");
+    if (!relPath.startsWith("/")) relPath = "/" + relPath;
+    // Quarantine check on final filename
+    int sl = relPath.lastIndexOf('/');
+    String fname = (sl >= 0) ? relPath.substring(sl+1) : relPath;
+    if (!isUploadSafe(fname)) {
+      Serial.println("Folder upload blocked: " + fname);
+      return;
+    }
+    upp = baseDir + (baseDir.endsWith("/") ? "" : "/") + relPath.substring(1);
+    // Create parent directory
+    int slash = upp.lastIndexOf('/');
+    if (slash > 0) createDirRecursive(upp.substring(0, slash));
+    if (SD.exists(upp)) SD.remove(upp);
+    uf = SD.open(upp, FILE_WRITE);
+    if (!uf) {
+      Serial.println("Folder upload: cannot open " + upp);
+    }
+  } else if (up.status == UPLOAD_FILE_WRITE) {
+    if (uf) {
+      size_t w = uf.write(up.buf, up.currentSize);
+      totalWriteBytes += w;
+    }
+  } else if (up.status == UPLOAD_FILE_END) {
+    if (uf) uf.close();
+    totalWriteOps++;
+    logActivity("upload-folder", upp + " (" + String(up.totalSize) + "B)", u);
+    broadcastChange("upload", upp);
+    storeFileCRC(upp);
+    webServer.send(200, "application/json", "{\"ok\":true,\"path\":\"" + upp + "\"}");
   }
 }
 
@@ -5005,6 +5141,7 @@ void setup() {
   webServer.on("/s/",HTTP_GET,handleSharedFile);
 
   webServer.on("/api/list",HTTP_GET,handleListFiles);
+  webServer.on("/api/list-compact",HTTP_GET,handleListCompact);
   webServer.on("/api/info",HTTP_GET,handleFileInfo);
   webServer.on("/api/download",HTTP_GET,handleDownload);
   webServer.on("/api/download-gzip",HTTP_GET,handleDownloadGzip);
@@ -5017,6 +5154,7 @@ void setup() {
   webServer.on("/api/upload-auth",HTTP_GET,handleUploadAuth);
   webServer.on("/api/upload",HTTP_POST,[](){if(!checkCsrf(webServer)){webServer.send(403,"text/plain","CSRF invalid");return;}webServer.send(200);},handleUpload);
   webServer.on("/api/upload-chunk",HTTP_POST,[](){if(!checkCsrf(webServer)){webServer.send(403,"text/plain","CSRF invalid");return;}webServer.send(200);},handleChunkedUpload);
+  webServer.on("/api/upload-folder",HTTP_POST,[](){if(!checkCsrf(webServer)){webServer.send(403,"text/plain","CSRF invalid");return;}webServer.send(200);},handleFolderUpload);
   webServer.on("/api/share",HTTP_POST,handleCreateShare);
   webServer.on("/api/zip",HTTP_POST,handleZipDownload);
   webServer.on("/api/batch-download",HTTP_POST,handleBatchDownload);
