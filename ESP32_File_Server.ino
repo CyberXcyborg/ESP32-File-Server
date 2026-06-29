@@ -676,6 +676,24 @@ void onWebSocketEvent(uint8_t num, WStype_t type, uint8_t * payload, size_t leng
               String msg; serializeJson(resp, msg);
               webSocket.sendTXT(num, msg);
             }
+          } else if (cmd == "who-online") {
+            // Return list of currently connected users
+            if (num < WS_MAX_CLIENTS && wsClients[num].authenticated) {
+              DynamicJsonDocument resp(1024);
+              resp["event"] = "online-users";
+              JsonArray arr = resp.createNestedArray("users");
+              for (int i = 0; i < WS_MAX_CLIENTS; i++) {
+                if (wsClients[i].authenticated) {
+                  JsonObject u = arr.createNestedObject();
+                  u["user"] = wsClients[i].username;
+                  u["level"] = wsClients[i].userLevel;
+                  u["ip"] = wsClients[i].ip.toString();
+                  u["connected_s"] = (millis() - wsClients[i].connectTime) / 1000;
+                }
+              }
+              String msg; serializeJson(resp, msg);
+              webSocket.sendTXT(num, msg);
+            }
           } else if (cmd == "watch") {
             // Subscribe to events for a specific path prefix
             // Client sends {"cmd":"watch","path":"/docs/"} to only get events for /docs/*
