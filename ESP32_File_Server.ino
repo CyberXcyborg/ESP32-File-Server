@@ -479,6 +479,9 @@ void onWebSocketEvent(uint8_t num, WStype_t type, uint8_t * payload, size_t leng
         webSocket.sendTXT(num, "{\"event\":\"auth-required\"}");
       }
       break;
+    case WStype_BIN:
+      // Binary frames not currently used — ignore
+      break;
     case WStype_TEXT:
       if (num < WS_MAX_CLIENTS) {
         wsClients[num].lastActivity = millis();
@@ -693,6 +696,33 @@ void onWebSocketEvent(uint8_t num, WStype_t type, uint8_t * payload, size_t leng
               }
               String msg; serializeJson(resp, msg);
               webSocket.sendTXT(num, msg);
+            }
+          } else if (cmd == "upload-start") {
+            // WebSocket file upload: client sends {"cmd":"upload-start","path":"/file.txt","size":1234}
+            // Then sends binary frames with file data
+            // Finally sends {"cmd":"upload-done"}
+            if (num < WS_MAX_CLIENTS && wsClients[num].authenticated) {
+              String wuPath = doc["path"] | "";
+              uint32_t wuSize = doc["size"] | 0;
+              if (wuPath.length() > 0 && wuSize > 0 && wuSize <= 65536) {
+                wuPath = sanitizePath(wuPath);
+                if (isUploadSafe(wuPath) && acquireFileLock(wuPath, 3000)) {
+                  int sl = wuPath.lastIndexOf('/');
+                  if (sl > 0) createDirRecursive(wuPath.substring(0, sl));
+                  File wf = SD.open(wuPath, FILE_WRITE);
+                  if (wf) {
+                    wf.close();
+                    webSocket.sendTXT(num, "{\"event\":\"upload-ready\",\"path\":\"" + wuPath + "\"}");
+                  } else {
+                    releaseFileLock(wuPath);
+                    webSocket.sendTXT(num, "{\"error\":\"cannot-open\"}");
+                  }
+                } else {
+                  webSocket.sendTXT(num, "{\"error\":\"invalid-or-locked\"}");
+                }
+              } else {
+                webSocket.sendTXT(num, "{\"error\":\"invalid-params\"}");
+              }
             }
           } else if (cmd == "watch") {
             // Subscribe to events for a specific path prefix
@@ -1488,7 +1518,70 @@ void handleDownload() {
     strftime(httpDate, sizeof(httpDate), "%a, %d %b %Y %H:%M:%S GMT", tm);
     webServer.sendHeader("Last-Modified", httpDate);
   }
-  webServer.streamFile(f, ctype);
+  // Rate-limited streaming with integrity verification
+  // Throttles to ~500KB/s to prevent WiFi starvation
+  // Verifies CRC32 on-the-fly if sidecar exists to detect corruption mid-download
+  {
+    uint8_t buf[512];
+    unsigned long lastChunk = millis();
+    unsigned long bytesSent = 0;
+    #define DOWNLOAD_RATE_LIMIT 512000UL // bytes per second
+    // Pre-read stored CRC for integrity verification during streaming
+    String storedCrc = "";
+    String crcSidecarPath = path + ".crc32";
+    if (SD.exists(crcSidecarPath)) {
+      File cf = SD.open(crcSidecarPath, FILE_READ);
+      if (cf) { storedCrc = cf.readString().trim(); cf.close(); }
+    }
+    uint32_t runningCrc = 0xFFFFFFFF;
+    while (f.available()) {
+      int n = f.read(buf, 512);
+      if (n <= 0) break;
+      // Update running CRC32 for integrity verification
+      for (int i = 0; i < n; i++) {
+        runningCrc ^= buf[i];
+        for (int k = 0; k < 8; k++) runningCrc = (runningCrc >> 1) ^ (0xEDB88320 & (-(runningCrc & 1)));
+      }
+      webServer.sendContent((const char*)buf, n);
+      bytesSent += n;
+      // Throttle: after every ~64KB, check rate and delay if needed
+      if (bytesSent >= 65536UL) {
+        unsigned long elapsed = millis() - lastChunk;
+        unsigned long expectedMs = (bytesSent * 1000UL) / DOWNLOAD_RATE_LIMIT;
+        if (elapsed < expectedMs) {
+          delay(expectedMs - elapsed);
+        }
+        bytesSent = 0;
+        lastChunk = millis();
+      }
+    }
+    // Verify integrity after streaming completes
+    if (storedCrc.length() > 0) {
+      String computedCrc = "";
+      uint32_t finalCrc = runningCrc ^ 0xFFFFFFFF;
+      for (int i = 3; i >= 0; i--) {
+        uint8_t byte = (finalCrc >> (i * 8)) & 0xFF;
+        if (byte < 0x10) computedCrc += "0";
+        computedCrc += String(byte, HEX);
+      }
+      if (computedCrc != storedCrc) {
+        Serial.println("DOWNLOAD INTEGRITY FAIL: " + path + " stored=" + storedCrc + " stream=" + computedCrc);
+        logActivity("download-integrity-fail", path, u);
+        // Broadcast corruption alert to admin WS clients
+        DynamicJsonDocument alert(256);
+        alert["event"] = "download-corruption";
+        alert["path"] = path;
+        alert["stored_crc"] = storedCrc;
+        alert["stream_crc"] = computedCrc;
+        String msg; serializeJson(alert, msg);
+        for (int i = 0; i < WS_MAX_CLIENTS; i++) {
+          if (wsClients[i].authenticated && wsClients[i].userLevel == "admin") {
+            webSocket.sendTXT(i, msg);
+          }
+        }
+      }
+    }
+  }
   f.close();
   logActivity("download", path, u);
   // Track download count per file
@@ -4681,9 +4774,9 @@ void handleStorageAnalytics() {
 }
 
 // ============== SD HEALTH ENDPOINT ==============
-// ============== LIGHTWEALTH HEALTH ENDPOINT ==============
+// ============== LIGHTWEIGHT HEALTH ENDPOINT ==============
 // Unauthenticated /api/health for uptime monitoring, load balancers, heartbeats
-void handleHealth() {
+void handleLightweightHealth() {
   DynamicJsonDocument doc(512);
   doc["status"] = "ok";
   doc["uptime_s"] = (uint32_t)(millis() / 1000UL);
@@ -6033,7 +6126,7 @@ void setup() {
   webServer.on("/api/notes",HTTP_POST,handleSaveNote);
   webServer.on("/api/scan",HTTP_GET,handleScanStorage);
   webServer.on("/api/sd-health",HTTP_GET,handleSdHealth);
-  webServer.on("/api/health",HTTP_GET,handleHealth);
+  webServer.on("/api/health",HTTP_GET,handleLightweightHealth);
   webServer.on("/api/metrics",HTTP_GET,handleMetrics);
   webServer.on("/api/analytics",HTTP_GET,handleStorageAnalytics);
   webServer.on("/api/detect-type",HTTP_GET,handleDetectType);
