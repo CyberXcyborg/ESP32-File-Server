@@ -1604,6 +1604,14 @@ void handleFileInfo() {
   doc["downloads"] = getFileDownloads(path);
   doc["readonly"] = isFileReadOnly(path);
   unsigned long fmtime = f.fileTime();
+  // Compute CRC32 hash for files (skip dirs for speed)
+  if (!f.isDirectory()) {
+    f.close();
+    doc["crc32"] = getFileCRC32(path);
+    f = SD.open(path); // Reopen to get mtime again (already have it)
+  } else {
+    doc["crc32"] = "";
+  }
   f.close();
   String out; serializeJson(doc, out);
   // ETag caching for file info: based on size + mtime (changes on file edit)
@@ -3648,18 +3656,75 @@ void handleBatchRename() {
   JsonArray paths = doc["paths"];
   String find = doc["find"] | "";
   String replace = doc["replace"] | "";
-  if (find.length() == 0) { webServer.send(400, "application/json", "{\"error\":\"Empty find pattern\"}"); return; }
+  String prefix = doc["prefix"] | "";
+  String suffix = doc["suffix"] | "";
+  String pattern = doc["pattern"] | "";
+  // Determine rename mode
+  bool hasFindReplace = find.length() > 0;
+  bool hasPrefix = prefix.length() > 0;
+  bool hasSuffix = suffix.length() > 0;
+  bool hasPattern = pattern.length() > 0;
+  if (!hasFindReplace && !hasPrefix && !hasSuffix && !hasPattern) {
+    webServer.send(400, "application/json", "{\"error\":\"No rename pattern specified\"}"); return;
+  }
   int ok = 0, fail = 0;
+  int patternCounter = 1;
   for (const char* ps : paths) {
     String p = ps;
     if (!SD.exists(p)) { fail++; continue; }
     String name = p.substring(p.lastIndexOf('/') + 1);
     String dir = p.substring(0, p.lastIndexOf('/') + 1);
-    // Apply find/replace to filename only
-    String newName = name;
-    int pos;
-    while ((pos = newName.indexOf(find)) >= 0) {
-      newName = newName.substring(0, pos) + replace + newName.substring(pos + find.length());
+    String newName;
+    if (hasPattern) {
+      // Pattern mode: replace {n}, {n:03d}, {name}, {ext} tokens
+      newName = pattern;
+      int extDot = name.lastIndexOf('.');
+      String baseOnly = (extDot > 0) ? name.substring(0, extDot) : name;
+      String extOnly = (extDot > 0) ? name.substring(extDot) : "";
+      // Replace {name} and {ext}
+      newName.replace("{name}", baseOnly);
+      newName.replace("{ext}", extOnly);
+      // Replace {n} and {n:03d} patterns
+      int nPos = newName.indexOf("{n");
+      while (nPos >= 0) {
+        int closeBrace = newName.indexOf("}", nPos);
+        if (closeBrace < 0) break;
+        String fmt = newName.substring(nPos, closeBrace + 1);
+        String numStr = String(patternCounter);
+        // Handle zero-padding like {n:03d}
+        if (fmt.indexOf(":") > 0) {
+          int colonPos = fmt.indexOf(":");
+          String padStr = fmt.substring(colonPos + 1, fmt.length() - 1); // e.g. "03d"
+          int padLen = 3;
+          // Extract number before 'd'
+          for (int ci = 0; ci < (int)padStr.length(); ci++) {
+            if (padStr[ci] >= '0' && padStr[ci] <= '9') padLen = padStr[ci] - '0';
+            else break;
+          }
+          while ((int)numStr.length() < padLen) numStr = "0" + numStr;
+        }
+        newName.replace(nPos, fmt.length(), numStr);
+        nPos = newName.indexOf("{n", nPos + numStr.length());
+      }
+      patternCounter++;
+    } else {
+      // Find/replace, prefix, suffix mode
+      newName = name;
+      if (hasFindReplace) {
+        int pos;
+        while ((pos = newName.indexOf(find)) >= 0) {
+          newName = newName.substring(0, pos) + replace + newName.substring(pos + find.length());
+        }
+      }
+      if (hasPrefix) newName = prefix + newName;
+      if (hasSuffix) {
+        int extDot = newName.lastIndexOf('.');
+        if (extDot > 0) {
+          newName = newName.substring(0, extDot) + suffix + newName.substring(extDot);
+        } else {
+          newName = newName + suffix;
+        }
+      }
     }
     if (newName == name || newName.length() == 0) { fail++; continue; }
     String newPath = dir + newName;

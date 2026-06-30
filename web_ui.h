@@ -161,6 +161,7 @@ kbd{font-family:monospace;font-size:12px}
       <span id="healthDot" style="font-size:11px;padding:2px 6px;border-radius:4px;background:var(--bg);color:var(--text2)" title="SD card health"><span class="health-dot ok" id="healthDotInner"></span><span id="healthText">SD OK</span></span>
       <span id="rssiBadge" style="font-size:11px;padding:2px 6px;border-radius:4px;background:var(--bg);color:var(--text2)" title="WiFi signal">📶 --</span>
       <div class="search-box">🔍<input type="text" id="searchInput" placeholder="Search..." oninput="filterFiles()" onkeydown="if(event.key==='Enter')searchGlobal()"><button class="btn btn-ghost btn-sm" onclick="searchGlobal()" title="Search all folders">🔎</button><button class="btn btn-ghost btn-sm" onclick="showContentSearch()" title="Search inside files">🔍</button></div>
+      <button class="btn btn-ghost btn-sm" onclick="toggleFavorites()" title="Favorites">⭐</button>
       <button class="btn btn-ghost btn-sm" id="themeBtn" onclick="showThemeMenu()" title="Change theme">🎨</button>
       <button class="btn btn-ghost btn-sm" id="darkToggle" onclick="toggleDark()">🌙</button>
       <button class="btn btn-ghost btn-sm" onclick="showDiskInfo()" title="Disk usage">💾</button>
@@ -235,6 +236,11 @@ kbd{font-family:monospace;font-size:12px}
       <div class="info-row"><span class="info-label">Type</span><span id="infoType"></span></div>
       <div class="info-row"><span class="info-label">Size</span><span id="infoSize"></span></div>
       <div class="info-row"><span class="info-label">Path</span><span id="infoPath" style="word-break:break-all;font-size:11px"></span></div>
+      <div class="info-row"><span class="info-label">CRC32</span><span id="infoCrc" style="font-family:monospace;font-size:11px;cursor:pointer" onclick="copyInfoCrc()"></span></div>
+    </div>
+    <div class="info-panel" id="favoritesPanel" style="margin-bottom:10px">
+      <h3>⭐ Favorites <span style="font-size:11px;color:var(--text2);font-weight:400" id="favCount"></span></h3>
+      <div id="favoritesList" style="display:flex;flex-wrap:wrap;gap:6px"></div>
     </div>
     <div class="file-list">
       <div class="file-list-header">
@@ -401,6 +407,7 @@ kbd{font-family:monospace;font-size:12px}
   <div class="ctx-item" onclick="ctxCreateVersion()">📌 Save Version Now</div>
   <div class="ctx-item" onclick="ctxDuplicate()">📑 Duplicate File</div>
   <div class="ctx-sep"></div>
+  <div class="ctx-item" onclick="ctxFavorite()">⭐ Add to Favorites</div>
   <div class="ctx-item" onclick="ctxDelete()">🗑️ Delete</div>
   <div class="ctx-sep"></div>
   <div class="ctx-item" onclick="ctxSelectSameType()">☑️ Select All Same Type</div>
@@ -472,6 +479,22 @@ kbd{font-family:monospace;font-size:12px}
     <div class="modal-header"><h2>Rename</h2><span class="close-modal" onclick="closeModal('renameModal')">&times;</span></div>
     <div class="modal-body"><div class="form-group"><label>New Name</label><input type="text" id="renameInput"></div><input type="hidden" id="renamePath"></div>
     <div class="modal-footer"><button class="btn btn-ghost" onclick="closeModal('renameModal')">Cancel</button><button class="btn" onclick="doRename()">Rename</button></div>
+  </div>
+</div>
+
+<!-- Bulk Rename Modal -->
+<div class="modal" id="bulkRenameModal">
+  <div class="modal-content">
+    <div class="modal-header"><h2>Bulk Rename (<span id="bulkRenameCount">0</span> files)</h2><span class="close-modal" onclick="closeModal('bulkRenameModal')">&times;</span></div>
+    <div class="modal-body">
+      <div class="form-group"><label>Find</label><input type="text" id="bulkFind" placeholder="Text to find (regex supported: leave empty for prefix/suffix)"></div>
+      <div class="form-group"><label>Replace With</label><input type="text" id="bulkReplace" placeholder="Replacement text"></div>
+      <div class="form-group"><label>Or: Add Prefix</label><input type="text" id="bulkPrefix" placeholder="Add to beginning of filename"></div>
+      <div class="form-group"><label>Or: Add Suffix (before extension)</label><input type="text" id="bulkSuffix" placeholder="Add to end of filename"></div>
+      <div class="form-group"><label>Or: Numbering Pattern</label><input type="text" id="bulkPattern" placeholder="e.g. photo_{n:03d} → photo_001, photo_002..."></div>
+      <div id="bulkRenamePreview" style="font-size:12px;color:var(--text2);margin-top:10px;max-height:150px;overflow-y:auto;background:var(--bg);padding:8px;border-radius:6px"></div>
+    </div>
+    <div class="modal-footer"><button class="btn btn-ghost" onclick="closeModal('bulkRenameModal')">Cancel</button><button class="btn" onclick="doBulkRename()">Apply Rename</button></div>
   </div>
 </div>
 
@@ -1129,6 +1152,7 @@ function restoreVersion(path,versionFile){
     }).catch(()=>showToast('Restore failed','error'));
 }
 function ctxDelete(){deleteItem(ctxTarget.dataset.path,ctxTarget.dataset.name);hideCtxMenu();}
+function ctxFavorite(){addFavorite(ctxTarget.dataset.path);hideCtxMenu();}
 function ctxSelectSameType(){
   if(!ctxTarget)return;
   const ext=ctxTarget.dataset.name.split('.').pop().toLowerCase();
@@ -1148,8 +1172,17 @@ function showFileInfo(path){
       document.getElementById('infoType').textContent=data.type;
       document.getElementById('infoSize').textContent=data.sizeFormatted;
       document.getElementById('infoPath').textContent=data.path;
+      const crcEl=document.getElementById('infoCrc');
+      if(data.crc32){crcEl.textContent=data.crc32;crcEl.title='Click to copy';}
+      else{crcEl.textContent='—';crcEl.title='';}
       document.getElementById('infoPanel').classList.add('show');
     });
+}
+function copyInfoCrc(){
+  const el=document.getElementById('infoCrc');
+  if(el.textContent&&el.textContent!=='—'){
+    navigator.clipboard.writeText(el.textContent).then(()=>showToast('CRC32 copied','success')).catch(()=>{});
+  }
 }
 function hideInfoPanel(){document.getElementById('infoPanel').classList.remove('show');}
 
@@ -1650,13 +1683,23 @@ function moveSelected(){
 // ============== BATCH RENAME ==============
 function renameSelected(){
   if(!selectedFiles.length)return;
-  const find=prompt('Find in filename:');
-  if(!find)return;
-  const replace=prompt('Replace with:','');
-  fetch('/api/batch-rename',{method:'POST',headers:{'Authorization':'Bearer '+token,'Content-Type':'application/json','X-CSRF-Token':csrfToken},body:JSON.stringify({paths:selectedFiles,find:find,replace:replace})})
+  // Use the bulk rename modal for a better UX
+  document.getElementById('bulkRenameCount').textContent=selectedFiles.length;
+  document.getElementById('bulkRenamePreview').innerHTML='<span style="color:var(--text2)">Select a rename option below...</span>';
+  openModal('bulkRenameModal');
+}
+function doBulkRename(){
+  const find=document.getElementById('bulkFind').value;
+  const replace=document.getElementById('bulkReplace').value;
+  const prefix=document.getElementById('bulkPrefix').value;
+  const suffix=document.getElementById('bulkSuffix').value;
+  const pattern=document.getElementById('bulkPattern').value;
+  if(!find&&!prefix&&!suffix&&!pattern){showToast('Enter a rename pattern','error');return;}
+  fetch('/api/batch-rename',{method:'POST',headers:{'Authorization':'Bearer '+token,'Content-Type':'application/json','X-CSRF-Token':csrfToken},body:JSON.stringify({paths:selectedFiles,find:find,replace:replace,prefix:prefix,suffix:suffix,pattern:pattern})})
     .then(r=>r.json()).then(data=>{
       if(data.ok>0)showToast('Renamed '+data.ok+' item(s)','success');
       if(data.fail>0)showToast(data.fail+' failed','error');
+      closeModal('bulkRenameModal');
       loadFiles(currentPath);
     })
     .catch(()=>showToast('Rename failed','error'));
@@ -1896,6 +1939,62 @@ function loadLog(){
       document.getElementById('logTable').innerHTML=html;
     })
     .catch(()=>{document.getElementById('logTable').innerHTML='<tr><td colspan="4" style="padding:20px;text-align:center;color:var(--danger)">Error</td></tr>';});
+}
+
+// ============== FAVORITES SYSTEM ==============
+// Persist favorite paths in localStorage for quick access
+function getFavorites(){
+  try{return JSON.parse(localStorage.getItem('esp32fs_favorites')||'[]');}catch(e){return [];}
+}
+function saveFavorites(favs){localStorage.setItem('esp32fs_favorites',JSON.stringify(favs));}
+function toggleFavorites(){
+  const panel=document.getElementById('favoritesPanel');
+  panel.classList.toggle('show');
+  if(panel.classList.contains('show')) renderFavorites();
+}
+function renderFavorites(){
+  const favs=getFavorites();
+  const list=document.getElementById('favoritesList');
+  document.getElementById('favCount').textContent=favs.length?`(${favs.length})`:'';
+  if(favs.length===0){list.innerHTML='<span style="color:var(--text2);font-size:12px">No favorites yet. Right-click a file/folder → "Add to favorites"</span>';return;}
+  list.innerHTML='';
+  favs.forEach(f=>{
+    const name=f.path.split('/').pop()||f.path;
+    const div=document.createElement('div');
+    div.style.cssText='background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:4px 10px;font-size:12px;cursor:pointer;display:flex;align-items:center;gap:4px;max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap';
+    div.title=f.path;
+    div.innerHTML=`<span>${f.icon||'📁'}</span><span style="overflow:hidden;text-overflow:ellipsis">${name}</span>`;
+    div.onclick=()=>{loadFiles(f.path);};
+    const rm=document.createElement('span');
+    rm.textContent='✕';
+    rm.style.cssText='margin-left:4px;color:var(--text2);font-size:10px;flex-shrink:0';
+    rm.onclick=e=>{e.stopPropagation();removeFavorite(f.path);};
+    div.appendChild(rm);
+    list.appendChild(div);
+  });
+}
+function addFavorite(path){
+  const favs=getFavorites();
+  if(favs.find(f=>f.path===path))return;
+  const icon=getFileIcon(path);
+  favs.push({path:path,icon:icon});
+  saveFavorites(favs);
+  showToast('Added to favorites','success');
+  renderFavorites();
+}
+function removeFavorite(path){
+  let favs=getFavorites().filter(f=>f.path!==path);
+  saveFavorites(favs);
+  renderFavorites();
+}
+function getFileIcon(path){
+  const ext=path.split('.').pop().toLowerCase();
+  if(['jpg','jpeg','png','gif','svg','webp','bmp'].includes(ext))return'🖼️';
+  if(['mp4','avi','mkv','mov','webm'].includes(ext))return'🎬';
+  if(['mp3','wav','ogg','flac'].includes(ext))return'🎵';
+  if(['zip','gz','rar','7z'].includes(ext))return'📦';
+  if(['txt','md','html','css','js','json','xml'].includes(ext))return'📄';
+  return'📁';
 }
 
 // ============== STORAGE ANALYTICS ==============
