@@ -1248,7 +1248,7 @@ function previewFile(path){
   const type=['jpg','jpeg','png','gif','bmp','svg','webp'].includes(ext)?'image':['mp3','wav','ogg'].includes(ext)?'audio':['mp4','mov','avi'].includes(ext)?'video':ext==='pdf'?'pdf':'text';
   const content=document.getElementById('previewContent');
   document.getElementById('previewTitle').textContent=path.split('/').pop();
-  if(type==='image'){content.innerHTML=`<img src="${path}?token=${token}" alt="preview">`;}
+  if(type==='image'){content.innerHTML=`<img src="${path}?token=${token}" alt="preview" loading="lazy" style="max-width:100%;max-height:70vh;border-radius:6px">`;}
   else if(type==='audio'){content.innerHTML=`<audio controls preload="metadata" src="/api/audio?path=${encodeURIComponent(path)}&token=${token}" style="width:100%"></audio>`;}
   else if(type==='video'){
     // Enhanced video player with info fetch, playback speed, and fullscreen
