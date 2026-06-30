@@ -6722,6 +6722,7 @@ void setup() {
   webServer.on("/api/file-touch",HTTP_POST,handleFileTouch);
   webServer.on("/api/system/tasks",HTTP_GET,handleSystemTasks);
   webServer.on("/api/compress",HTTP_POST,handleCompressFile);
+  webServer.on("/api/create-version",HTTP_POST,handleCreateVersion);
   webServer.on("/api/decompress",HTTP_POST,handleDecompressFile);
   webServer.on("/api/unzip",HTTP_POST,handleUnzip);
   webServer.on("/api/temp-cleanup",HTTP_POST,handleTempCleanup);
@@ -7107,6 +7108,34 @@ void handleCompressFile() {
   resp["path"] = gzPath;
   String out; serializeJson(resp, out);
   webServer.send(200, "application/json", out);
+}
+
+// POST /api/create-version - Manually create a version snapshot of a file
+void handleCreateVersion() {
+  String u, lvl;
+  if (!isAuthenticated(webServer, u, lvl) || !checkCsrf(webServer)) { webServer.send(403); return; }
+  if (!sdOK) { sendError(503, "SD card not available"); return; }
+  if (!webServer.hasArg("path")) { sendError(400, "Missing path"); return; }
+  String path = webServer.arg("path");
+  if (!SD.exists(path)) { sendError(404, "File not found"); return; }
+  // Only files can be versioned
+  File f = SD.open(path, FILE_READ);
+  if (!f) { sendError(500, "Cannot open file"); return; }
+  if (f.isDirectory()) { f.close(); sendError(400, "Cannot version directory"); return; }
+  f.close();
+  if (acquireFileLock(path, 3000)) {
+    bool ok = createVersion(path);
+    releaseFileLock(path);
+    if (ok) {
+      logActivity("create-version", path, u);
+      broadcastChange("version-created", path);
+      webServer.send(200, "application/json", "{\"ok\":true}");
+    } else {
+      sendError(500, "Failed to create version");
+    }
+  } else {
+    sendError(423, "File is locked");
+  }
 }
 
 // POST /api/decompress - Remove .gz copy (path=...)

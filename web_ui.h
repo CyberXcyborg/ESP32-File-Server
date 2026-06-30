@@ -391,6 +391,8 @@ kbd{font-family:monospace;font-size:12px}
   <div class="ctx-item" onclick="ctxCopyPath()">📋 Copy Path</div>
   <div class="ctx-item" onclick="ctxLock()">🔒 Lock/Unlock</div>
   <div class="ctx-item" onclick="ctxCompress()">📦 Compress (Gzip)</div>
+  <div class="ctx-item" onclick="ctxVersions()">🕐 Version History</div>
+  <div class="ctx-item" onclick="ctxCreateVersion()">📌 Save Version Now</div>
   <div class="ctx-sep"></div>
   <div class="ctx-item" onclick="ctxDelete()">🗑️ Delete</div>
   <div class="ctx-sep"></div>
@@ -448,6 +450,13 @@ kbd{font-family:monospace;font-size:12px}
     <div class="modal-header"><h2>Create New File</h2><span class="close-modal" onclick="closeModal('newFileModal')">&times;</span></div>
     <div class="modal-body"><div class="form-group"><label>File Name</label><input type="text" id="newFileName" placeholder="Enter file name (e.g. notes.txt)"></div></div>
     <div class="modal-footer"><button class="btn btn-ghost" onclick="closeModal('newFileModal')">Cancel</button><button class="btn" onclick="createFile()">Create</button></div>
+</div>
+<div class="modal" id="versionsModal">
+  <div class="modal-content">
+    <div class="modal-header"><h2>🕐 Version History</h2><span class="close-modal" onclick="closeModal('versionsModal')">&times;</span></div>
+    <div class="modal-body"><div id="versionsList" style="max-height:50vh;overflow-y-auto"><p style="color:var(--text2)">Loading...</p></div></div>
+    <div class="modal-footer"><button class="btn btn-ghost" onclick="closeModal('versionsModal')">Close</button></div>
+  </div>
 </div>
 </div>
 
@@ -1012,6 +1021,47 @@ function ctxCompress(){
       if(data.ok){showToast('Compressed: '+name+'.gz','success');loadFiles(currentPath);}
       else showToast('Compress failed: '+(data.error||'unknown'),'error');
     }).catch(()=>{hideCtxMenu();showToast('Compress failed','error');});
+}
+function ctxVersions(){
+  const path=ctxTarget.dataset.path;
+  document.getElementById('versionsList').innerHTML='<p style="color:var(--text2)">Loading...</p>';
+  openModal('versionsModal');
+  fetch('/api/versions?path='+encodeURIComponent(path),{headers:{'Authorization':'Bearer '+token}})
+    .then(r=>r.json()).then(data=>{
+      if(!data.versions||data.versions.length===0){
+        document.getElementById('versionsList').innerHTML='<p style="color:var(--text2)">No version history for this file.</p>';
+        return;
+      }
+      let html='';
+      data.versions.forEach(v=>{
+        const d=new Date(v.timestamp);
+        const ts=d.toLocaleString();
+        html+=`<div style="display:flex;align-items:center;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--border)">
+          <div><div style="font-size:12px;font-weight:500">${ts}</div><div style="font-size:11px;color:var(--text2)">${v.sizeFormatted||v.size+'B'}</div></div>
+          <button class="btn btn-sm btn-ghost" onclick="restoreVersion('${path}','${v.file}')">♻️ Restore</button>
+        </div>`;
+      });
+      document.getElementById('versionsList').innerHTML=html;
+    }).catch(()=>{document.getElementById('versionsList').innerHTML='<p style="color:var(--danger)">Error loading versions</p>';});
+  hideCtxMenu();
+}
+function ctxCreateVersion(){
+  const path=ctxTarget.dataset.path;
+  showToast('Creating version snapshot...','info');
+  fetch('/api/create-version',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+token,'X-CSRF-Token':csrfToken},body:JSON.stringify({path:path})})
+    .then(r=>r.json()).then(d=>{
+      if(d.ok)showToast('Version saved!','success');
+      else showToast('Failed: '+(d.error||'unknown'),'error');
+    }).catch(()=>showToast('Failed to create version','error'));
+  hideCtxMenu();
+}
+function restoreVersion(path,versionFile){
+  if(!confirm('Restore this version? Current file will be backed up as a new version first.'))return;
+  fetch('/api/restore-version',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+token,'X-CSRF-Token':csrfToken},body:JSON.stringify({path:path,version:versionFile})})
+    .then(r=>r.json()).then(d=>{
+      if(d.ok){showToast('Version restored!','success');closeModal('versionsModal');loadFiles(currentPath);}
+      else showToast('Restore failed: '+(d.error||'unknown'),'error');
+    }).catch(()=>showToast('Restore failed','error'));
 }
 function ctxDelete(){deleteItem(ctxTarget.dataset.path,ctxTarget.dataset.name);hideCtxMenu();}
 function ctxSelectSameType(){
