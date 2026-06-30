@@ -6380,6 +6380,9 @@ void setup() {
   webServer.on("/api/analytics",HTTP_GET,handleStorageAnalytics);
   webServer.on("/api/detect-type",HTTP_GET,handleDetectType);
   webServer.on("/api/crc",HTTP_GET,handleFileCRC);
+  webServer.on("/api/batch-mkdir",HTTP_POST,handleBatchMkdir);
+  webServer.on("/api/file-touch",HTTP_POST,handleFileTouch);
+  webServer.on("/api/system/tasks",HTTP_GET,handleSystemTasks);
   webServer.on("/api/file-hash",HTTP_GET,handleFileHash);
   webServer.on("/api/bulk-crc",HTTP_GET,handleBulkVerifyCRC);
   webServer.on("/api/config-backup",HTTP_POST,handleConfigBackup);
@@ -6550,6 +6553,87 @@ void handleBuildInfo() {
   doc["mac"] = WiFi.macAddress();
   String out;
   serializeJson(doc, out);
+  sendJson(200, out);
+}
+
+// ============== BATCH MKDIR ==============
+// POST /api/batch-mkdir - Create multiple directories from JSON array
+// Body: {"paths":["/folder1","/folder2/sub",...]}
+// Useful for creating folder templates or bulk structure setup
+void handleBatchMkdir() {
+  String u, lvl;
+  if (!isAuthenticated(webServer, u, lvl) || !checkCsrf(webServer)) { webServer.send(403); return; }
+  if (!sdOK) { webServer.send(503); return; }
+  if (!webServer.hasArg("plain")) { sendError(400, "Missing paths"); return; }
+  DynamicJsonDocument input(2048);
+  deserializeJson(input, webServer.arg("plain"));
+  JsonArray paths = input["paths"];
+  if (paths.isNull() || paths.size() == 0) { sendError(400, "Empty paths array"); return; }
+  int ok = 0, fail = 0;
+  for (JsonVariant p : paths) {
+    String dirPath = p.as<String>();
+    if (dirPath.length() == 0) { fail++; continue; }
+    if (createDirRecursive(dirPath)) ok++;
+    else fail++;
+  }
+  logActivity("batch-mkdir", String(ok) + " dirs created", u);
+  DynamicJsonDocument resp(256);
+  resp["ok"] = ok;
+  resp["fail"] = fail;
+  String out; serializeJson(resp, out);
+  webServer.send(200, "application/json", out);
+}
+
+// ============== FILE TOUCH ==============
+// POST /api/file-touch - Update file modification time (useful for sync workflows)
+// Body: {"path":"/file.txt"} or {"path":"/file.txt","time":1700000000}
+void handleFileTouch() {
+  String u, lvl;
+  if (!isAuthenticated(webServer, u, lvl) || !checkCsrf(webServer)) { webServer.send(403); return; }
+  if (!sdOK) { webServer.send(503); return; }
+  if (!webServer.hasArg("plain")) { sendError(400, "Missing path"); return; }
+  DynamicJsonDocument input(256);
+  deserializeJson(input, webServer.arg("plain"));
+  String path = input["path"] | "";
+  if (path.length() == 0 || !SD.exists(path)) { sendError(404, "File not found"); return; }
+  // Rewrite file with same content to update timestamp
+  File f = SD.open(path, FILE_READ);
+  if (!f) { sendError(500, "Cannot open file"); return; }
+  uint8_t buf[256];
+  File tmp = SD.open(path + ".tmp", FILE_WRITE);
+  if (!tmp) { f.close(); sendError(500, "Cannot create temp"); return; }
+  while (f.available()) {
+    int n = f.read(buf, 256);
+    tmp.write(buf, n);
+  }
+  f.close(); tmp.close();
+  SD.remove(path);
+  SD.rename(path + ".tmp", path);
+  logActivity("file-touch", path, u);
+  webServer.send(200, "application/json", "{\"ok\":true}");
+}
+
+// ============== SYSTEM TASKS ==============
+// GET /api/system/tasks - Returns active background operations for monitoring
+void handleSystemTasks() {
+  String u, lvl;
+  if (!isAuthenticated(webServer, u, lvl)) { webServer.send(401); return; }
+  DynamicJsonDocument doc(512);
+  doc["uptime_s"] = millis() / 1000;
+  doc["heap_free"] = ESP.getFreeHeap();
+  doc["heap_min"] = ESP.getMinFreeHeap();
+  doc["wifi_rssi"] = WiFi.RSSI();
+  doc["sd_ok"] = sdOK;
+  doc["ws_clients"] = wsClientCount;
+  doc["ftp_active"] = 0; // FTP connection count (tracked externally)
+  int activeSess = 0;
+  for (int i = 0; i < MAX_SESSIONS; i++) if (sessions[i].isActive) activeSess++;
+  doc["sessions"] = activeSess;
+  doc["write_ops_total"] = totalWriteOps;
+  doc["write_bytes_total"] = (uint32_t)(totalWriteBytes / 1048576UL); // MB
+  doc["crc_errors"] = crcSpotCheckErrors;
+  doc["crc_checks"] = crcSpotChecksDone;
+  String out; serializeJson(doc, out);
   sendJson(200, out);
 }
 

@@ -189,6 +189,7 @@ kbd{font-family:monospace;font-size:12px}
     <div class="controls">
       <button class="btn" onclick="showUploadModal()">⬆️ Upload</button>
       <button class="btn" onclick="showNewFolderModal()">📁 New Folder</button>
+      <button class="btn btn-ghost" onclick="showBatchMkdirModal()" title="Create multiple folders">📂 Multi-Create</button>
       <button class="btn" onclick="showNewFileModal()">📄 New File</button>
       <button class="btn" onclick="refreshFiles()">🔄 Refresh</button>
       <button class="btn" onclick="toggleSelectAll()" id="selectAllBtn">☑️ Select All</button>
@@ -425,6 +426,13 @@ kbd{font-family:monospace;font-size:12px}
     <div class="modal-header"><h2>Create New Folder</h2><span class="close-modal" onclick="closeModal('folderModal')">&times;</span></div>
     <div class="modal-body"><div class="form-group"><label>Folder Name</label><input type="text" id="folderName" placeholder="Enter folder name"></div></div>
     <div class="modal-footer"><button class="btn btn-ghost" onclick="closeModal('folderModal')">Cancel</button><button class="btn" onclick="createFolder()">Create</button></div>
+</div>
+<div class="modal" id="batchMkdirModal">
+  <div class="modal-content">
+    <div class="modal-header"><h2>📂 Multi-Create Folders</h2><span class="close-modal" onclick="closeModal('batchMkdirModal')">&times;</span></div>
+    <div class="modal-body"><div class="form-group"><label>Folder Paths (one per line)</label><textarea id="batchMkdirPaths" style="width:100%;height:120px;border:1px solid var(--border);border-radius:6px;padding:10px;background:var(--bg);color:var(--text);font-family:monospace;font-size:13px" placeholder="/Documents&#10;/Images/2024&#10;/Backup"></textarea></div></div>
+    <div class="modal-footer"><button class="btn btn-ghost" onclick="closeModal('batchMkdirModal')">Cancel</button><button class="btn" onclick="doBatchMkdir()">Create All</button></div>
+  </div>
 </div>
 <div class="modal" id="newFileModal">
     <div class="modal-header"><h2>Create New File</h2><span class="close-modal" onclick="closeModal('newFileModal')">&times;</span></div>
@@ -951,6 +959,19 @@ function hideInfoPanel(){document.getElementById('infoPanel').classList.remove('
 // ============== UPLOAD ==============
 function showUploadModal(){document.getElementById('uploadList').innerHTML='';document.getElementById('uploadProgress').style.display='none';document.getElementById('uploadProgressFill').style.width='0%';openModal('uploadModal');}
 function showNewFolderModal(){document.getElementById('folderName').value='';openModal('folderModal');document.getElementById('folderName').focus();}
+function showBatchMkdirModal(){document.getElementById('batchMkdirPaths').value='';openModal('batchMkdirModal');document.getElementById('batchMkdirPaths').focus();}
+function doBatchMkdir(){
+  const text=document.getElementById('batchMkdirPaths').value.trim();
+  if(!text){showToast('Enter folder paths','error');return;}
+  const paths=text.split('\n').map(s=>s.trim()).filter(s=>s.length>0);
+  if(paths.length===0){showToast('Enter folder paths','error');return;}
+  fetch('/api/batch-mkdir',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+token,'X-CSRF-Token':csrfToken},body:JSON.stringify({paths:paths})})
+    .then(r=>r.json()).then(data=>{
+      if(data.ok>0)showToast('Created '+data.ok+' folder(s)','success');
+      if(data.fail>0)showToast(data.fail+' failed','error');
+      closeModal('batchMkdirModal');loadFiles(currentPath);
+    }).catch(()=>showToast('Failed','error'));
+}
 function showNewFileModal(){document.getElementById('newFileName').value='';openModal('newFileModal');document.getElementById('newFileName').focus();}
 // ============== RECURSIVE FOLDER UPLOAD ==============
 // Uses webkitGetAsEntry + createReader for true recursive folder upload
