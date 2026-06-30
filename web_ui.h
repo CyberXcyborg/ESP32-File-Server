@@ -107,6 +107,10 @@ kbd{font-family:monospace;font-size:12px}
 .nav-tab.active{background:var(--primary);color:#fff}
 .nav-tab:hover:not(.active){background:var(--bg)}
 .view{display:none}.view.active{display:block}
+.health-dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:4px;vertical-align:middle}
+.health-dot.ok{background:#00b894}.health-dot.warn{background:#fdcb6e}.health-dot.error{background:#d63031}
+.preview-tooltip{display:none;position:fixed;z-index:4000;pointer-events:none;background:var(--card);border:1px solid var(--border);border-radius:6px;box-shadow:var(--shadow);padding:4px;max-width:200px;max-height:200px}
+.preview-tooltip img{max-width:192px;max-height:192px;border-radius:4px}
 /* File info panel */
 .info-panel{background:var(--card);border-radius:var(--radius);box-shadow:var(--shadow);padding:16px;margin-bottom:10px;font-size:13px;display:none}
 .info-panel.show{display:block}
@@ -154,6 +158,7 @@ kbd{font-family:monospace;font-size:12px}
     <div class="header-right">
       <span id="userDisplay"></span>
       <span id="wsStatus" style="font-size:11px;padding:2px 6px;border-radius:4px;background:var(--bg);color:var(--text2)" title="WebSocket connection">●</span>
+      <span id="healthDot" style="font-size:11px;padding:2px 6px;border-radius:4px;background:var(--bg);color:var(--text2)" title="SD card health"><span class="health-dot ok" id="healthDotInner"></span><span id="healthText">SD OK</span></span>
       <span id="rssiBadge" style="font-size:11px;padding:2px 6px;border-radius:4px;background:var(--bg);color:var(--text2)" title="WiFi signal">📶 --</span>
       <div class="search-box">🔍<input type="text" id="searchInput" placeholder="Search..." oninput="filterFiles()" onkeydown="if(event.key==='Enter')searchGlobal()"><button class="btn btn-ghost btn-sm" onclick="searchGlobal()" title="Search all folders">🔎</button><button class="btn btn-ghost btn-sm" onclick="showContentSearch()" title="Search inside files">🔍</button></div>
       <button class="btn btn-ghost btn-sm" id="themeBtn" onclick="showThemeMenu()" title="Change theme">🎨</button>
@@ -547,6 +552,7 @@ kbd{font-family:monospace;font-size:12px}
 </div>
 
 <div class="toast" id="toast"></div>
+<div class="preview-tooltip" id="previewTooltip"></div>
 
 <script>
 let currentPath='/',files=[],selectedFiles=[],userLevel='user',sortBy='name',sortAsc=true,trashFiles=[],users=[],ctxTarget=null,csrfToken='';
@@ -755,6 +761,17 @@ function initWebSocket(){
             const ws=document.getElementById('wsStatus');
             if(ws)ws.title=d.ws_clients+' client'+(d.ws_clients!==1?'s':'')+' connected';
           }
+          // Update health dot in header
+          if(d.failure_risk!==undefined){
+            const dot=document.getElementById('healthDotInner');
+            const txt=document.getElementById('healthText');
+            if(dot&&txt){
+              const risk=d.failure_risk;
+              dot.className='health-dot '+(risk<20?'ok':risk<50?'warn':'error');
+              txt.textContent=risk<20?'SD OK':risk<50?'SD Warn':'SD Risk';
+              document.getElementById('healthDot').title='SD card health: '+risk+'% failure risk';
+            }
+          }
         }
         // Update SD health panel
         if(d.event==='sd-health'&&d.ok!==undefined){
@@ -959,6 +976,27 @@ function renderFiles(){
     }, {passive: false});
     item.addEventListener('touchend', () => { clearTimeout(longPressTimer); });
     item.addEventListener('touchmove', () => { clearTimeout(longPressTimer); });
+    // Hover preview for image files
+    if(file.type!=='dir'&&['jpg','jpeg','png','gif','webp','bmp','svg'].includes((file.name.split('.').pop()||'').toLowerCase())){
+      item.addEventListener('mouseenter',e=>{
+        const ext=(file.name.split('.').pop()||'').toLowerCase();
+        const url='/api/img?path='+encodeURIComponent(file.path)+'&token='+getToken();
+        let html=`<img src="${url}" alt="${file.name}" onerror="this.parentElement.style.display='none'">`;
+        if(ext==='svg')html=`<object data="${url}" type="image/svg+xml" style="max-width:192px;max-height:192px"><img src="${url}" onerror="this.parentElement.style.display='none'"></object>`;
+        document.getElementById('previewTooltip').innerHTML=html;
+        document.getElementById('previewTooltip').style.display='block';
+      });
+      item.addEventListener('mousemove',e=>{
+        const t=document.getElementById('previewTooltip');
+        let x=e.clientX+15; let y=e.clientY+15;
+        if(x+200>window.innerWidth)x=e.clientX-210;
+        if(y+200>window.innerHeight)y=e.clientY-210;
+        t.style.left=x+'px';t.style.top=y+'px';
+      });
+      item.addEventListener('mouseleave',()=>{
+        document.getElementById('previewTooltip').style.display='none';
+      });
+    }
   });
 }
 function filterFiles(){renderFiles();}
