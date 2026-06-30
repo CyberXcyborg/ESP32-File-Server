@@ -71,6 +71,9 @@ header h1{font-size:18px;color:var(--primary)}
 .progress-bar-fill{height:100%;background:var(--primary);width:0;transition:width .3s;border-radius:3px}
 .toast{position:fixed;bottom:16px;left:50%;transform:translateX(-50%);padding:12px 20px;border-radius:6px;color:#fff;font-size:13px;z-index:2000;opacity:0;transition:opacity .3s;max-width:90vw;text-align:center;box-shadow:var(--shadow)}
 .toast.show{opacity:1}.toast.success{background:var(--success)}.toast.error{background:var(--danger)}.toast.info{background:var(--primary)}
+.toast-stack{position:fixed;bottom:16px;right:16px;display:flex;flex-direction:column-reverse;gap:6px;z-index:2000;max-width:320px}
+.toast-stack .toast{position:relative;bottom:auto;left:auto;transform:none;white-space:normal;text-align:left;font-size:12px;padding:10px 14px;border-radius:6px;opacity:1;transition:transform .3s,opacity .3s;transform:translateX(100%)}
+.toast-stack .toast.show{transform:translateX(0)}
 .preview-container{text-align:center;padding:10px}
 .preview-container img{max-width:100%;max-height:60vh;border-radius:6px}
 .preview-container pre{text-align:left;background:var(--bg);padding:15px;border-radius:6px;overflow-x:auto;font-size:12px;max-height:60vh;overflow-y:auto;white-space:pre-wrap;word-break:break-all}
@@ -654,6 +657,7 @@ document.addEventListener('DOMContentLoaded',()=>{
     if(e.key==='ArrowLeft'&&document.activeElement.tagName!=='INPUT'&&document.activeElement.tagName!=='TEXTAREA'){e.preventDefault();if(currentPath!=='/'){const p=currentPath.substring(0,currentPath.lastIndexOf('/'));loadFiles(p?p:'/');}}
     if(e.ctrlKey&&e.key==='a'&&document.activeElement.tagName!=='INPUT'){e.preventDefault();selectedFiles=files.map(f=>f.path);updateSelBtn();renderFiles();}
     if(e.ctrlKey&&e.key==='r'&&selectedFiles.length>0&&document.activeElement.tagName!=='INPUT'){e.preventDefault();renameSelected();}
+    if(e.ctrlKey&&e.key==='u'&&document.activeElement.tagName!=='INPUT'){e.preventDefault();showUploadModal();}
     if(e.key==='?'&&document.activeElement.tagName!=='INPUT'){e.preventDefault();showShortcuts();}
   });
   // ============== CLIPBOARD PASTE UPLOAD ==============
@@ -903,7 +907,20 @@ function switchView(v,btn){
   document.getElementById(v+'View').classList.add('active');
   if(v==='trash')loadTrash();if(v==='users')loadUsers();if(v==='log')loadLog();if(v==='settings')loadSettings();if(v==='apikeys')loadApiKeys();
 }
-function showToast(msg,type='info'){const t=document.getElementById('toast');t.textContent=msg;t.className='toast '+type+' show';setTimeout(()=>t.classList.remove('show'),3000);}
+function showToast(msg,type='info',duration=3000){
+  // Use stacked toasts for non-critical messages, centered for errors
+  if(type==='error'){
+    const t=document.getElementById('toast');t.textContent=msg;t.className='toast '+type+' show';
+    setTimeout(()=>t.classList.remove('show'),duration);
+    return;
+  }
+  let stack=document.getElementById('toastStack');
+  if(!stack){stack=document.createElement('div');stack.id='toastStack';stack.className='toast-stack';document.body.appendChild(stack);}
+  const el=document.createElement('div');el.className='toast '+type;el.textContent=msg;
+  stack.appendChild(el);
+  requestAnimationFrame(()=>el.classList.add('show'));
+  setTimeout(()=>{el.classList.remove('show');setTimeout(()=>el.remove(),300);},duration);
+}
 function openModal(id){document.getElementById(id).style.display='flex';}
 function closeModal(id){document.getElementById(id).style.display='none';}
 // Confirm dialog: shows a message and calls onConfirm if user agrees
@@ -1090,7 +1107,25 @@ function selectInverse(){
   selectedFiles=allPaths.filter(p=>!selectedFiles.includes(p));
   updateSelBtn();renderFiles();
 }
-function renderPathNav(path){const parts=path.split('/').filter(p=>p);const isFav=favorites.includes(path);const starIcon=isFav?'⭐':'☆';const starColor=isFav?'#fdcb6e':'var(--text2)';let html=`<span class="path-part" onclick="loadFiles('/')">Root</span>`,build='/';parts.forEach(p=>{build+=p+'/';html+=`<span class="separator">/</span><span class="path-part" onclick="loadFiles('${build}')">${p}</span>`;});if(path!=='/')html+=`<span style="cursor:pointer;margin-left:6px;font-size:14px;color:${starColor}" onclick="toggleFavorite('${path}',event)" title="Bookmark this folder">${starIcon}</span>`;document.getElementById('pathNav').innerHTML=html;}
+function renderPathNav(path){
+  const parts=path.split('/').filter(p=>p);
+  const isFav=favorites.includes(path);
+  const starIcon=isFav?'⭐':'☆';
+  const starColor=isFav?'#fdcb6e':'var(--text2)';
+  let html=`<span class="path-part" onclick="loadFiles('/')">Root</span>`,build='/';
+  parts.forEach(p=>{build+=p+'/';html+=`<span class="separator">/</span><span class="path-part" onclick="loadFiles('${build}')">${p}</span>`;});
+  // Show file count badge for current folder
+  if(files.length>0){
+    const itemCount=files.filter(f=>f.type!=='dir').length;
+    const dirCount=files.filter(f=>f.type==='dir').length;
+    const badgeText=[];
+    if(dirCount>0)badgeText.push(dirCount+' folder'+(dirCount!==1?'s':''));
+    if(itemCount>0)badgeText.push(itemCount+' file'+(itemCount!==1?'s':''));
+    html+=` <span style="font-size:11px;color:var(--text2);background:var(--bg);padding:2px 8px;border-radius:10px;margin-left:4px">${badgeText.join(' · ')}</span>`;
+  }
+  if(path!=='/')html+=`<span style="cursor:pointer;margin-left:6px;font-size:14px;color:${starColor}" onclick="toggleFavorite('${path}',event)" title="Bookmark this folder">${starIcon}</span>`;
+  document.getElementById('pathNav').innerHTML=html;
+}
 function formatSize(b){if(b<1024)return b+' B';if(b<1048576)return(b/1024).toFixed(1)+' KB';if(b<1073741824)return(b/1048576).toFixed(1)+' MB';return(b/1073741824).toFixed(1)+' GB';}
 
 // ============== CONTEXT MENU ==============

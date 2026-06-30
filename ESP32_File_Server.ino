@@ -2226,6 +2226,17 @@ void handleUpload() {
       return;
     }
     upp = p + safeName;
+    // Auto-rename on conflict: append timestamp suffix to avoid overwriting
+    if (SD.exists(upp)) {
+      String parent = upp.substring(0, upp.lastIndexOf('/')+1);
+      String name = upp.substring(upp.lastIndexOf('/')+1);
+      int dot = name.lastIndexOf('.');
+      String b = (dot > 0) ? name.substring(0, dot) : name;
+      String e = (dot > 0) ? name.substring(dot) : "";
+      String ts = String(millis());
+      upp = parent + b + "_" + ts + e;
+      Serial.println("Upload auto-renamed: " + upp);
+    }
     // Acquire lock to prevent concurrent write corruption
     if (!acquireFileLock(upp, 5000)) {
       Serial.println("Upload rejected: file is locked: " + upp);
