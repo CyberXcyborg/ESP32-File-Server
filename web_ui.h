@@ -575,7 +575,6 @@ document.addEventListener('DOMContentLoaded',()=>{
     if(e.key==='F2'&&selectedFiles.length===1){e.preventDefault();const f=files.find(x=>x.path===selectedFiles[0]);if(f)showRenameModal(f.path,f.name);}
     if(e.key==='ArrowLeft'&&document.activeElement.tagName!=='INPUT'&&document.activeElement.tagName!=='TEXTAREA'){e.preventDefault();if(currentPath!=='/'){const p=currentPath.substring(0,currentPath.lastIndexOf('/'));loadFiles(p?p:'/');}}
     if(e.ctrlKey&&e.key==='a'&&document.activeElement.tagName!=='INPUT'){e.preventDefault();selectedFiles=files.map(f=>f.path);updateSelBtn();renderFiles();}
-    if(e.ctrlKey&&e.key==='k'&&document.activeElement.tagName!=='INPUT'){e.preventDefault();document.getElementById('searchInput').focus();document.getElementById('searchInput').select();}
     if(e.ctrlKey&&e.key==='r'&&selectedFiles.length>0&&document.activeElement.tagName!=='INPUT'){e.preventDefault();renameSelected();}
     if(e.key==='?'&&document.activeElement.tagName!=='INPUT'){e.preventDefault();showShortcuts();}
   });
@@ -739,6 +738,42 @@ function initWebSocket(){
     }catch(err){}
   };
 }
+// ============== KEYBOARD SHORTCUTS ==============
+// Global keyboard shortcuts for power users
+document.addEventListener('keydown', function(e) {
+  // Ctrl+K / Cmd+K: Focus search box
+  if ((e.ctrlKey || e.metaKey) && e.key === 'k') {
+    e.preventDefault();
+    const searchEl = document.getElementById('searchInput');
+    if (searchEl) { searchEl.focus(); searchEl.select(); }
+  }
+  // Ctrl+N / Cmd+N: New folder
+  if ((e.ctrlKey || e.metaKey) && e.key === 'n' && document.getElementById('mkdirBtn')) {
+    e.preventDefault();
+    const path = currentPath || '/';
+    const name = prompt('New folder name:');
+    if (name && name.trim()) {
+      fetch('/api/create-dir', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/x-www-form-urlencoded', 'X-CSRF-Token': csrf},
+        body: 'path=' + encodeURIComponent(path) + '&name=' + encodeURIComponent(name)
+      }).then(r => r.json()).then(d => { if (d.ok) loadFiles(currentPath); });
+    }
+  }
+  // Ctrl+U / Cmd+U: Upload
+  if ((e.ctrlKey || e.metaKey) && e.key === 'u') {
+    e.preventDefault();
+    document.getElementById('fileInput').click();
+  }
+  // F5 / Ctrl+R: Refresh file list
+  if (e.key === 'F5' || ((e.ctrlKey || e.metaKey) && e.key === 'r')) {
+    if (currentView === 'files' && document.activeElement.tagName !== 'INPUT') {
+      e.preventDefault();
+      loadFiles(currentPath);
+    }
+  }
+});
+
 function switchView(v,btn){
   document.querySelectorAll('.nav-tab').forEach(t=>t.classList.remove('active'));
   document.querySelectorAll('.view').forEach(t=>t.classList.remove('active'));
