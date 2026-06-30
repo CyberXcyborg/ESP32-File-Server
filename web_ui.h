@@ -588,6 +588,17 @@ kbd{font-family:monospace;font-size:12px}
 
 <script>
 let currentPath='/',files=[],selectedFiles=[],userLevel='user',sortBy='name',sortAsc=true,trashFiles=[],users=[],ctxTarget=null,csrfToken='';
+let lightboxImages=[],lightboxIndex=-1;
+function lightboxNav(dir){
+  lightboxIndex+=dir;
+  if(lightboxIndex<0)lightboxIndex=0;
+  if(lightboxIndex>=lightboxImages.length)lightboxIndex=lightboxImages.length-1;
+  const img=lightboxImages[lightboxIndex];
+  const imgEl=document.getElementById('previewImg');
+  if(imgEl)imgEl.src=img.path+'?token='+token;
+  const counter=document.querySelector('#previewContent div:last-child');
+  if(counter)counter.textContent=(lightboxIndex+1)+' / '+lightboxImages.length+' · Arrow keys to navigate';
+}
 // Restore sort preference from localStorage
 (function(){
   const s=localStorage.getItem('sort_by');
@@ -627,6 +638,11 @@ document.addEventListener('DOMContentLoaded',()=>{
   document.getElementById('newFileName').addEventListener('keydown',e=>{if(e.key==='Enter')createFile();});
   // Keyboard shortcuts
   document.addEventListener('keydown',e=>{
+    if(document.getElementById('previewModal').style.display==='flex'){
+      if(e.key==='ArrowLeft'){e.preventDefault();lightboxNav(-1);}
+      if(e.key==='ArrowRight'){e.preventDefault();lightboxNav(1);}
+      return;
+    }
     if(e.key==='Escape'){document.querySelectorAll('.modal').forEach(m=>m.style.display='none');hideCtxMenu();hideThemeMenu();selectedFiles=[];updateSelBtn();renderFiles();}
     if(e.key==='Delete'&&selectedFiles.length>0&&document.activeElement.tagName!=='INPUT'){e.preventDefault();deleteSelected();}
     if(e.key==='F2'&&selectedFiles.length===1){e.preventDefault();const f=files.find(x=>x.path===selectedFiles[0]);if(f)showRenameModal(f.path,f.name);}
@@ -1474,7 +1490,17 @@ function previewFile(path){
   const type=['jpg','jpeg','png','gif','bmp','svg','webp'].includes(ext)?'image':['mp3','wav','ogg'].includes(ext)?'audio':['mp4','mov','avi'].includes(ext)?'video':ext==='pdf'?'pdf':'text';
   const content=document.getElementById('previewContent');
   document.getElementById('previewTitle').textContent=path.split('/').pop();
-  if(type==='image'){content.innerHTML=`<img src="${path}?token=${token}" alt="preview" loading="lazy" style="max-width:100%;max-height:70vh;border-radius:6px">`;}
+  if(type==='image'){
+    // Build image with navigation arrows from current file list
+    const imgFiles=files.filter(f=>['jpg','jpeg','png','gif','bmp','svg','webp'].includes(f.name.split('.').pop().toLowerCase()));
+    const imgIdx=imgFiles.findIndex(f=>f.path===path);
+    lightboxImages=imgFiles;
+    lightboxIndex=imgIdx;
+    const prevBtn=imgIdx>0?`<span onclick="lightboxNav(-1)" style="position:absolute;left:10px;top:50%;transform:translateY(-50%);font-size:28px;color:#fff;background:rgba(0,0,0,0.5);border-radius:50%;width:40px;height:40px;display:flex;align-items:center;justify-content:center;cursor:pointer">&#9664;</span>`:'';
+    const nextBtn=imgIdx<imgFiles.length-1?`<span onclick="lightboxNav(1)" style="position:absolute;right:10px;top:50%;transform:translateY(-50%);font-size:28px;color:#fff;background:rgba(0,0,0,0.5);border-radius:50%;width:40px;height:40px;display:flex;align-items:center;justify-content:center;cursor:pointer">&#9654;</span>`:'';
+    content.innerHTML=`<div style="position:relative;display:flex;align-items:center;justify-content:center">${prevBtn}<img id="previewImg" src="${path}?token=${token}" alt="preview" style="max-width:100%;max-height:70vh;border-radius:6px">${nextBtn}</div>`;
+    content.innerHTML+=`<div style="text-align:center;margin-top:6px;font-size:12px;color:var(--text2)">${imgIdx+1} / ${imgFiles.length} · Arrow keys to navigate</div>`;
+  }
   else if(type==='audio'){content.innerHTML=`<audio controls preload="metadata" src="/api/audio?path=${encodeURIComponent(path)}&token=${token}" style="width:100%"></audio>`;}
   else if(type==='video'){
     // Enhanced video player with info fetch, playback speed, and fullscreen
