@@ -986,6 +986,7 @@ let uploadFailed = 0;
 let uploadTotal = 0;
 let uploadConcurrency = 3;
 let activeUploads = 0;
+let uploadStartTimes = {}; // Track start time per file for speed calculation
 
 function handleDrop(e) {
   e.preventDefault();
@@ -1136,7 +1137,13 @@ function uploadSingleFile(item, done) {
       if (e.lengthComputable) {
         const pct = Math.round(e.loaded / e.total * 100);
         const el = document.getElementById(id);
-        if (el) el.textContent = pct + '%';
+        if (el) {
+          // Calculate speed
+          const elapsed = (Date.now() - uploadStartTimes[name]) / 1000;
+          const speed = elapsed > 0 ? e.loaded / elapsed : 0;
+          const remaining = speed > 0 ? (e.total - e.loaded) / speed : 0;
+          el.textContent = pct + '% · ' + formatSize(speed) + '/s' + (remaining > 0 ? ' · ' + Math.round(remaining) + 's left' : '');
+        }
       }
     };
     xhr.onload = () => {
@@ -1153,6 +1160,7 @@ function uploadSingleFile(item, done) {
       done();
     };
     xhr.open('POST', '/api/upload?token=' + data.token);
+    uploadStartTimes[name] = Date.now();
     xhr.send(fd);
   }).catch(() => {
     const el = document.getElementById(id);
