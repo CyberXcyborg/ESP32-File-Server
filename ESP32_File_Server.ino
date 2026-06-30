@@ -3341,8 +3341,11 @@ void handleLogin() {
       if(authenticateUser(u,p,lvl)){
         auditRequest("login-ok", u);
         resetLoginRateLimit(webServer.client().remoteIP()); // Clear rate limit on success
-        String tok=createSession(u,lvl,webServer.client().remoteIP());
-        webServer.sendHeader("Set-Cookie","session_token="+tok+"; Path=/; Max-Age=1800; SameSite=Strict; HttpOnly");
+        // Remember-me: 7-day session vs 30-minute default
+        bool rememberMe = webServer.hasArg("remember") && webServer.arg("remember") == "1";
+        String tok=createSession(u, lvl, webServer.client().remoteIP(), rememberMe);
+        int maxAge = rememberMe ? 604800 : 1800; // 7 days vs 30 minutes
+        webServer.sendHeader("Set-Cookie","session_token="+tok+"; Path=/; Max-Age="+String(maxAge)+"; SameSite=Strict; HttpOnly");
         String r=webServer.hasArg("redirect")?webServer.arg("redirect"):"/";
         webServer.sendHeader("Location",r+"?token="+tok,true);webServer.send(302,"text/plain","");return;
       } else { err="Invalid username or password"; auditRequest("login-fail", u); }

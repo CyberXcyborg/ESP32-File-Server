@@ -1771,6 +1771,7 @@ input:focus{outline:none;border-color:var(--primary)}
     <input type="hidden" name="csrf" value="%CSRF%">
     <div class="form-group"><label>Username</label><input type="text" name="username" required autofocus></div>
     <div class="form-group"><label>Password</label><input type="password" name="password" required></div>
+    <div class="form-group"><label style="display:flex;align-items:center;gap:8px;cursor:pointer"><input type="checkbox" name="remember" value="1"> Remember me (7 days)</label></div>
     <button type="submit" class="btn">Log In</button>
   </form>
   <div class="error">%ERROR%</div>

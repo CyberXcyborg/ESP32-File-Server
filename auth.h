@@ -14,6 +14,7 @@ struct Session {
   String userLevel;
   String csrfToken;  // Per-session CSRF token
   IPAddress ip;      // Client IP for session binding
+  bool rememberMe;   // If true, session lasts 7 days instead of 30 min
 };
 
 Session sessions[MAX_SESSIONS];
@@ -188,7 +189,7 @@ void createDefaultUsersFile() {
 
 #define MAX_SESSIONS_PER_IP 3
 
-String createSession(String username, String userLevel, IPAddress clientIp = IPAddress(0,0,0,0)) {
+String createSession(String username, String userLevel, IPAddress clientIp = IPAddress(0,0,0,0), bool rememberMe = false) {
   unsigned long currentTime = millis();
   String token = generateSessionToken();
   // Per-IP session limit: prevent single IP from exhausting session table
@@ -226,6 +227,7 @@ String createSession(String username, String userLevel, IPAddress clientIp = IPA
   sessions[oldestIndex].isActive = true;
   sessions[oldestIndex].userLevel = userLevel;
   sessions[oldestIndex].ip = clientIp;
+  sessions[oldestIndex].rememberMe = rememberMe;
   // Auto-generate CSRF token on session creation
   generateCsrfForSession(token);
   return token;
@@ -288,7 +290,9 @@ bool validateSession(String token, String &username, String &userLevel) {
   unsigned long currentTime = millis();
   for (int i = 0; i < MAX_SESSIONS; i++) {
     if (sessions[i].isActive && sessions[i].token == token) {
-      if (currentTime - sessions[i].lastActivity > SESSION_TIMEOUT) {
+      // Allow up to 7-day session (remember-me) or default 30-min timeout
+      unsigned long timeout = sessions[i].rememberMe ? 604800000UL : SESSION_TIMEOUT;
+      if (currentTime - sessions[i].lastActivity > timeout) {
         sessions[i].isActive = false;
         return false;
       }
