@@ -379,6 +379,10 @@ kbd{font-family:monospace;font-size:12px}
       <div id="typeBars"></div>
     </div>
     <div class="info-panel show" style="margin-top:10px">
+      <h3 style="margin-bottom:12px">💾 Disk Usage Treemap</h3>
+      <div id="treemapContainer" style="min-height:120px"><p style="color:var(--text2)">Loading...</p></div>
+    </div>
+    <div class="info-panel show" style="margin-top:10px">
       <h3 style="margin-bottom:12px">🔍 Duplicate Files</h3>
       <div id="dupResults"><p style="color:var(--text2)">Click Refresh to scan for duplicates</p></div>
     </div>
@@ -2144,6 +2148,26 @@ function loadAnalytics(){
       html+='</table>';
       document.getElementById('auditLog').innerHTML=html;
     }).catch(()=>{document.getElementById('auditLog').innerHTML='<p style="color:var(--text2)">Audit log unavailable</p>';});
+  // Load disk usage treemap
+  fetch('/api/space-usage?path=/'+encodeURIComponent(currentPath),{headers:{'Authorization':'Bearer '+token}})
+    .then(r=>r.json()).then(data=>{
+      const tc=document.getElementById('treemapContainer');
+      if(!data.breakdown||data.breakdown.length===0){tc.innerHTML='<p style="color:var(--text2)">No data</p>';return;}
+      // Sort by size descending, take top 12
+      const items=data.breakdown.slice().sort((a,b)=>(b.size_kb||0)-(a.size_kb||0)).slice(0,12);
+      const total=items.reduce((s,i)=>s+(i.size_kb||0),1);
+      const colors=['#0984e3','#00b894','#e17055','#fdcb6e','#6c5ce7','#e84393','#00cec9','#d63031','#636e72','#a29bfe','#fd79a8','#55efc4'];
+      let html='<div style="display:flex;flex-wrap:wrap;gap:3px">';
+      items.forEach((item,i)=>{
+        const pct=Math.max(2,(item.size_kb/total*100));
+        const w=Math.max(30,pct);
+        const color=colors[i%colors.length];
+        html+=`<div style="width:${w}%;min-width:30px;height:40px;background:${color};border-radius:4px;display:flex;align-items:center;justify-content:center;font-size:10px;color:#fff;cursor:pointer;overflow:hidden;position:relative" title="${item.name}: ${item.size_fmt}">${item.is_dir?'📁':'📄'}</div>`;
+      });
+      html+='</div>';
+      html+=`<div style="margin-top:8px;font-size:11px;color:var(--text2)">Showing top ${items.length} items in current folder</div>`;
+      tc.innerHTML=html;
+    }).catch(()=>{document.getElementById('treemapContainer').innerHTML='<p style="color:var(--danger)">Error</p>';});
 }
 // ============== PWA SERVICE WORKER REGISTRATION ==============
 if('serviceWorker' in navigator){navigator.serviceWorker.register('/sw.js').then(()=>console.log('SW registered')).catch(()=>console.log('SW skipped'));}
