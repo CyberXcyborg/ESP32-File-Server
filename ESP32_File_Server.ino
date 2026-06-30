@@ -4543,6 +4543,92 @@ void handleFileSearch() {
   delete[] results;
 }
 
+// ============== FILE CONTENT SEARCH ==============
+// Search inside text files for a pattern (grep-like)
+// Query: ?q=pattern&path=/search/dir&limit=50
+void handleContentSearch() {
+  String u, lvl;
+  if (!isAuthenticated(webServer, u, lvl)) { sendError(401,"Not authenticated"); return; }
+  if (!sdOK) { sendError(503,"SD card not available"); return; }
+  if (!webServer.hasArg("q")) { sendError(400,"Missing query parameter 'q'"); return; }
+  String query = webServer.arg("q");
+  if (query.length() < 2) { sendError(400,"Query too short (min 2 chars)"); return; }
+  String searchPath = webServer.hasArg("path") ? sanitizePath(webServer.path()) : "/";
+  int maxResults = webServer.hasArg("limit") ? webServer.arg("limit").toInt() : 50;
+  if (maxResults > 100) maxResults = 100;
+  // Search only text-like files
+  const char *textExts[] = {"txt","md","csv","log","json","xml","html","htm","css","js","c","cpp","h","py","sh","ini","cfg","conf","php","rb","go","rs","java","ts","yaml","yml","toml","properties"};
+  // Stack-based DFS
+  String stack[32];
+  int stackTop = 0;
+  stack[stackTop++] = searchPath;
+  // Collect results
+  struct ContentHit { String path; int lineNum; String line; };
+  ContentHit *hits = new ContentHit[maxResults];
+  int hitCount = 0;
+  while (stackTop > 0 && hitCount < maxResults) {
+    String currentPath = stack[--stackTop];
+    File dir = SD.open(currentPath);
+    if (!dir || !dir.isDirectory()) { if (dir) dir.close(); continue; }
+    File file;
+    while (file = dir.openNextFile() && hitCount < maxResults) {
+      String fn = String(file.name());
+      int sl = fn.lastIndexOf('/');
+      String name = (sl >= 0) ? fn.substring(sl + 1) : fn;
+      if (file.isDirectory()) {
+        if (!name.startsWith(".") && stackTop < 32) stack[stackTop++] = fn;
+      } else {
+        // Check if text file by extension
+        int dot = name.lastIndexOf('.');
+        bool isText = false;
+        if (dot > 0) {
+          String ext = name.substring(dot + 1);
+          ext.toLowerCase();
+          for (int e = 0; e < 28; e++) {
+            if (ext == textExts[e]) { isText = true; break; }
+          }
+        }
+        if (isText && file.size() < 524288) { // Max 512KB files for content search
+          // Search line by line
+          String line = "";
+          int lineNum = 0;
+          while (file.available() && hitCount < maxResults) {
+            char c = file.read();
+            if (c == '\n') {
+              lineNum++;
+              if (line.indexOf(query) >= 0 || line.toLowerCase().indexOf(query.toLowerCase()) >= 0) {
+                hits[hitCount].path = fn;
+                hits[hitCount].lineNum = lineNum;
+                hits[hitCount].line = line.substring(0, 200); // Cap line length
+                hitCount++;
+              }
+              line = "";
+            } else if (c != '\r') {
+              line += c;
+              if (line.length() > 500) line = line.substring(line.length() - 500); // Sliding window
+            }
+          }
+        }
+      }
+      file.close();
+    }
+    dir.close();
+  }
+  DynamicJsonDocument doc(8192);
+  doc["query"] = query;
+  doc["total"] = hitCount;
+  JsonArray arr = doc.createNestedArray("results");
+  for (int i = 0; i < hitCount; i++) {
+    JsonObject r = arr.createNestedObject();
+    r["path"] = hits[i].path;
+    r["line"] = hits[i].lineNum;
+    r["content"] = hits[i].line;
+  }
+  String out; serializeJson(doc, out);
+  webServer.send(200, "application/json", out);
+  delete[] hits;
+}
+
 // ============== DISK SPACE INFO ==============
 // Returns total/used/free space and inode (file/dir) counts
 void handleDiskInfo() {
@@ -6650,6 +6736,7 @@ void setup() {
   webServer.on("/api/export-list",HTTP_GET,handleExportFileList);
   webServer.on("/api/access-stats",HTTP_GET,handleAccessStats);
   webServer.on("/api/search",HTTP_GET,handleFileSearch);
+  webServer.on("/api/content-search",HTTP_GET,handleContentSearch);
   webServer.on("/api/disk",HTTP_GET,handleDiskInfo);
   webServer.on("/api/online",HTTP_GET,handleOnlineUsers);
   webServer.on("/api/readonly",HTTP_POST,handleSetReadOnly);

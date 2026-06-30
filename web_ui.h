@@ -155,7 +155,7 @@ kbd{font-family:monospace;font-size:12px}
       <span id="userDisplay"></span>
       <span id="wsStatus" style="font-size:11px;padding:2px 6px;border-radius:4px;background:var(--bg);color:var(--text2)" title="WebSocket connection">●</span>
       <span id="rssiBadge" style="font-size:11px;padding:2px 6px;border-radius:4px;background:var(--bg);color:var(--text2)" title="WiFi signal">📶 --</span>
-      <div class="search-box">🔍<input type="text" id="searchInput" placeholder="Search..." oninput="filterFiles()" onkeydown="if(event.key==='Enter')searchGlobal()"><button class="btn btn-ghost btn-sm" onclick="searchGlobal()" title="Search all folders">🔎</button></div>
+      <div class="search-box">🔍<input type="text" id="searchInput" placeholder="Search..." oninput="filterFiles()" onkeydown="if(event.key==='Enter')searchGlobal()"><button class="btn btn-ghost btn-sm" onclick="searchGlobal()" title="Search all folders">🔎</button><button class="btn btn-ghost btn-sm" onclick="showContentSearch()" title="Search inside files">🔍</button></div>
       <button class="btn btn-ghost btn-sm" id="themeBtn" onclick="showThemeMenu()" title="Change theme">🎨</button>
       <button class="btn btn-ghost btn-sm" id="darkToggle" onclick="toggleDark()">🌙</button>
       <button class="btn btn-ghost btn-sm" onclick="showDiskInfo()" title="Disk usage">💾</button>
@@ -1440,6 +1440,22 @@ function showDiskInfo(){
     document.getElementById('diskInfoContent').innerHTML=html;
     openModal('diskInfoModal');
   }).catch(()=>showToast('Failed to load disk info','error'));
+}
+// ============== CONTENT SEARCH (grep inside files) ==============
+function showContentSearch(){
+  const q=prompt('Search inside files for:');
+  if(!q||q.length<2){showToast('Enter at least 2 characters','info');return;}
+  showToast('Searching file contents...','info');
+  fetch('/api/content-search?q='+encodeURIComponent(q)+'&path='+encodeURIComponent(currentPath)+'&limit=50&token='+token).then(r=>r.json()).then(d=>{
+    if(!d.results||d.results.length===0){showToast('No matches found in file contents','info');return;}
+    const list=d.results.map(h=>`<div class="file-item" onclick="openSearchResult('${h.path}')" style="cursor:pointer;display:flex;align-items:center;gap:10px;padding:8px 12px;border-bottom:1px solid var(--border)">
+      <span style="font-size:18px">📄</span>
+      <div style="flex:1;min-width:0"><div style="font-size:13px;font-weight:500">${h.path}</div>
+      <div style="font-size:11px;color:var(--text2)">Line ${h.line}: <code style="background:var(--bg);padding:1px 4px;border-radius:3px">${h.content.substring(0,120)}</code></div></div></div>`).join('');
+    document.getElementById('recentTitle').textContent='🔍 Content Search: '+d.results.length+' matches';
+    document.getElementById('recentList').innerHTML=list;
+    openModal('recentModal');
+  }).catch(()=>showToast('Content search failed','error'));
 }
 // ============== FAVORITES ==============
 let favorites = JSON.parse(localStorage.getItem('favorites') || '[]');
