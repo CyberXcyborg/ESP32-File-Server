@@ -326,6 +326,7 @@ kbd{font-family:monospace;font-size:12px}
     <div style="margin-top:12px">
       <button class="btn" onclick="saveSettings()">💾 Save Settings</button>
       <button class="btn btn-ghost" onclick="loadSettings()">🔄 Refresh</button>
+      <button class="btn btn-danger" onclick="doTempCleanup()" title="Remove temp/lock files">🧹 Cleanup Temp Files</button>
     </div>
   </div>
 
@@ -1466,6 +1467,15 @@ function saveUser(){
 function deleteUser(i){if(!confirm('Delete user "'+users[i].username+'"?'))return;fetch('/api/users/'+users[i].username,{method:'DELETE',headers:{'Authorization':'Bearer '+token}}).then(r=>{if(r.ok){loadUsers();showToast('Deleted','success');}else showToast('Failed','error');});}
 
 // ============== SETTINGS ==============
+function doTempCleanup(){
+  showConfirm('Remove all temporary (.tmp) and lock (.lock) files? This is safe and frees disk space.', ()=>{
+    fetch('/api/temp-cleanup',{method:'POST',headers:{'Authorization':'Bearer '+token,'X-CSRF-Token':csrfToken}})
+      .then(r=>r.json()).then(data=>{
+        if(data.ok)showToast('Cleaned '+data.cleaned+' files ('+data.bytes_freed_fmt+' freed)','success');
+        else showToast('Cleanup failed','error');
+      }).catch(()=>showToast('Cleanup failed','error'));
+  },'Cleanup');
+}
 function loadSettings(){
   fetch('/api/settings',{headers:{'Authorization':'Bearer '+token}})
     .then(r=>r.json()).then(data=>{

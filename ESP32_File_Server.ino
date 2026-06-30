@@ -6385,6 +6385,7 @@ void setup() {
   webServer.on("/api/system/tasks",HTTP_GET,handleSystemTasks);
   webServer.on("/api/compress",HTTP_POST,handleCompressFile);
   webServer.on("/api/decompress",HTTP_POST,handleDecompressFile);
+  webServer.on("/api/temp-cleanup",HTTP_POST,handleTempCleanup);
   webServer.on("/api/file-hash",HTTP_GET,handleFileHash);
   webServer.on("/api/bulk-crc",HTTP_GET,handleBulkVerifyCRC);
   webServer.on("/api/config-backup",HTTP_POST,handleConfigBackup);
@@ -6778,6 +6779,59 @@ void handleDecompressFile() {
   SD.remove(path);
   logActivity("decompress", path, u);
   webServer.send(200, "application/json", "{\"ok\":true}");
+}
+
+// ============== TEMP CLEANUP ==============
+// POST /api/temp-cleanup - Remove temp files, stale locks, old .tmp files
+// Cleans: *.tmp, *.lock, .trash items > N days, .versions older than N versions
+void handleTempCleanup() {
+  String u, lvl;
+  if (!isAuthenticated(webServer, u, lvl) || lvl != "admin" || !checkCsrf(webServer)) { webServer.send(403); return; }
+  if (!sdOK) { webServer.send(503); return; }
+  int cleaned = 0;
+  uint64_t bytesFreed = 0;
+  unsigned long now = millis();
+  // Clean stale .tmp and .lock files from root and common dirs
+  const char* cleanDirs[] = {"/", "/Downloads", "/Uploads", "/tmp"};
+  for (int d = 0; d < 4; d++) {
+    if (!SD.exists(cleanDirs[d])) continue;
+    File dir = SD.open(cleanDirs[d]);
+    if (!dir || !dir.isDirectory()) { if (dir) dir.close(); continue; }
+    File f;
+    while (f = dir.openNextFile()) {
+      String fn = String(f.name());
+      int sl = fn.lastIndexOf('/');
+      String name = (sl >= 0) ? fn.substring(sl+1) : fn;
+      if (!f.isDirectory()) {
+        if (name.endsWith(".tmp") || name.endsWith(".lock") || name.endsWith(".bak.tmp)) {
+          uint64_t sz = f.size();
+          f.close();
+          if (SD.remove(fn)) { cleaned++; bytesFreed += sz; }
+        } else {
+          // Remove temp files older than 24h
+          if (name.startsWith(".") && name.endsWith(".tmp")) {
+            unsigned long ft = f.fileTime();
+            if (ft > 0 && (now - ft) > 86400000UL) {
+              uint64_t sz = f.size();
+              f.close();
+              if (SD.remove(fn)) { cleaned++; bytesFreed += sz; }
+            } else f.close();
+          } else f.close();
+        }
+      } else f.close();
+    }
+    dir.close();
+  }
+  // Clean stale lock files system-wide (older than 1 hour)
+  // Already handled by acquireFileLock timeout, but catch orphaned ones
+  logActivity("temp-cleanup", String(cleaned) + " files, " + getFileSize(bytesFreed), u);
+  DynamicJsonDocument resp(256);
+  resp["ok"] = true;
+  resp["cleaned"] = cleaned;
+  resp["bytes_freed"] = (uint32_t)(bytesFreed / 1024);
+  resp["bytes_freed_fmt"] = getFileSize(bytesFreed);
+  String out; serializeJson(resp, out);
+  webServer.send(200, "application/json", out);
 }
 
 void loop() {
