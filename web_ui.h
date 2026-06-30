@@ -567,6 +567,7 @@ function fetchCsrf(){
 document.addEventListener('DOMContentLoaded',()=>{
   loadTheme();
   initWebSocket();
+  initSessionTimer();
   fetchCsrf();
   loadFiles('/');
   initFavorites();
@@ -631,10 +632,43 @@ document.addEventListener('dragenter',e=>{e.preventDefault();gDragCounter++;docu
 document.addEventListener('dragleave',e=>{e.preventDefault();gDragCounter--;if(gDragCounter<=0){gDragCounter=0;document.getElementById('globalDragOverlay').style.display='none';}});
 document.addEventListener('dragover',e=>e.preventDefault());
 document.addEventListener('drop',e=>{e.preventDefault();gDragCounter=0;document.getElementById('globalDragOverlay').style.display='none';handleFiles(e.dataTransfer.files);});
+function getToken(){
+  const p=new URLSearchParams(window.location.search);const t=p.get('token');
+  if(t){document.cookie='session_token='+t+';path=/;max-age=1800';return t;}
   const c=document.cookie.split(';');
   for(let x of c){const[n,v]=x.trim().split('=');if(n==='session_token')return v;}
   return '';
 }
+// ============== SESSION TIMEOUT WARNING ==============
+// Warn user 2 minutes before session expires, with silent keepalive ping
+let sessionWarned=false;
+function initSessionTimer(){
+  // Ping every 5 minutes to keep session alive (resets server-side activity)
+  setInterval(()=>{
+    if(getToken()){
+      fetch('/api/ping',{headers:{'Authorization':'Bearer '+getToken()}}).catch(()=>{});
+    }
+  },300000);
+  // Check session age every 30 seconds
+  setInterval(()=>{
+    const loginTime=parseInt(localStorage.getItem('loginTime')||'0');
+    if(!loginTime)return;
+    const elapsed=Date.now()-loginTime;
+    const warnAt=1800000-1200000; // Warn 2 min before 30-min timeout
+    if(elapsed>warnAt && !sessionWarned){
+      sessionWarned=true;
+      if(confirm('Your session will expire in 2 minutes. Stay logged in?')){
+        // Reset timer by pinging
+        fetch('/api/ping',{headers:{'Authorization':'Bearer '+getToken()}}).then(()=>{
+          localStorage.setItem('loginTime',String(Date.now()));
+          sessionWarned=false;
+        }).catch(()=>{});
+      }
+    }
+  },30000);
+}
+// Record login time on page load
+if(getToken()) localStorage.setItem('loginTime',String(Date.now()));
 // ============== THEME SYSTEM ==============
 function setTheme(name){
   document.body.className=name;
