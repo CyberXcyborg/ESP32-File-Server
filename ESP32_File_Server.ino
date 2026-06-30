@@ -2668,6 +2668,125 @@ void handleVideoThumbnail() {
   logActivity("video-stream", path, u);
 }
 
+// ============== VIDEO INFO ==============
+// Returns metadata about video/audio files for better inline playback
+// Includes duration estimation, file size, MIME type, and streaming hints
+void handleVideoInfo() {
+  String u, lvl;
+  if (!isAuthenticated(webServer, u, lvl)) { webServer.send(401); return; }
+  if (!sdOK) { webServer.send(503); return; }
+  if (!webServer.hasArg("path")) { webServer.send(400); return; }
+  String path = webServer.arg("path");
+  if (!SD.exists(path)) { webServer.send(404); return; }
+  File f = SD.open(path, FILE_READ);
+  if (!f) { webServer.send(500); return; }
+  String name = path.substring(path.lastIndexOf('/')+1);
+  String ctype = detectFileTypeByContent(path);
+  if (ctype == "application/octet-stream") ctype = getContentType(name);
+  unsigned long fsize = f.size();
+  // Estimate duration based on file size and typical bitrates
+  // This is a rough approximation for H.264/AAC content
+  String estDuration = "unknown";
+  int estSec = 0;
+  if (ctype.startsWith("video/")) {
+    // Assume ~2 Mbps average for ESP32-captured video
+    estSec = (int)(fsize / (250000));  // 2 Mbps = 250000 bytes/sec
+  } else if (ctype.startsWith("audio/")) {
+    // Assume ~128 kbps for audio
+    estSec = (int)(fsize / (16000));  // 128 kbps = 16000 bytes/sec
+  }
+  if (estSec > 0) {
+    int mins = estSec / 60;
+    int secs = estSec % 60;
+    estDuration = String(mins) + ":" + (secs < 10 ? "0" : "") + String(secs);
+  }
+  // Check for subtitle file (.srt/.vtt)
+  String baseName = name;
+  int dot = name.lastIndexOf('.');
+  if (dot > 0) baseName = name.substring(0, dot);
+  bool hasSubs = SD.exists(path.substring(0, path.lastIndexOf('/')+1) + baseName + ".srt") ||
+                 SD.exists(path.substring(0, path.lastIndexOf('/')+1) + baseName + ".vtt");
+  f.close();
+  DynamicJsonDocument doc(512);
+  doc["path"] = path;
+  doc["name"] = name;
+  doc["size"] = fsize;
+  doc["size_formatted"] = getFileSize(fsize);
+  doc["content_type"] = ctype;
+  doc["estimated_duration"] = estDuration;
+  doc["estimated_seconds"] = estSec;
+  doc["has_subtitles"] = hasSubs;
+  doc["streaming_supported"] = true;
+  doc["range_supported"] = true;
+  String out;
+  serializeJson(doc, out);
+  sendJson(200, out);
+}
+
+// ============== AUDIO STREAM WITH RANGE SUPPORT ==============
+// Serves audio files with byte-range support for seeking in <audio> elements
+void handleAudioStream() {
+  String u, lvl;
+  if (!isAuthenticated(webServer, u, lvl)) { webServer.send(401); return; }
+  if (!sdOK) { webServer.send(503); return; }
+  if (!webServer.hasArg("path")) { webServer.send(400); return; }
+  String path = webServer.arg("path");
+  if (!SD.exists(path)) { webServer.send(404); return; }
+  File f = SD.open(path, FILE_READ);
+  if (!f) { webServer.send(500); return; }
+  String name = path.substring(path.lastIndexOf('/')+1);
+  String ctype = detectFileTypeByContent(path);
+  if (ctype == "application/octet-stream") ctype = getContentType(name);
+  unsigned long fsize = f.size();
+  unsigned long fmtime = f.fileTime();
+  String etag = "\"" + String(fsize) + "-" + String(fmtime) + "\"";
+  webServer.sendHeader("ETag", etag);
+  webServer.sendHeader("Cache-Control", "public, max-age=3600");
+  webServer.sendHeader("Accept-Ranges", "bytes");
+  webServer.sendHeader("X-Content-Type-Options", "nosniff");
+  if (webServer.hasHeader("If-None-Match") && webServer.header("If-None-Match") == etag) {
+    f.close();
+    webServer.send(304, "text/plain", "Not Modified");
+    return;
+  }
+  // Range request support for audio seeking
+  if (webServer.hasHeader("Range")) {
+    String rangeHdr = webServer.header("Range");
+    if (rangeHdr.startsWith("bytes=")) {
+      String rangeSpec = rangeHdr.substring(6);
+      int dash = rangeSpec.indexOf('-');
+      if (dash > 0) {
+        unsigned long startByte = rangeSpec.substring(0, dash).toInt();
+        unsigned long endByte = (dash < rangeSpec.length()-1) ? rangeSpec.substring(dash+1).toInt() : fsize - 1;
+        if (endByte >= fsize) endByte = fsize - 1;
+        if (startByte <= endByte && startByte < fsize) {
+          unsigned long contentLen = endByte - startByte + 1;
+          webServer.sendHeader("Content-Range", "bytes " + String(startByte) + "-" + String(endByte) + "/" + String(fsize));
+          webServer.sendHeader("Content-Length", String(contentLen));
+          webServer.send(206, ctype, "");
+          f.seek(startByte);
+          uint8_t buf[512];
+          unsigned long sent = 0;
+          while (sent < contentLen && f.available()) {
+            int toRead = min((unsigned long)512, contentLen - sent);
+            int n = f.read(buf, toRead);
+            if (n <= 0) break;
+            webServer.sendContent((const char*)buf, n);
+            sent += n;
+          }
+          f.close();
+          logActivity("audio-range", path + " (" + String(startByte) + "-" + String(endByte) + ")", u);
+          return;
+        }
+      }
+    }
+  }
+  webServer.sendHeader("Content-Length", String(fsize));
+  webServer.streamFile(f, ctype);
+  f.close();
+  logActivity("audio-stream", path, u);
+}
+
 // ============== CHANGES ==============
 void handleChanges() {
   String u, lvl;
@@ -6328,6 +6447,8 @@ void setup() {
   webServer.on("/api/zip",HTTP_POST,handleZipDownload);
   webServer.on("/api/batch-download",HTTP_POST,handleBatchDownload);
   webServer.on("/api/video",HTTP_GET,handleVideoThumbnail);
+  webServer.on("/api/video-info",HTTP_GET,handleVideoInfo);
+  webServer.on("/api/audio",HTTP_GET,handleAudioStream);
   webServer.on("/api/build-info",HTTP_GET,handleBuildInfo);
   webServer.on("/api/stats",HTTP_GET,handleQuickStats);
   webServer.on("/api/wear-level",HTTP_GET,handleWearLevel);

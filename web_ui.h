@@ -1241,8 +1241,27 @@ function previewFile(path){
   const content=document.getElementById('previewContent');
   document.getElementById('previewTitle').textContent=path.split('/').pop();
   if(type==='image'){content.innerHTML=`<img src="${path}?token=${token}" alt="preview">`;}
-  else if(type==='audio'){content.innerHTML=`<audio controls src="${path}?token=${token}"></audio>`;}
-  else if(type==='video'){content.innerHTML=`<video controls preload="metadata" poster="/api/video?path=${encodeURIComponent(path)}&thumb=1&token=${token}" src="/api/video?path=${encodeURIComponent(path)}&token=${token}"></video>`;}
+  else if(type==='audio'){content.innerHTML=`<audio controls preload="metadata" src="/api/audio?path=${encodeURIComponent(path)}&token=${token}" style="width:100%"></audio>`;}
+  else if(type==='video'){
+    // Enhanced video player with info fetch, playback speed, and fullscreen
+    content.innerHTML=`<video id="vidPlayer" controls preload="metadata" style="width:100%;max-height:60vh;border-radius:6px" poster="/api/video?path=${encodeURIComponent(path)}&thumb=1&token=${token}" src="/api/video?path=${encodeURIComponent(path)}&token=${token}"></video>
+    <div style="display:flex;gap:6px;margin-top:8px;align-items:center;flex-wrap:wrap">
+      <span style="font-size:12px;color:var(--text2)" id="vidInfo">Loading info...</span>
+      <div style="flex:1"></div>
+      <label style="font-size:12px;color:var(--text2)">Speed:</label>
+      <select id="vidSpeed" onchange="document.getElementById('vidPlayer').playbackRate=this.value" style="font-size:12px;padding:2px 4px;border-radius:4px;border:1px solid var(--border);background:var(--bg);color:var(--text)">
+        <option value="0.5">0.5x</option><option value="1" selected>1x</option>
+        <option value="1.25">1.25x</option><option value="1.5">1.5x</option>
+        <option value="2">2x</option>
+      </select>
+      <button class="btn btn-sm btn-ghost" onclick="document.getElementById('vidPlayer').requestFullscreen()">⛶ Fullscreen</button>
+    </div>`;
+    // Fetch video metadata
+    fetch('/api/video-info?path='+encodeURIComponent(path)+'&token='+token).then(r=>r.json()).then(d=>{
+      const el=document.getElementById('vidInfo');
+      if(el) el.textContent=`${d.size_formatted || ''} · ${d.estimated_duration || '?'} · ${d.content_type || ''}${d.has_subtitles ? ' · 📝 Subtitles' : ''}`;
+    }).catch(()=>{});
+  }
   else if(type==='pdf'){content.innerHTML=`<iframe src="/api/download?path=${encodeURIComponent(path)}&token=${token}" style="width:100%;height:60vh;border:none;border-radius:6px"></iframe>`;}
   else{
     // Use markdown preview for .md files, /api/preview for other text
