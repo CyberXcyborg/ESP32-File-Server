@@ -2094,6 +2094,74 @@ void handleCopy() {
   else webServer.send(500, "text/plain", "Failed");
 }
 
+// ============== CLIPBOARD GET ==============
+// Return current clipboard contents (files that were cut/copied)
+void handleClipboardGet() {
+  String u, lvl;
+  if (!isAuthenticated(webServer, u, lvl)) { webServer.send(401); return; }
+  DynamicJsonDocument doc(2048);
+  JsonArray entries = doc.createNestedArray("entries");
+  for (int i = 0; i < clipboardCount; i++) {
+    JsonObject e = entries.createNestedObject();
+    e["path"] = clipboard[i].path;
+    e["action"] = clipboard[i].action;
+    e["user"] = clipboard[i].username;
+    e["time"] = clipboard[i].timestamp;
+  }
+  String out; serializeJson(doc, out);
+  webServer.send(200, "application/json", out);
+}
+
+// ============== CLIPBOARD PASTE ==============
+// Paste files from server-side clipboard into a destination directory
+void handleClipboardPaste() {
+  String u, lvl;
+  if (!isAuthenticated(webServer, u, lvl) || !checkCsrf(webServer)) { webServer.send(403); return; }
+  if (!sdOK) { webServer.send(503); return; }
+  if (!webServer.hasArg("plain")) { webServer.send(400); return; }
+  DynamicJsonDocument doc(2048);
+  deserializeJson(doc, webServer.arg("plain"));
+  String dest = doc["dest"] | "";
+  int idx = doc["index"] | -1;
+  if (dest.length() == 0) { webServer.send(400, "application/json", "{\"error\":\"No destination\"}"); return; }
+  // If index specified, paste that specific entry; otherwise paste all
+  int start = (idx >= 0 && idx < clipboardCount) ? idx : 0;
+  int end = (idx >= 0 && idx < clipboardCount) ? idx + 1 : clipboardCount;
+  int ok = 0, fail = 0;
+  for (int i = start; i < end; i++) {
+    String srcPath = clipboard[i].path;
+    String action = clipboard[i].action;
+    if (!SD.exists(srcPath)) { fail++; continue; }
+    String name = srcPath.substring(srcPath.lastIndexOf('/') + 1);
+    String destPath = dest + (dest.endsWith("/") ? "" : "/") + name;
+    // Avoid overwriting
+    if (SD.exists(destPath)) {
+      // Append a number to avoid conflict
+      String base = name, ext = "";
+      int dot = name.lastIndexOf('.');
+      if (dot > 0) { base = name.substring(0, dot); ext = name.substring(dot); }
+      int copyNum = 1;
+      do {
+        destPath = dest + (dest.endsWith("/") ? "" : "/") + base + " (" + String(copyNum++) + ")" + ext;
+      } while (SD.exists(destPath) && copyNum < 100);
+    }
+    bool success;
+    File srcObj = SD.open(srcPath);
+    if (srcObj && srcObj.isDirectory()) {
+      srcObj.close();
+      success = copyDir(srcPath, destPath);
+    } else {
+      success = copyFile(srcPath, destPath);
+    }
+    if (success) {
+      logActivity("clipboard-paste", srcPath + " -> " + destPath, u);
+      broadcastChange("paste", destPath);
+      ok++;
+    } else fail++;
+  }
+  webServer.send(200, "application/json", "{\"ok\":" + String(ok) + ",\"fail\":" + String(fail) + "}");
+}
+
 // ============== UPLOAD ==============
 void handleUploadAuth() {
   String u, lvl;
@@ -6721,6 +6789,8 @@ void setup() {
   webServer.on("/api/rename",HTTP_POST,handleRename);
   webServer.on("/api/move",HTTP_POST,handleMove);
   webServer.on("/api/copy",HTTP_POST,handleCopy);
+  webServer.on("/api/clipboard-paste",HTTP_POST,handleClipboardPaste);
+  webServer.on("/api/clipboard",HTTP_GET,handleClipboardGet);
   webServer.on("/api/upload-auth",HTTP_GET,handleUploadAuth);
   webServer.on("/api/upload",HTTP_POST,[](){if(!checkCsrf(webServer)){webServer.send(403,"text/plain","CSRF invalid");return;}webServer.send(200);},handleUpload);
   webServer.on("/api/upload-chunk",HTTP_POST,[](){if(!checkCsrf(webServer)){webServer.send(403,"text/plain","CSRF invalid");return;}webServer.send(200);},handleChunkedUpload);

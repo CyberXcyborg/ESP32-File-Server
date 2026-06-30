@@ -204,6 +204,7 @@ kbd{font-family:monospace;font-size:12px}
       <button class="btn btn-ghost" onclick="selectInverse()" id="selectInverseBtn" style="display:none">🔄 Invert</button>
       <button class="btn" onclick="downloadZip()">📦 Download ZIP</button>
       <button class="btn btn-ghost" onclick="exportFileList()" title="Export file list">📋 Export</button>
+      <button class="btn btn-ghost" onclick="pasteClipboard()" id="pasteBtn" style="display:none" title="Paste files from clipboard">📋 Paste</button>
       <button class="btn btn-danger" id="delSelBtn" style="display:none" onclick="deleteSelected()">🗑️ Delete Selected</button>
       <button class="btn" id="copySelBtn" style="display:none" onclick="copySelected()">📋 Copy Selected</button>
       <button class="btn" id="moveSelBtn" style="display:none" onclick="moveSelected()">📦 Move Selected</button>
@@ -933,6 +934,18 @@ function exportFileList(){
   if(!fmt||!["json","csv"].includes(fmt))return;
   window.location.href='/api/export-list?format='+fmt+'&path='+encodeURIComponent(currentPath)+'&token='+token;
 }
+function pasteClipboard(){
+  fetch('/api/clipboard',{headers:{'Authorization':'Bearer '+token}})
+    .then(r=>r.json()).then(data=>{
+      if(!data.entries||data.entries.length===0){showToast('Clipboard is empty','info');return;}
+      fetch('/api/clipboard-paste',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+token,'X-CSRF-Token':csrfToken},body:JSON.stringify({dest:currentPath})})
+        .then(r=>r.json()).then(d=>{
+          if(d.ok>0)showToast('Pasted '+d.ok+' item(s)','success');
+          if(d.fail>0)showToast(d.fail+' failed','error');
+          loadFiles(currentPath);
+        }).catch(()=>showToast('Paste failed','error'));
+    }).catch(()=>showToast('Cannot read clipboard','error'));
+}
 function downloadSelected(){
   if(selectedFiles.length===0)return;
   showToast('Creating ZIP...','info');
@@ -952,6 +965,11 @@ function loadFiles(path){
       if(userLevel==='admin')document.querySelectorAll('.admin-only').forEach(e=>e.style.display='');
       document.getElementById('userDisplay').textContent='👤 '+data.username;
       renderFiles();renderPathNav(path);
+      // Show paste button if clipboard has entries
+      fetch('/api/clipboard',{headers:{'Authorization':'Bearer '+token}}).then(r=>r.json()).then(cb=>{
+        const pb=document.getElementById('pasteBtn');
+        if(pb)pb.style.display=(cb.entries&&cb.entries.length>0)?'':'none';
+      }).catch(()=>{});
       if(data.storage){
         const pct=Math.round(data.storage.used/data.storage.total*100);
         document.getElementById('storageInfo').innerHTML=`💾 ${formatSize(data.storage.used)} / ${formatSize(data.storage.total)} (${pct}%)<br><span style="font-size:10px">${data.dirCount} folders, ${data.fileCount} files</span><div class="storage-bar"><div class="storage-bar-fill" style="width:${pct}%"></div></div>`;
