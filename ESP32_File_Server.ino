@@ -2187,10 +2187,14 @@ void handleUpload() {
     totalWriteOps++;
     totalWriteBytes += up.totalSize;
     logActivity("upload", upp+" ("+String(up.totalSize)+"B)", u);
-    broadcastChange("upload", upp);
+    broadcastChange(upp, upp);
     trackFileAccess(upp, "view"); // Record initial upload
     trackWriteActivity(upp); // Track wear leveling
     fireWebhook("upload", upp, u);
+    // Auto-unzip: if uploaded file is .zip, extract it automatically
+    if (upp.endsWith(".zip")) {
+      handleAutoUnzip(upp, u);
+    }
     // Store CRC32 sidecar for integrity verification
     storeFileCRC(upp);
     // Verify upload integrity if client sent CRC32
@@ -6509,6 +6513,7 @@ void setup() {
   webServer.on("/api/system/tasks",HTTP_GET,handleSystemTasks);
   webServer.on("/api/compress",HTTP_POST,handleCompressFile);
   webServer.on("/api/decompress",HTTP_POST,handleDecompressFile);
+  webServer.on("/api/unzip",HTTP_POST,handleUnzip);
   webServer.on("/api/temp-cleanup",HTTP_POST,handleTempCleanup);
   webServer.on("/api/file-hash",HTTP_GET,handleFileHash);
   webServer.on("/api/bulk-crc",HTTP_GET,handleBulkVerifyCRC);
@@ -6892,6 +6897,153 @@ void handleCompressFile() {
 }
 
 // POST /api/decompress - Remove .gz copy (path=...)
+// ============== UNZIP EXTRACT ==============
+// Auto-unzip: called after upload to extract ZIP contents, broadcast extracted files
+void handleAutoUnzip(String zipPath, String username) {
+  if (!SD.exists(zipPath) || !zipPath.endsWith(".zip")) return;
+  uint32_t zipSize = 0;
+  { File sz = SD.open(zipPath, FILE_READ); if (!sz) return; zipSize = sz.size(); sz.close(); }
+  if (zipSize < 22 || zipSize > 51200) return;
+  String outDir = zipPath.substring(0, zipPath.lastIndexOf('.'));
+  createDirRecursive(outDir);
+  uint8_t *zipData = new uint8_t[zipSize];
+  if (!zipData) return;
+  { File zfr = SD.open(zipPath, FILE_READ); if (!zfr) { delete[] zipData; return; } zfr.read(zipData, zipSize); zfr.close(); }
+  mz_zip_archive zip_archive;
+  memset(&zip_archive, 0, sizeof(zip_archive));
+  if (!mz_zip_reader_init(&zip_archive, zipData, zipSize, 0)) { delete[] zipData; return; }
+  int fileCount = mz_zip_reader_get_num_files(&zip_archive);
+  if (fileCount <= 0 || fileCount > 200) { mz_zip_reader_end(&zip_archive); delete[] zipData; return; }
+  int extracted = 0;
+  for (int i = 0; i < fileCount; i++) {
+    mz_zip_archive_file_stat fileStat;
+    if (!mz_zip_reader_file_stat(&zip_archive, i, &fileStat)) continue;
+    const char *name = mz_zip_reader_get_filename(&zip_archive, i, NULL);
+    if (name[strlen(name) - 1] == '/') continue;
+    String fname = name;
+    int sl = fname.lastIndexOf('/');
+    if (sl >= 0) fname = fname.substring(sl + 1);
+    fname.replace("..", ""); fname.replace("/", "_");
+    if (fname.length() == 0 || fname.startsWith(".")) continue;
+    if (!isUploadSafe(fname)) continue;
+    String destPath = outDir + "/" + fname;
+    size_t compSize = fileStat.m_comp_size;
+    if (compSize > 32768) continue;
+    uint8_t *destBuf = new uint8_t[compSize + 1];
+    if (!destBuf) continue;
+    size_t written = mz_zip_reader_extract_to_mem(&zip_archive, i, destBuf, compSize + 1, 0);
+    if (written > 0) {
+      File of = SD.open(destPath, FILE_WRITE);
+      if (of) { of.write(destBuf, written); of.close(); extracted++; broadcastChange("upload", destPath); }
+    }
+    delete[] destBuf;
+  }
+  mz_zip_reader_end(&zip_archive);
+  delete[] zipData;
+  logActivity("auto-unzip", zipPath + " -> " + outDir + " (" + String(extracted) + " files)", username);
+}
+
+// Extracts a .zip archive to a target directory on the ESP32
+void handleUnzip() {
+  String u, lvl;
+  if (!isAuthenticated(webServer, u, lvl) || !checkCsrf(webServer)) { webServer.send(403); return; }
+  if (!sdOK) { webServer.send(503, "application/json", "{\"error\":\"sd-unavailable\"}"); return; }
+  if (!webServer.hasArg("path")) { sendError(400, "Missing path"); return; }
+  String zipPath = sanitizePath(webServer.arg("path"));
+  if (!SD.exists(zipPath)) { sendError(404, "ZIP file not found"); return; }
+  if (!zipPath.endsWith(".zip")) { sendError(400, "Not a .zip file"); return; }
+  // Determine output directory: same as zip filename without .zip
+  String outDir = zipPath.substring(0, zipPath.lastIndexOf('.'));
+  if (webServer.hasArg("dir")) outDir = sanitizePath(webServer.arg("dir"));
+  createDirRecursive(outDir);
+  // Open ZIP and extract
+  File zf = SD.open(zipPath, FILE_READ);
+  if (!zf) { sendError(500, "Cannot open ZIP"); return; }
+  uint32_t zipSize = zf.size();
+  if (zipSize < 22) { zf.close(); sendError(400, "File too small"); return; }
+  // Read central directory from end of file to verify
+  uint8_t cdBuf[32];
+  zf.seek(zipSize - 22); // EOCD is at least 22 bytes
+  int n = zf.read(cdBuf, 32);
+  zf.close();
+  if (n < 22 || cdBuf[0] != 0x50 || cdBuf[1] != 0x4B) {
+    sendError(400, "Invalid ZIP file"); return;
+  }
+  // Use miniz_zip to extract
+  mz_zip_archive zip_archive;
+  memset(&zip_archive, 0, sizeof(zip_archive));
+  zip_archive.m_pIO_opaque = &SD;
+  // Custom read function for SD file
+  // Simplest approach: read entire file into memory if small enough (<50KB)
+  if (zipSize > 51200) {
+    sendError(400, "ZIP too large for on-device extract (max 50KB)"); return;
+  }
+  uint8_t *zipData = new uint8_t[zipSize];
+  if (!zipData) { sendError(500, "Out of memory"); return; }
+  File zfr = SD.open(zipPath, FILE_READ);
+  if (!zfr) { delete[] zipData; sendError(500, "Cannot read ZIP"); return; }
+  zfr.read(zipData, zipSize);
+  zfr.close();
+  // Initialize reader
+  mz_zip_reader_init(&zip_archive, zipData, zipSize, 0);
+  int fileCount = mz_zip_reader_get_num_files(&zip_archive);
+  if (fileCount <= 0) {
+    mz_zip_reader_end(&zip_archive);
+    delete[] zipData;
+    sendError(400, "ZIP is empty or corrupt"); return;
+  }
+  // Limit number of files to prevent DoS
+  if (fileCount > 200) fileCount = 200;
+  int extracted = 0;
+  String firstError = "";
+  for (int i = 0; i < fileCount; i++) {
+    mz_zip_archive_file_stat fileStat;
+    if (!mz_zip_reader_file_stat(&zip_archive, i, &fileStat)) continue;
+    // Skip directories
+    const char *name = mz_zip_reader_get_filename(&zip_archive, i, NULL);
+    if (name[strlen(name) - 1] == '/') continue;
+    // Sanitize filename
+    String fname = name;
+    int sl = fname.lastIndexOf('/');
+    if (sl >= 0) fname = fname.substring(sl + 1);
+    fname.replace("..", "");
+    fname.replace("/", "_");
+    if (fname.length() == 0 || fname.startsWith(".")) continue;
+    // Block dangerous extensions
+    if (!isUploadSafe(fname)) continue;
+    String destPath = outDir + "/" + fname;
+    // Extract to buffer
+    size_t compSize = fileStat.m_comp_size;
+    if (compSize > 32768) {
+      if (firstError.length() == 0) firstError = "Skipped large: " + fname;
+      continue;
+    }
+    uint8_t *destBuf = new uint8_t[compSize + 1];
+    if (!destBuf) {
+      if (firstError.length() == 0) firstError = "OOM extracting: " + fname;
+      continue;
+    }
+    // Decompress from ZIP
+    size_t written = mz_zip_reader_extract_to_mem(&zip_archive, i, destBuf, compSize + 1, 0);
+    if (written > 0) {
+      File of = SD.open(destPath, FILE_WRITE);
+      if (of) { of.write(destBuf, written); of.close(); extracted++; }
+    }
+    delete[] destBuf;
+  }
+  mz_zip_reader_end(&zip_archive);
+  delete[] zipData;
+  DynamicJsonDocument resp(512);
+  resp["ok"] = true;
+  resp["extracted"] = extracted;
+  resp["total_in_zip"] = fileCount;
+  resp["output_dir"] = outDir;
+  if (firstError.length() > 0) resp["note"] = firstError;
+  String out; serializeJson(resp, out);
+  logActivity("unzip", zipPath + " -> " + outDir + " (" + String(extracted) + " files)", u);
+  webServer.send(200, "application/json", out);
+}
+
 void handleDecompressFile() {
   String u, lvl;
   if (!isAuthenticated(webServer, u, lvl) || !checkCsrf(webServer)) { webServer.send(403); return; }
