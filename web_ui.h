@@ -233,6 +233,7 @@ kbd{font-family:monospace;font-size:12px}
       <span class="filter-chip" onclick="setTypeFilter('docs',this)">📄 Docs</span>
       <span class="filter-chip" onclick="setTypeFilter('code',this)">💻 Code</span>
       <span class="filter-chip" onclick="setTypeFilter('archives',this)">📦 Archives</span>
+      <span class="filter-chip" id="showHiddenBtn" onclick="toggleShowHidden()" title="Toggle hidden files">👁️ Hidden</span>
     </div>
     <div id="fileCountBadge" style="font-size:11px;color:var(--text2);padding:4px 0"></div>
     <div id="infoPanel" class="info-panel">
@@ -1000,14 +1001,22 @@ function loadFiles(path){
 }
 
 let typeFilter='all';
+let showHidden=false;
 function setTypeFilter(type,el){
   typeFilter=type;
   document.querySelectorAll('.filter-chip').forEach(c=>c.classList.remove('active'));
   if(el)el.classList.add('active');
   renderFiles();
 }
+function toggleShowHidden(){
+  showHidden=!showHidden;
+  document.getElementById('showHiddenBtn').classList.toggle('active',showHidden);
+  renderFiles();
+}
 function renderFiles(){
   let f=[...files];
+  // Filter hidden files unless showHidden is enabled
+  if(!showHidden) f=f.filter(x=>!x.name.startsWith('.'));
   const q=document.getElementById('searchInput').value.toLowerCase();
   if(q)f=f.filter(x=>x.name.toLowerCase().includes(q));
   // Apply type filter
@@ -1116,8 +1125,10 @@ function renderPathNav(path){
   parts.forEach(p=>{build+=p+'/';html+=`<span class="separator">/</span><span class="path-part" onclick="loadFiles('${build}')">${p}</span>`;});
   // Show file count badge for current folder
   if(files.length>0){
-    const itemCount=files.filter(f=>f.type!=='dir').length;
-    const dirCount=files.filter(f=>f.type==='dir').length;
+    let visibleFiles=files;
+    if(!showHidden) visibleFiles=files.filter(f=>!f.name.startsWith('.'));
+    const itemCount=visibleFiles.filter(f=>f.type!=='dir').length;
+    const dirCount=visibleFiles.filter(f=>f.type==='dir').length;
     const badgeText=[];
     if(dirCount>0)badgeText.push(dirCount+' folder'+(dirCount!==1?'s':''));
     if(itemCount>0)badgeText.push(itemCount+' file'+(itemCount!==1?'s':''));
