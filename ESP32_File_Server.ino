@@ -6383,6 +6383,8 @@ void setup() {
   webServer.on("/api/batch-mkdir",HTTP_POST,handleBatchMkdir);
   webServer.on("/api/file-touch",HTTP_POST,handleFileTouch);
   webServer.on("/api/system/tasks",HTTP_GET,handleSystemTasks);
+  webServer.on("/api/compress",HTTP_POST,handleCompressFile);
+  webServer.on("/api/decompress",HTTP_POST,handleDecompressFile);
   webServer.on("/api/file-hash",HTTP_GET,handleFileHash);
   webServer.on("/api/bulk-crc",HTTP_GET,handleBulkVerifyCRC);
   webServer.on("/api/config-backup",HTTP_POST,handleConfigBackup);
@@ -6678,6 +6680,104 @@ void handleConfigBackup() {
   backupConfigFile(WEBHOOK_FILE);
   logActivity("config-backup", "manual", u);
   webServer.send(200, "application/json", "{\"ok\":true,\"message\":\"Config backup created\"}");
+}
+
+// ============== COMPRESS/DECOMPRESS FILE ==============
+// POST /api/compress - Create a gzip copy of a file (path=...)
+// Creates path.gz alongside the original
+void handleCompressFile() {
+  String u, lvl;
+  if (!isAuthenticated(webServer, u, lvl) || !checkCsrf(webServer)) { webServer.send(403); return; }
+  if (!sdOK) { webServer.send(503); return; }
+  if (!webServer.hasArg("path")) { sendError(400, "Missing path"); return; }
+  String path = webServer.arg("path");
+  if (!SD.exists(path)) { sendError(404, "File not found"); return; }
+  File f = SD.open(path, FILE_READ);
+  if (!f) { sendError(500, "Cannot open file"); return; }
+  if (f.isDirectory()) { f.close(); sendError(400, "Cannot compress directory"); return; }
+  String gzPath = path + ".gz";
+  // Skip if already compressed and up-to-date
+  if (SD.exists(gzPath)) {
+    File gz = SD.open(gzPath, FILE_READ);
+    if (gz && gz.fileTime() >= f.fileTime()) {
+      gz.close(); f.close();
+      DynamicJsonDocument resp(256);
+      resp["ok"] = true;
+      resp["path"] = gzPath;
+      resp["skipped"] = true;
+      String out; serializeJson(resp, out);
+      webServer.send(200, "application/json", out);
+      return;
+    }
+    if (gz) gz.close();
+  }
+  File gz = SD.open(gzPath, FILE_WRITE);
+  if (!gz) { f.close(); sendError(500, "Cannot create .gz file"); return; }
+  // Write gzip header
+  uint8_t hdr[] = {0x1F, 0x8B, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xFF};
+  gz.write(hdr, 10);
+  // Compress in chunks using miniz
+  uint8_t *inBuf = new uint8_t[4096];
+  uint8_t *outBuf = new uint8_t[4608]; // ~1.125x for overhead
+  if (!inBuf || !outBuf) {
+    if (inBuf) delete[] inBuf;
+    if (outBuf) delete[] outBuf;
+    f.close(); gz.close();
+    sendError(500, "Out of memory");
+    return;
+  }
+  // Use tdefl compressor
+  tdefl_compressor comp;
+  tdefl_status status = tdefl_init(&comp, NULL, NULL, TDEFL_DEFAULT_MAX_PROBES);
+  if (status != TDEFL_STATUS_OKAY) {
+    delete[] inBuf; delete[] outBuf;
+    f.close(); gz.close();
+    sendError(500, "Compressor init failed");
+    return;
+  }
+  uint32_t crc = MZ_CRC32_INIT;
+  uint64_t totalIn = 0;
+  while (f.available()) {
+    int n = f.read(inBuf, 4096);
+    if (n <= 0) break;
+    crc = mz_crc32(crc, inBuf, n);
+    totalIn += n;
+    size_t inBytes = n;
+    size_t outBytes = 4608;
+    status = tdefl_compress(&comp, inBuf, &inBytes, outBuf, &outBytes, TDEFL_FINISH);
+    if (outBytes > 0) gz.write(outBuf, outBytes);
+    if (status == TDEFL_STATUS_DONE) break;
+  }
+  // Write trailer
+  uint8_t trailer[8];
+  trailer[0] = crc & 0xFF; trailer[1] = (crc >> 8) & 0xFF;
+  trailer[2] = (crc >> 16) & 0xFF; trailer[3] = (crc >> 24) & 0xFF;
+  trailer[4] = totalIn & 0xFF; trailer[5] = (totalIn >> 8) & 0xFF;
+  trailer[6] = (totalIn >> 16) & 0xFF; trailer[7] = (totalIn >> 24) & 0xFF;
+  gz.write(trailer, 8);
+  gz.close();
+  f.close();
+  delete[] inBuf; delete[] outBuf;
+  logActivity("compress", path + " -> " + gzPath, u);
+  DynamicJsonDocument resp(256);
+  resp["ok"] = true;
+  resp["path"] = gzPath;
+  String out; serializeJson(resp, out);
+  webServer.send(200, "application/json", out);
+}
+
+// POST /api/decompress - Remove .gz copy (path=...)
+void handleDecompressFile() {
+  String u, lvl;
+  if (!isAuthenticated(webServer, u, lvl) || !checkCsrf(webServer)) { webServer.send(403); return; }
+  if (!sdOK) { webServer.send(503); return; }
+  if (!webServer.hasArg("path")) { sendError(400, "Missing path"); return; }
+  String path = webServer.arg("path");
+  if (!path.endsWith(".gz")) { sendError(400, "Not a .gz file"); return; }
+  if (!SD.exists(path)) { sendError(404, "File not found"); return; }
+  SD.remove(path);
+  logActivity("decompress", path, u);
+  webServer.send(200, "application/json", "{\"ok\":true}");
 }
 
 void loop() {
