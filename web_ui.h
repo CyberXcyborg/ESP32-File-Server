@@ -207,6 +207,7 @@ kbd{font-family:monospace;font-size:12px}
       <button class="btn btn-ghost" onclick="selectInverse()" id="selectInverseBtn" style="display:none">🔄 Invert</button>
       <button class="btn" onclick="downloadZip()">📦 Download ZIP</button>
       <button class="btn btn-ghost" onclick="exportFileList()" title="Export file list">📋 Export</button>
+      <button class="btn btn-ghost" onclick="printFileList()" title="Print file list">🖨️ Print</button>
       <button class="btn btn-ghost" onclick="pasteClipboard()" id="pasteBtn" style="display:none" title="Paste files from clipboard">📋 Paste</button>
       <button class="btn btn-danger" id="delSelBtn" style="display:none" onclick="deleteSelected()">🗑️ Delete Selected</button>
       <button class="btn" id="copySelBtn" style="display:none" onclick="copySelected()">📋 Copy Selected</button>
@@ -955,6 +956,14 @@ function exportFileList(){
   const fmt=prompt("Export format: json or csv?","json");
   if(!fmt||!["json","csv"].includes(fmt))return;
   window.location.href='/api/export-list?format='+fmt+'&path='+encodeURIComponent(currentPath)+'&token='+token;
+}
+function printFileList(){
+  const w=window.open('','_blank');
+  if(!w){showToast('Pop-up blocked','error');return;}
+  const rows=files.map(f=>`<tr><td>${f.name}</td><td>${f.type==='dir'?'📁':''}</td><td>${f.type==='dir'?'':formatSize(f.size)}</td></tr>`).join('');
+  w.document.write(`<!DOCTYPE html><html><head><title>File List - ${currentPath}</title><style>body{font-family:sans-serif;padding:20px}table{border-collapse:collapse;width:100%}th,td{padding:8px 12px;border-bottom:1px solid #ddd;text-align:left}th{background:#f5f5f5}h1{color:#333}</style></head><body><h1>📁 File List: ${currentPath}</h1><table><thead><tr><th>Name</th><th>Type</th><th>Size</th></tr></thead><tbody>${rows}</tbody></table><p style="color:#888;font-size:12px;margin-top:20px">Printed from ESP32 File Server v${document.getElementById('headerVersion').textContent}</p></body></html>`);
+  w.document.close();
+  w.print();
 }
 function pasteClipboard(){
   fetch('/api/clipboard',{headers:{'Authorization':'Bearer '+token}})
