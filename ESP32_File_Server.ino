@@ -4467,6 +4467,130 @@ void handleFindDuplicates() {
   webServer.send(200, "application/json", out);
 }
 
+// ============== SERVER-SIDE FILE SEARCH ==============
+// Recursive filename search across entire SD card
+// Query: ?q=pattern&limit=50&type=all|file|dir
+void handleFileSearch() {
+  String u, lvl;
+  if (!isAuthenticated(webServer, u, lvl)) { sendError(401,"Not authenticated"); return; }
+  if (!sdOK) { sendError(503,"SD card not available"); return; }
+  if (!webServer.hasArg("q")) { sendError(400,"Missing query parameter 'q'"); return; }
+  String query = webServer.arg("q");
+  query.toLowerCase();
+  if (query.length() < 2) { sendError(400,"Query too short (min 2 chars)"); return; }
+  int maxResults = webServer.hasArg("limit") ? webServer.arg("limit").toInt() : 50;
+  if (maxResults > 200) maxResults = 200;
+  String typeFilter = webServer.hasArg("type") ? webServer.arg("type") : "all";
+  // Collect results with bounded recursion
+  struct SearchResult { String path; bool isDir; uint32_t size; };
+  SearchResult *results = new SearchResult[maxResults];
+  int resultCount = 0;
+  // Stack-based DFS to avoid recursion depth issues
+  String stack[32];
+  int stackTop = 0;
+  stack[stackTop++] = "/";
+  while (stackTop > 0 && resultCount < maxResults) {
+    String currentPath = stack[--stackTop];
+    File dir = SD.open(currentPath);
+    if (!dir || !dir.isDirectory()) { if (dir) dir.close(); continue; }
+    File file;
+    while (file = dir.openNextFile() && resultCount < maxResults) {
+      String fn = String(file.name());
+      int sl = fn.lastIndexOf('/');
+      String name = (sl >= 0) ? fn.substring(sl + 1) : fn;
+      bool isDir = file.isDirectory();
+      // Skip hidden/system dirs
+      if (isDir && name.startsWith(".")) { file.close(); continue; }
+      if (name.toLowerCase().indexOf(query) >= 0) {
+        bool include = (typeFilter == "all") ||
+                       (typeFilter == "file" && !isDir) ||
+                       (typeFilter == "dir" && isDir);
+        if (include) {
+          results[resultCount].path = fn;
+          results[resultCount].isDir = isDir;
+          results[resultCount].size = isDir ? 0 : file.size();
+          resultCount++;
+        }
+      }
+      if (isDir && stackTop < 32) {
+        stack[stackTop++] = fn;
+      }
+      file.close();
+    }
+    dir.close();
+  }
+  DynamicJsonDocument doc(8192);
+  doc["query"] = webServer.arg("q");
+  doc["total"] = resultCount;
+  JsonArray arr = doc.createNestedArray("results");
+  for (int i = 0; i < resultCount; i++) {
+    JsonObject r = arr.createNestedObject();
+    String name = results[i].path;
+    int sl = name.lastIndexOf('/');
+    r["name"] = (sl >= 0) ? name.substring(sl + 1) : name;
+    r["path"] = results[i].path;
+    r["isDir"] = results[i].isDir;
+    if (!results[i].isDir) {
+      r["size"] = results[i].size;
+      r["sizeFormatted"] = getFileSize((uint64_t)results[i].size);
+      r["icon"] = getFileIcon(name);
+    } else {
+      r["icon"] = "📁";
+    }
+  }
+  String out; serializeJson(doc, out);
+  webServer.send(200, "application/json", out);
+  delete[] results;
+}
+
+// ============== DISK SPACE INFO ==============
+// Returns total/used/free space and inode (file/dir) counts
+void handleDiskInfo() {
+  String u, lvl;
+  if (!isAuthenticated(webServer, u, lvl)) { sendError(401,"Not authenticated"); return; }
+  if (!sdOK) { sendError(503,"SD card not available"); return; }
+  uint64_t totalBytes = SD.totalBytes();
+  uint64_t usedBytes = SD.usedBytes();
+  uint64_t freeBytes = totalBytes - usedBytes;
+  // Count files and dirs (bounded scan)
+  uint32_t fileCount = 0, dirCount = 0;
+  String stack[32];
+  int stackTop = 0;
+  stack[stackTop++] = "/";
+  while (stackTop > 0) {
+    String currentPath = stack[--stackTop];
+    File dir = SD.open(currentPath);
+    if (!dir || !dir.isDirectory()) { if (dir) dir.close(); continue; }
+    File file;
+    while (file = dir.openNextFile()) {
+      if (file.isDirectory()) {
+        dirCount++;
+        String fn = String(file.name());
+        if (!fn.startsWith("/.") && stackTop < 32) stack[stackTop++] = fn;
+      } else {
+        fileCount++;
+        if (fileCount > 100000) { file.close(); break; } // Safety cap
+      }
+      file.close();
+    }
+    dir.close();
+  }
+  DynamicJsonDocument doc(1024);
+  doc["totalBytes"] = totalBytes;
+  doc["usedBytes"] = usedBytes;
+  doc["freeBytes"] = freeBytes;
+  doc["totalFormatted"] = getFileSize(totalBytes);
+  doc["usedFormatted"] = getFileSize(usedBytes);
+  doc["freeFormatted"] = getFileSize(freeBytes);
+  doc["usedPercent"] = totalBytes > 0 ? (int)((usedBytes * 100) / totalBytes) : 0;
+  doc["fileCount"] = fileCount;
+  doc["dirCount"] = dirCount;
+  doc["cardType"] = (SD.cardType() == CARD_SDHC) ? "SDHC/SDXC" : (SD.cardType() == CARD_SD) ? "SD" : "Unknown";
+  doc["cardSize"] = getFileSize((uint64_t)SD.cardSize());
+  String out; serializeJson(doc, out);
+  webServer.send(200, "application/json", out);
+}
+
 // ============== STORAGE ANALYTICS ==============
 // ============== RECENT FILES ==============
 void handleRecentFiles() {
@@ -6525,6 +6649,8 @@ void setup() {
   webServer.on("/api/notifications/clear",HTTP_POST,handleClearNotifications);
   webServer.on("/api/export-list",HTTP_GET,handleExportFileList);
   webServer.on("/api/access-stats",HTTP_GET,handleAccessStats);
+  webServer.on("/api/search",HTTP_GET,handleFileSearch);
+  webServer.on("/api/disk",HTTP_GET,handleDiskInfo);
   webServer.on("/api/online",HTTP_GET,handleOnlineUsers);
   webServer.on("/api/readonly",HTTP_POST,handleSetReadOnly);
   webServer.on("/api/batch-readonly",HTTP_POST,handleBatchSetReadOnly);

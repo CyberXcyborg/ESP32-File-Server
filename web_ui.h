@@ -155,9 +155,10 @@ kbd{font-family:monospace;font-size:12px}
       <span id="userDisplay"></span>
       <span id="wsStatus" style="font-size:11px;padding:2px 6px;border-radius:4px;background:var(--bg);color:var(--text2)" title="WebSocket connection">●</span>
       <span id="rssiBadge" style="font-size:11px;padding:2px 6px;border-radius:4px;background:var(--bg);color:var(--text2)" title="WiFi signal">📶 --</span>
-      <div class="search-box">🔍<input type="text" id="searchInput" placeholder="Search..." oninput="filterFiles()"></div>
+      <div class="search-box">🔍<input type="text" id="searchInput" placeholder="Search..." oninput="filterFiles()" onkeydown="if(event.key==='Enter')searchGlobal()"><button class="btn btn-ghost btn-sm" onclick="searchGlobal()" title="Search all folders">🔎</button></div>
       <button class="btn btn-ghost btn-sm" id="themeBtn" onclick="showThemeMenu()" title="Change theme">🎨</button>
       <button class="btn btn-ghost btn-sm" id="darkToggle" onclick="toggleDark()">🌙</button>
+      <button class="btn btn-ghost btn-sm" onclick="showDiskInfo()" title="Disk usage">💾</button>
       <button class="btn btn-ghost btn-sm" onclick="showRecentFiles()" title="Recent files">🕐</button>
       <button class="btn btn-ghost btn-sm" onclick="showShortcuts()" title="Keyboard shortcuts (?)">⌨️</button>
       <a href="/logout" class="btn btn-sm">Logout</a>
@@ -402,6 +403,14 @@ kbd{font-family:monospace;font-size:12px}
     <div class="modal-header"><h2 id="recentTitle">🕐 Recent Files</h2><span class="close-modal" onclick="closeModal('recentModal')">&times;</span></div>
     <div class="modal-body" id="recentList" style="max-height:60vh;overflow-y:auto;padding:0"></div>
     <div class="modal-footer"><button class="btn btn-ghost" onclick="closeModal('recentModal')">Close</button></div>
+  </div>
+</div>
+<!-- Disk Info Modal -->
+<div class="modal" id="diskInfoModal">
+  <div class="modal-content" style="max-width:420px">
+    <div class="modal-header"><h2>💾 Disk Usage</h2><span class="close-modal" onclick="closeModal('diskInfoModal')">&times;</span></div>
+    <div class="modal-body" id="diskInfoContent"></div>
+    <div class="modal-footer"><button class="btn btn-ghost" onclick="closeModal('diskInfoModal')">Close</button></div>
   </div>
 </div>
 
@@ -1345,6 +1354,59 @@ function openRecent(path){
   loadFiles(dir);
 }
 function downloadFile(path){window.location.href='/api/download?path='+encodeURIComponent(path)+'&token='+token;}
+// ============== GLOBAL SEARCH ==============
+function searchGlobal(){
+  const q=document.getElementById('searchInput').value.trim();
+  if(q.length<2){showToast('Enter at least 2 characters','info');return;}
+  showToast('Searching...','info');
+  fetch('/api/search?q='+encodeURIComponent(q)+'&limit=50&token='+token).then(r=>r.json()).then(d=>{
+    if(!d.results||d.results.length===0){showToast('No matches found','info');return;}
+    const list=d.results.map(f=>`<div class="file-item" onclick="openSearchResult('${f.path}')" style="cursor:pointer;display:flex;align-items:center;gap:10px;padding:8px 12px;border-bottom:1px solid var(--border)">
+      <span style="font-size:18px">${f.icon}</span>
+      <div style="flex:1;min-width:0"><div style="font-size:13px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${f.name}</div>
+      <div style="font-size:11px;color:var(--text2)">${f.isDir?'📁 Directory':f.sizeFormatted+' · '}${f.path}</div></div></div>`).join('');
+    document.getElementById('recentTitle').textContent='🔎 Global Search: '+d.results.length+' results';
+    document.getElementById('recentList').innerHTML=list;
+    openModal('recentModal');
+  }).catch(()=>showToast('Search failed','error'));
+}
+function openSearchResult(path){
+  closeModal('recentModal');
+  const dir=path.substring(0,path.lastIndexOf('/'))||'/';
+  loadFiles(dir);
+  // Highlight the file after loading
+  setTimeout(()=>{
+    const els=document.querySelectorAll('.file-item');
+    const name=path.split('/').pop();
+    for(const el of els){
+      if(el.querySelector('.file-name')===name||el.textContent.includes(name)){
+        el.style.background='var(--accent)';el.style.color='#fff';
+        el.scrollIntoView({behavior:'smooth',block:'center'});
+        setTimeout(()=>{el.style.background='';el.style.color='';},2000);
+        break;
+      }
+    }
+  },500);
+}
+// ============== DISK INFO WIDGET ==============
+function showDiskInfo(){
+  fetch('/api/disk?token='+token).then(r=>r.json()).then(d=>{
+    const pct=d.usedPercent;
+    const barColor=pct>90?'#d63031':pct>75?'#fdcb6e': '#0984e3';
+    const html=`<div style="padding:10px">
+      <div style="display:flex;justify-content:space-between;margin-bottom:8px"><span>Storage</span><span>${d.cardType} ${d.cardSize}</span></div>
+      <div style="background:var(--bg);border-radius:8px;height:12px;overflow:hidden;margin-bottom:6px">
+        <div style="width:${pct}%;height:100%;background:${barColor};border-radius:8px;transition:width 0.3s"></div></div>
+      <div style="display:flex;justify-content:space-between;font-size:12px;color:var(--text2)">
+        <span>Used: ${d.usedFormatted} (${pct}%)</span>
+        <span>Free: ${d.freeFormatted}</span>
+      </div>
+      <div style="margin-top:8px;font-size:11px;color:var(--text2)">${d.fileCount.toLocaleString()} files · ${d.dirCount.toLocaleString()} folders</div>
+    </div>`;
+    document.getElementById('diskInfoContent').innerHTML=html;
+    openModal('diskInfoModal');
+  }).catch(()=>showToast('Failed to load disk info','error'));
+}
 // ============== FAVORITES ==============
 let favorites = JSON.parse(localStorage.getItem('favorites') || '[]');
 function toggleFavorite(path, e){
