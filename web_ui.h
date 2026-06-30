@@ -166,6 +166,7 @@ kbd{font-family:monospace;font-size:12px}
       <button class="btn btn-ghost btn-sm" onclick="showDiskInfo()" title="Disk usage">💾</button>
       <button class="btn btn-ghost btn-sm" onclick="showRecentFiles()" title="Recent files">🕐</button>
       <button class="btn btn-ghost btn-sm" onclick="showShortcuts()" title="Keyboard shortcuts (?)">⌨️</button>
+      <button class="btn btn-ghost btn-sm" onclick="showQuickJump()" title="Quick jump to path (Ctrl+G)">🚀</button>
       <a href="/logout" class="btn btn-sm">Logout</a>
     </div>
   </header>
@@ -398,6 +399,7 @@ kbd{font-family:monospace;font-size:12px}
   <div class="ctx-item" onclick="ctxCompress()">📦 Compress (Gzip)</div>
   <div class="ctx-item" onclick="ctxVersions()">🕐 Version History</div>
   <div class="ctx-item" onclick="ctxCreateVersion()">📌 Save Version Now</div>
+  <div class="ctx-item" onclick="ctxDuplicate()">📑 Duplicate File</div>
   <div class="ctx-sep"></div>
   <div class="ctx-item" onclick="ctxDelete()">🗑️ Delete</div>
   <div class="ctx-sep"></div>
@@ -544,7 +546,7 @@ kbd{font-family:monospace;font-size:12px}
         <div style="padding:8px;background:var(--bg);border-radius:6px"><kbd style="background:var(--card);padding:2px 8px;border-radius:4px;border:1px solid var(--border)">?</kbd> This help</div>
         <div style="padding:8px;background:var(--bg);border-radius:6px"><kbd style="background:var(--card);padding:2px 8px;border-radius:4px;border:1px solid var(--border)">←</kbd> Go back</div>
         <div style="padding:8px;background:var(--bg);border-radius:6px"><kbd style="background:var(--card);padding:2px 8px;border-radius:4px;border:1px solid var(--border)">Ctrl+K</kbd> Search</div>
-        <div style="padding:8px;background:var(--bg);border-radius:6px"><kbd style="background:var(--card);padding:2px 8px;border-radius:4px;border:1px solid var(--border)">Ctrl+R</kbd> Batch rename selected</div>
+        <div style="padding:8px;background:var(--bg);border-radius:6px"><kbd style="background:var(--card);padding:2px 8px;border-radius:4px;border:1px solid var(--border)">Ctrl+G</kbd> Quick jump to path</div>
         <div style="padding:8px;background:var(--bg);border-radius:6px"><kbd style="background:var(--card);padding:2px 8px;border-radius:4px;border:1px solid var(--border)">F2</kbd> Rename</div>
       </div>
     </div>
@@ -553,6 +555,13 @@ kbd{font-family:monospace;font-size:12px}
 
 <div class="toast" id="toast"></div>
 <div class="preview-tooltip" id="previewTooltip"></div>
+<div class="modal" id="quickJumpModal">
+  <div class="modal-content" style="max-width:450px">
+    <div class="modal-header"><h2>🚀 Quick Jump</h2><span class="close-modal" onclick="closeModal('quickJumpModal')">&times;</span></div>
+    <div class="modal-body"><div class="form-group"><label>Go to path</label><input type="text" id="quickJumpInput" placeholder="/path/to/folder" value=""></div></div>
+    <div class="modal-footer"><button class="btn btn-ghost" onclick="closeModal('quickJumpModal')">Cancel</button><button class="btn" onclick="doQuickJump()">Go</button></div>
+  </div>
+</div>
 
 <script>
 let currentPath='/',files=[],selectedFiles=[],userLevel='user',sortBy='name',sortAsc=true,trashFiles=[],users=[],ctxTarget=null,csrfToken='';
@@ -829,10 +838,10 @@ document.addEventListener('keydown', function(e) {
       }).then(r => r.json()).then(d => { if (d.ok) loadFiles(currentPath); });
     }
   }
-  // Ctrl+U / Cmd+U: Upload
-  if ((e.ctrlKey || e.metaKey) && e.key === 'u') {
+  // Ctrl+G: Quick jump to path
+  if ((e.ctrlKey || e.metaKey) && e.key === 'g') {
     e.preventDefault();
-    document.getElementById('fileInput').click();
+    showQuickJump();
   }
   // F5 / Ctrl+R: Refresh file list
   if (e.key === 'F5' || ((e.ctrlKey || e.metaKey) && e.key === 'r')) {
@@ -864,6 +873,13 @@ function showConfirm(msg, onConfirm, title='Confirm'){
   openModal('confirmModal');
 }
 function showShortcuts(){openModal('shortcutsModal');}
+function showQuickJump(){document.getElementById('quickJumpInput').value=currentPath;openModal('quickJumpModal');setTimeout(()=>document.getElementById('quickJumpInput').focus(),100);}
+function doQuickJump(){
+  const p=document.getElementById('quickJumpInput').value.trim();
+  if(!p){showToast('Enter a path','error');return;}
+  closeModal('quickJumpModal');
+  loadFiles(p.startsWith('/')?p:'/'+p);
+}
 
 // ============== FILES ==============
 function downloadZip(){
@@ -1091,6 +1107,17 @@ function ctxCreateVersion(){
       if(d.ok)showToast('Version saved!','success');
       else showToast('Failed: '+(d.error||'unknown'),'error');
     }).catch(()=>showToast('Failed to create version','error'));
+  hideCtxMenu();
+}
+function ctxDuplicate(){
+  const path=ctxTarget.dataset.path;
+  const name=ctxTarget.dataset.name;
+  showToast('Duplicating '+name+'...','info');
+  fetch('/api/copy',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+token,'X-CSRF-Token':csrfToken},body:JSON.stringify({src:path,dest:path+'_copy'})})
+    .then(r=>r.json()).then(d=>{
+      if(d.ok){showToast('Duplicated as '+name+'_copy','success');loadFiles(currentPath);}
+      else showToast('Duplicate failed: '+(d.error||'unknown'),'error');
+    }).catch(()=>showToast('Duplicate failed','error'));
   hideCtxMenu();
 }
 function restoreVersion(path,versionFile){
